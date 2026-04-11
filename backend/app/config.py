@@ -52,6 +52,11 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'qwen2.5:32b')
+    OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY') or LLM_API_KEY
+    OPENROUTER_BASE_URL = os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+    OPENROUTER_GRAPH_MODEL = os.environ.get('OPENROUTER_GRAPH_MODEL')
+    OPENROUTER_BENCHMARK_MODEL = os.environ.get('OPENROUTER_BENCHMARK_MODEL')
+    OPENROUTER_EVALUATOR_MODEL = os.environ.get('OPENROUTER_EVALUATOR_MODEL')
     OPENROUTER_HTTP_REFERER = os.environ.get('OPENROUTER_HTTP_REFERER')
     OPENROUTER_X_TITLE = os.environ.get('OPENROUTER_X_TITLE')
     BENCHMARK_MODE = _env_bool('BENCHMARK_MODE', False)
@@ -60,6 +65,7 @@ class Config:
     LLM_RETRY_MAX_RETRIES = _env_int_or_raw('LLM_RETRY_MAX_RETRIES', 3)
     LLM_RETRY_INITIAL_DELAY = _env_float_or_raw('LLM_RETRY_INITIAL_DELAY', 1.0)
     LLM_RETRY_MAX_DELAY = _env_float_or_raw('LLM_RETRY_MAX_DELAY', 30.0)
+    LLM_RETRY_JITTER_MAX = _env_float_or_raw('LLM_RETRY_JITTER_MAX', 0.0)
 
     # Neo4j configuration
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')

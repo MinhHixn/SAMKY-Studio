@@ -47,7 +47,7 @@ def _resolve_default_injection_bank() -> str:
 
 
 DEFAULT_INJECTION_BANK = _resolve_default_injection_bank()
-DEFAULT_OUTPUT_DIR = "backend/logs/benchmark_runs"
+DEFAULT_OUTPUT_DIR = _BACKEND_DIR / "logs" / "benchmark_runs"
 CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60

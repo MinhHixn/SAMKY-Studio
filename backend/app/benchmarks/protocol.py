@@ -15,7 +15,9 @@ def _as_int(value: Any, field_name: str) -> int:
 
 def enforce_protocol_constraints(config: Dict[str, Any]) -> None:
     """Validate the benchmark protocol invariants."""
-    agent_configs = config.get("agent_configs", [])
+    agent_configs = config.get("agent_configs")
+    if not isinstance(agent_configs, list):
+        raise ValueError("agent_configs must be a list")
     if len(agent_configs) != 3000:
         raise ValueError(f"Protocol requires exactly 3000 agents, got {len(agent_configs)}")
 

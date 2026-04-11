@@ -18,6 +18,26 @@ def test_enforce_protocol_requires_exact_60_rounds():
         enforce_protocol_constraints(config)
 
 
+@pytest.mark.parametrize("agent_configs", [None, {}])
+def test_enforce_protocol_rejects_missing_or_wrong_agent_configs_type(agent_configs):
+    config = {
+        "time_config": {"total_simulation_hours": 60, "minutes_per_round": 60},
+        "agent_configs": agent_configs,
+    }
+
+    with pytest.raises(ValueError, match=r"agent_configs must be a list"):
+        enforce_protocol_constraints(config)
+
+
+def test_enforce_protocol_accepts_exact_3000_agents_and_60_rounds():
+    config = {
+        "time_config": {"total_simulation_hours": 60, "minutes_per_round": 60},
+        "agent_configs": [{}] * 3000,
+    }
+
+    enforce_protocol_constraints(config)
+
+
 def test_expand_profiles_reaches_exact_target_size_and_user_ids():
     base_profiles = [
         {"user_id": 10, "username": "agent", "name": "Agent 0", "persona": "x", "bio": "x"},
@@ -57,6 +77,20 @@ def test_injection_loader_selects_condition_b_and_c_payloads(tmp_path):
     assert loader.get_payload("E1", "B") == {"body": "relevant"}
     assert loader.get_payload("E1", "C") == {"headline": "null"}
     assert loader.get_payload("E1", "A") is None
+
+
+@pytest.mark.parametrize("condition", ["D", "", "a"])
+def test_injection_loader_rejects_invalid_condition(tmp_path, condition):
+    path = tmp_path / "bank.json"
+    path.write_text(
+        '{"events":[{"event_id":"E1","relevant_update":{"body":"relevant"},"null_update":{"headline":"null"}}]}',
+        encoding="utf-8",
+    )
+
+    loader = Step30InjectionLoader(path)
+
+    with pytest.raises(ValueError, match=r"condition must be one of A, B, or C"):
+        loader.get_payload("E1", condition)
 
 
 def test_build_step30_scheduled_event_uses_body_or_headline():

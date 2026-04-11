@@ -31,6 +31,9 @@ class Step30InjectionLoader:
 
     def get_payload(self, event_id: str, condition: Condition) -> Dict[str, Any] | None:
         """Return the payload for a condition-specific event."""
+        if condition not in ("A", "B", "C"):
+            raise ValueError("condition must be one of A, B, or C")
+
         if condition == "A":
             return None
 

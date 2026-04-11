@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -48,6 +49,21 @@ def test_resolve_default_injection_bank_returns_deterministic_fallback(monkeypat
     )
 
     assert protocol_script._resolve_default_injection_bank() == str(first)
+
+
+def test_default_injection_bank_candidates_scan_ancestors_and_deduplicate(monkeypatch, tmp_path):
+    scripts_dir = tmp_path / "workspace" / "backend" / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    workspace_candidate = tmp_path / "workspace" / "data" / "injections" / "step30_injection_bank.json"
+    workspace_candidate.parent.mkdir(parents=True, exist_ok=True)
+    workspace_candidate.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(protocol_script, "_SCRIPTS_DIR", scripts_dir)
+
+    candidates = protocol_script._default_injection_bank_candidates()
+
+    assert workspace_candidate.resolve() in candidates
+    assert len(candidates) == len({str(path).lower() for path in candidates})
 
 
 def test_default_output_dir_is_backend_absolute_path():
@@ -121,6 +137,24 @@ def test_build_event_result_row_full_simulation_completed_logic():
     assert complete["full_simulation_completed"] is True
 
 
+def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
+    monkeypatch.setattr(protocol_script, "enforce_protocol_constraints", lambda config: None)
+
+    class DummyInjectionLoader:
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
+
+    config = protocol_script.build_simulation_config(
+        {"event_id": "E1", "question": "Q", "outcome": "A"},
+        "A",
+        [{"agent_id": 1, "entity_name": "A", "entity_uuid": "u", "entity_type": "person", "activity_level": 0.5, "name": "A", "username": "a", "bio": "", "persona": "", "source_seed_file": "seed.txt"}],
+        DummyInjectionLoader(),
+        llm_model="openrouter/benchmark-model",
+    )
+
+    assert config["llm_model"] == "openrouter/benchmark-model"
+
+
 def test_write_summary_includes_failure_counts(tmp_path):
     rows = [
         {
@@ -161,6 +195,17 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         def __init__(self, path):
             self.path = path
 
+    class DummyRouter:
+        api_key = "router-key"
+        base_url = "https://openrouter.ai/api/v1"
+
+        def model_for(self, role):
+            mapping = {
+                "benchmark": "openrouter/benchmark-model",
+                "evaluator": "openrouter/evaluator-model",
+            }
+            return mapping[role]
+
     monkeypatch.setattr(protocol_script, "_utc_run_id", lambda: "fixed-run")
     monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *args, **kwargs: events)
     monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [seed_file])
@@ -172,6 +217,7 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
     monkeypatch.setattr(protocol_script, "write_profiles", lambda *args, **kwargs: (tmp_path / "twitter_profiles.csv", tmp_path / "reddit_profiles.json"))
     monkeypatch.setattr(protocol_script, "build_evidence_text", lambda *args, **kwargs: "evidence")
     monkeypatch.setattr(protocol_script, "_run_simulation_subprocess", lambda *args, **kwargs: simulation_result)
+    monkeypatch.setattr(protocol_script.BenchmarkRoleRouter, "from_config", classmethod(lambda cls, config=None: DummyRouter()))
     if evaluate_side_effect is not None:
         monkeypatch.setattr(protocol_script, "_evaluate_row", evaluate_side_effect)
     else:
@@ -262,3 +308,33 @@ def test_main_writes_artifacts(monkeypatch, tmp_path):
     assert (run_dir / "traces" / "execution.jsonl").exists()
     assert (run_dir / "event_results.json").exists()
     assert (run_dir / "summary.json").exists()
+
+
+def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("LLM_API_KEY", "ambient-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://ambient.example/v1")
+    monkeypatch.setenv("LLM_MODEL_NAME", "ambient-model")
+    monkeypatch.setattr(protocol_script.subprocess, "run", fake_run)
+
+    router = protocol_script.BenchmarkRoleRouter(
+        api_key="router-key",
+        base_url="https://openrouter.ai/api/v1",
+        graph_model="openrouter/graph-model",
+        benchmark_model="openrouter/benchmark-model",
+        evaluator_model="openrouter/evaluator-model",
+    )
+
+    completed = protocol_script._run_simulation_subprocess("python.exe", Path(tmp_path / "config.json"), router)
+
+    assert completed.returncode == 0
+    env = captured["kwargs"]["env"]
+    assert env["LLM_API_KEY"] == "router-key"
+    assert env["LLM_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert env["LLM_MODEL_NAME"] == "openrouter/benchmark-model"

@@ -26,6 +26,14 @@ class BenchmarkRoleRouter:
         }
         self._validate()
 
+    @property
+    def api_key(self):
+        return self._api_key
+
+    @property
+    def base_url(self):
+        return self._base_url
+
     @classmethod
     def from_config(cls, config=Config):
         """Build a router from application config values."""

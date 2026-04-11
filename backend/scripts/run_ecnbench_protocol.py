@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -10,7 +11,6 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPTS_DIR.parent
-_PROJECT_ROOT = _BACKEND_DIR.parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
@@ -22,19 +22,16 @@ from app.benchmarks.scoring import brier_score, summarize_condition_scores
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
-def _script_parent(level: int) -> Path | None:
-    parents = _SCRIPTS_DIR.parents
-    if level < len(parents):
-        return parents[level]
-    return None
-
-
 def _default_injection_bank_candidates() -> List[Path]:
     candidates: List[Path] = []
-    workspace_root = _script_parent(4)
-    if workspace_root is not None:
-        candidates.append(workspace_root / "data" / "injections" / "step30_injection_bank.json")
-    candidates.append(_PROJECT_ROOT / "data" / "injections" / "step30_injection_bank.json")
+    seen: set[str] = set()
+    for ancestor in (_SCRIPTS_DIR, *_SCRIPTS_DIR.parents):
+        candidate = (ancestor / "data" / "injections" / "step30_injection_bank.json").resolve(strict=False)
+        candidate_key = str(candidate).lower()
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+        candidates.append(candidate)
     return candidates
 
 
@@ -303,7 +300,14 @@ def write_profiles(profile_dir: Path, profiles: List[Dict[str, Any]]) -> tuple[P
     return twitter_path, reddit_path
 
 
-def build_simulation_config(event: Mapping[str, Any], condition: str, profiles: List[Dict[str, Any]], injection_loader: Step30InjectionLoader) -> Dict[str, Any]:
+def build_simulation_config(
+    event: Mapping[str, Any],
+    condition: str,
+    profiles: List[Dict[str, Any]],
+    injection_loader: Step30InjectionLoader,
+    *,
+    llm_model: str | None = None,
+) -> Dict[str, Any]:
     scheduled_events: List[Dict[str, Any]] = []
     if condition in ("B", "C"):
         payload = injection_loader.get_payload(str(event["event_id"]), condition)
@@ -339,6 +343,8 @@ def build_simulation_config(event: Mapping[str, Any], condition: str, profiles: 
             "narrative_direction": "",
         },
     }
+    if llm_model:
+        config["llm_model"] = llm_model
     enforce_protocol_constraints(config)
     return config
 
@@ -403,7 +409,15 @@ def _format_exception(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
-def _run_simulation_subprocess(python_exe: str, config_path: Path) -> subprocess.CompletedProcess[str]:
+def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
+    env = os.environ.copy()
+    env["LLM_API_KEY"] = router.api_key
+    env["LLM_BASE_URL"] = router.base_url
+    env["LLM_MODEL_NAME"] = router.model_for("benchmark")
+    return env
+
+
+def _run_simulation_subprocess(python_exe: str, config_path: Path, router: BenchmarkRoleRouter) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             python_exe,
@@ -417,6 +431,7 @@ def _run_simulation_subprocess(python_exe: str, config_path: Path) -> subprocess
         cwd=str(_BACKEND_DIR),
         capture_output=True,
         text=True,
+        env=_benchmark_subprocess_env(router),
     )
 
 
@@ -424,8 +439,8 @@ def _evaluate_row(
     event: Mapping[str, Any],
     condition: str,
     evidence_text: str,
+    router: BenchmarkRoleRouter,
 ) -> tuple[Dict[str, float], float]:
-    router = BenchmarkRoleRouter.from_config()
     evaluator = ProbabilityEvaluator(router)
     evaluation = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
     probabilities = evaluation.get("normalized_probabilities") or evaluation.get("probabilities")
@@ -481,6 +496,7 @@ def main() -> None:
     if args.repeats <= 0:
         raise ValueError("--repeats must be > 0")
 
+    router = BenchmarkRoleRouter.from_config()
     events = load_events_from_raw(args.events_raw, limit=args.events)
     seed_files = load_seed_files(args.seeds_dir)
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
@@ -547,7 +563,13 @@ def main() -> None:
         evidence_text = ""
 
         try:
-            config = build_simulation_config(event, condition, profiles, injection_loader)
+            config = build_simulation_config(
+                event,
+                condition,
+                profiles,
+                injection_loader,
+                llm_model=router.model_for("benchmark"),
+            )
             config["run_unit"] = {
                 "run_id": run_id,
                 "unit_id": unit_id,
@@ -556,7 +578,7 @@ def main() -> None:
             config_path = write_simulation_config(unit_dir, config)
             write_profiles(unit_dir, profiles)
 
-            completed = _run_simulation_subprocess(args.python_exe, config_path)
+            completed = _run_simulation_subprocess(args.python_exe, config_path, router)
             simulation_completed = completed.returncode == 0
             if not simulation_completed:
                 row_error = completed.stderr.strip() or completed.stdout.strip() or f"run_parallel_simulation.py exited with {completed.returncode}"
@@ -577,7 +599,7 @@ def main() -> None:
                 simulation_log_path = unit_dir / "simulation.log"
                 evidence_text = build_evidence_text(simulation_log_path, seed_path)
                 try:
-                    probabilities, brier = _evaluate_row(event, condition, evidence_text)
+                    probabilities, brier = _evaluate_row(event, condition, evidence_text, router)
                     evaluation_completed = True
                     trace_writer.write(
                         {

@@ -54,6 +54,7 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
         ({}, r"probabilities"),
         ({"probabilities": {"A": 0, "B": 0, "C": 0}}, r"mass"),
         ({"probabilities": {"A": 1, "B": "x", "C": 0}}, r"[Ii]nvalid"),
+        ({"probabilities": {"A": -1, "B": 2, "C": 0}}, r"non-negative"),
     ],
 )
 def test_probability_evaluator_rejects_missing_invalid_or_zero_mass_probabilities(payload, match):

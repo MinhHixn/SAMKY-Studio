@@ -57,6 +57,8 @@ class ProbabilityEvaluator:
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Invalid probability for outcome {label!r}: {value!r}")
             numeric = float(value)
+            if numeric < 0.0:
+                raise ValueError(f"Invalid probability for outcome {label!r}: {value!r} (must be non-negative)")
             normalized[label] = numeric
             total += numeric
 

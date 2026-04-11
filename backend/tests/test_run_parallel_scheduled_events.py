@@ -182,6 +182,27 @@ def test_apply_scheduled_posts_for_round_skips_when_no_matching_posts():
     assert env.step_calls == []
 
 
+def test_apply_scheduled_posts_for_round_fails_fast_in_benchmark_mode_on_bad_agent_resolution(monkeypatch):
+    env = _FakeEnv()
+    event_config = {
+        "scheduled_events": [
+            {
+                "trigger_round": 30,
+                "posts": [
+                    {"poster_agent_id": 999, "content": "Injected update"},
+                ],
+            }
+        ]
+    }
+
+    monkeypatch.setenv("BENCHMARK_MODE", "true")
+
+    with pytest.raises(KeyError):
+        asyncio.run(parallel_script.apply_scheduled_posts_for_round(env, event_config, 30))
+
+    assert env.step_calls == []
+
+
 @pytest.mark.parametrize(
     "platform, profile_name, graph_attr, run_fn",
     [

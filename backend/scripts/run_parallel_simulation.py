@@ -1155,6 +1155,7 @@ async def apply_scheduled_posts_for_round(env, event_config: Dict[str, Any], rou
     if not scheduled_posts:
         return 0
 
+    benchmark_mode_enabled = os.environ.get("BENCHMARK_MODE", "").strip().lower() == "true"
     scheduled_actions = {}
     scheduled_action_count = 0
 
@@ -1174,11 +1175,27 @@ async def apply_scheduled_posts_for_round(env, event_config: Dict[str, Any], rou
             else:
                 scheduled_actions[agent] = action
             scheduled_action_count += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning(
+                "Unable to apply scheduled post for agent %s in round %s: %s",
+                agent_id,
+                round_num,
+                exc,
+            )
+            if benchmark_mode_enabled:
+                raise
 
     if scheduled_actions:
-        await env.step(scheduled_actions)
+        try:
+            await env.step(scheduled_actions)
+        except Exception as exc:
+            logging.warning(
+                "Failed to apply scheduled posts for round %s: %s",
+                round_num,
+                exc,
+            )
+            if benchmark_mode_enabled:
+                raise
 
     return scheduled_action_count
 

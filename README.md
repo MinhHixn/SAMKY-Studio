@@ -197,8 +197,11 @@ Set-Location backend
   --injection-bank ..\..\..\..\data\injections\step30_injection_bank.json `
   --output-dir logs\benchmark_runs `
   --events 30 `
-  --repeats 1
+  --repeats 1 `
+  --trace-out logs\benchmark_traces\ecnbench_trace.jsonl
 ```
+
+Omit `--trace-out` to use the default `logs\benchmark_runs\<run_id>\traces\execution.jsonl`.
 
 Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 

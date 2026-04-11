@@ -49,6 +49,7 @@ CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
 MINUTES_PER_ROUND = 60
+SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
 
 
 def _utc_run_id() -> str:
@@ -308,6 +309,7 @@ def build_simulation_config(
     *,
     llm_model: str | None = None,
 ) -> Dict[str, Any]:
+    question = _first_text(event, ("question", "prompt", "text", "title"))
     scheduled_events: List[Dict[str, Any]] = []
     if condition in ("B", "C"):
         payload = injection_loader.get_payload(str(event["event_id"]), condition)
@@ -315,7 +317,7 @@ def build_simulation_config(
 
     config = {
         "event_id": str(event["event_id"]),
-        "event_question": event.get("question", ""),
+        "event_question": question,
         "truth": event.get("outcome") or event.get("answer", ""),
         "time_config": {
             "total_simulation_hours": TOTAL_SIMULATION_HOURS,
@@ -337,7 +339,11 @@ def build_simulation_config(
             for profile in profiles
         ],
         "event_config": {
-            "initial_posts": [],
+            "initial_posts": (
+                [{"poster_agent_id": 0, "content": question}]
+                if question
+                else []
+            ),
             "scheduled_events": scheduled_events,
             "hot_topics": [],
             "narrative_direction": "",
@@ -360,6 +366,20 @@ def _extract_tail_text(path: Path, max_chars: int = 6000) -> str:
         return ""
     text = path.read_text(encoding="utf-8", errors="replace")
     return text[-max_chars:]
+
+
+def _simulation_failure_error(unit_dir: Path, *, timeout_seconds: int | None = None, returncode: int | None = None) -> str:
+    parts: List[str] = []
+    if timeout_seconds is not None:
+        parts.append(f"run_parallel_simulation.py timed out after {timeout_seconds}s")
+    if returncode is not None:
+        parts.append(f"run_parallel_simulation.py exited with returncode {returncode}")
+
+    log_tail = _extract_tail_text(unit_dir / "simulation.log")
+    if log_tail:
+        parts.append(f"simulation.log tail:\n{log_tail}")
+
+    return "\n\n".join(parts) if parts else "run_parallel_simulation.py failed"
 
 
 def build_evidence_text(simulation_log_path: Path, seed_path: Path) -> str:
@@ -417,22 +437,51 @@ def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
     return env
 
 
-def _run_simulation_subprocess(python_exe: str, config_path: Path, router: BenchmarkRoleRouter) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            python_exe,
-            "scripts/run_parallel_simulation.py",
-            "--config",
-            str(config_path),
-            "--max-rounds",
-            str(TOTAL_SIMULATION_HOURS),
-            "--no-wait",
-        ],
-        cwd=str(_BACKEND_DIR),
-        capture_output=True,
-        text=True,
-        env=_benchmark_subprocess_env(router),
-    )
+def _run_simulation_subprocess(
+    python_exe: str,
+    config_path: Path,
+    router: BenchmarkRoleRouter,
+    *,
+    log_path: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    run_kwargs = {
+        "cwd": str(_BACKEND_DIR),
+        "text": True,
+        "timeout": SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
+        "env": _benchmark_subprocess_env(router),
+    }
+    if log_path is None:
+        run_kwargs["stdout"] = subprocess.DEVNULL
+        run_kwargs["stderr"] = subprocess.DEVNULL
+        return subprocess.run(
+            [
+                python_exe,
+                "scripts/run_parallel_simulation.py",
+                "--config",
+                str(config_path),
+                "--max-rounds",
+                str(TOTAL_SIMULATION_HOURS),
+                "--no-wait",
+            ],
+            **run_kwargs,
+        )
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log_file:
+        run_kwargs["stdout"] = log_file
+        run_kwargs["stderr"] = log_file
+        return subprocess.run(
+            [
+                python_exe,
+                "scripts/run_parallel_simulation.py",
+                "--config",
+                str(config_path),
+                "--max-rounds",
+                str(TOTAL_SIMULATION_HOURS),
+                "--no-wait",
+            ],
+            **run_kwargs,
+        )
 
 
 def _evaluate_row(
@@ -488,6 +537,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--events", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--trace-out")
     parser.add_argument("--python-exe", default=sys.executable)
     args = parser.parse_args()
 
@@ -509,7 +559,8 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     traces_dir.mkdir(parents=True, exist_ok=True)
 
-    trace_writer = BenchmarkTraceWriter(traces_dir / "execution.jsonl")
+    trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
+    trace_writer = BenchmarkTraceWriter(trace_path)
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -525,6 +576,7 @@ def main() -> None:
         "total_agents": TARGET_AGENT_COUNT,
         "total_simulation_hours": TOTAL_SIMULATION_HOURS,
         "minutes_per_round": MINUTES_PER_ROUND,
+        "trace_out": str(trace_path),
         "seed_files": [str(path) for path in seed_files],
         "event_ids": [str(event["event_id"]) for event in events],
     }
@@ -578,11 +630,20 @@ def main() -> None:
             config_path = write_simulation_config(unit_dir, config)
             write_profiles(unit_dir, profiles)
 
-            completed = _run_simulation_subprocess(args.python_exe, config_path, router)
-            simulation_completed = completed.returncode == 0
-            if not simulation_completed:
-                row_error = completed.stderr.strip() or completed.stdout.strip() or f"run_parallel_simulation.py exited with {completed.returncode}"
+            simulation_log_path = unit_dir / "simulation.log"
+            try:
+                completed = _run_simulation_subprocess(
+                    args.python_exe,
+                    config_path,
+                    router,
+                    log_path=simulation_log_path,
+                )
+            except subprocess.TimeoutExpired:
                 simulation_status = "simulation_failed"
+                row_error = _simulation_failure_error(
+                    unit_dir,
+                    timeout_seconds=SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
+                )
                 trace_writer.write(
                     {
                         "event_id": event["event_id"],
@@ -590,31 +651,15 @@ def main() -> None:
                         "repeat": repeat,
                         "unit_id": unit_id,
                         "status": simulation_status,
-                        "returncode": completed.returncode,
-                        "stderr": completed.stderr[-2000:],
+                        "timeout_seconds": SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
+                        "error": row_error,
                     }
                 )
             else:
-                simulation_status = "completed"
-                simulation_log_path = unit_dir / "simulation.log"
-                evidence_text = build_evidence_text(simulation_log_path, seed_path)
-                try:
-                    probabilities, brier = _evaluate_row(event, condition, evidence_text, router)
-                    evaluation_completed = True
-                    trace_writer.write(
-                        {
-                            "event_id": event["event_id"],
-                            "condition": condition,
-                            "repeat": repeat,
-                            "unit_id": unit_id,
-                            "status": "completed",
-                            "probabilities": probabilities,
-                            "brier": brier,
-                        }
-                    )
-                except Exception as exc:
-                    simulation_status = "evaluation_failed"
-                    row_error = _format_exception(exc)
+                simulation_completed = completed.returncode == 0
+                if not simulation_completed:
+                    row_error = _simulation_failure_error(unit_dir, returncode=completed.returncode)
+                    simulation_status = "simulation_failed"
                     trace_writer.write(
                         {
                             "event_id": event["event_id"],
@@ -622,9 +667,40 @@ def main() -> None:
                             "repeat": repeat,
                             "unit_id": unit_id,
                             "status": simulation_status,
+                            "returncode": completed.returncode,
                             "error": row_error,
                         }
                     )
+                else:
+                    simulation_status = "completed"
+                    evidence_text = build_evidence_text(simulation_log_path, seed_path)
+                    try:
+                        probabilities, brier = _evaluate_row(event, condition, evidence_text, router)
+                        evaluation_completed = True
+                        trace_writer.write(
+                            {
+                                "event_id": event["event_id"],
+                                "condition": condition,
+                                "repeat": repeat,
+                                "unit_id": unit_id,
+                                "status": "completed",
+                                "probabilities": probabilities,
+                                "brier": brier,
+                            }
+                        )
+                    except Exception as exc:
+                        simulation_status = "evaluation_failed"
+                        row_error = _format_exception(exc)
+                        trace_writer.write(
+                            {
+                                "event_id": event["event_id"],
+                                "condition": condition,
+                                "repeat": repeat,
+                                "unit_id": unit_id,
+                                "status": simulation_status,
+                                "error": row_error,
+                            }
+                        )
         except Exception as exc:
             row_error = _format_exception(exc)
             trace_writer.write(

@@ -155,6 +155,25 @@ def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
     assert config["llm_model"] == "openrouter/benchmark-model"
 
 
+def test_build_simulation_config_seeds_initial_post_from_question(monkeypatch):
+    monkeypatch.setattr(protocol_script, "enforce_protocol_constraints", lambda config: None)
+
+    class DummyInjectionLoader:
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
+
+    config = protocol_script.build_simulation_config(
+        {"event_id": "E1", "question": "What happened?", "outcome": "A"},
+        "A",
+        [{"agent_id": 1, "entity_name": "A", "entity_uuid": "u", "entity_type": "person", "activity_level": 0.5, "name": "A", "username": "a", "bio": "", "persona": "", "source_seed_file": "seed.txt"}],
+        DummyInjectionLoader(),
+    )
+
+    assert config["event_config"]["initial_posts"] == [
+        {"poster_agent_id": 0, "content": "What happened?"}
+    ]
+
+
 def test_write_summary_includes_failure_counts(tmp_path):
     rows = [
         {
@@ -310,6 +329,68 @@ def test_main_writes_artifacts(monkeypatch, tmp_path):
     assert (run_dir / "summary.json").exists()
 
 
+def test_main_writes_traces_to_custom_path(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    output_dir = tmp_path / "runs"
+    trace_out = tmp_path / "custom-traces" / "execution.jsonl"
+    argv = [
+        "run_ecnbench_protocol.py",
+        "--seeds-dir",
+        str(tmp_path / "seeds"),
+        "--events-raw",
+        str(tmp_path / "events.json"),
+        "--output-dir",
+        str(output_dir),
+        "--trace-out",
+        str(trace_out),
+    ]
+    monkeypatch.setattr(protocol_script.sys, "argv", argv)
+
+    protocol_script.main()
+
+    run_dir = output_dir / "fixed-run"
+    assert trace_out.exists()
+    assert not (run_dir / "traces" / "execution.jsonl").exists()
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["trace_out"] == str(trace_out)
+
+
+def test_main_records_timeout_failure_with_log_tail(monkeypatch, tmp_path):
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=None)
+
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["python"], timeout=protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(protocol_script, "_run_simulation_subprocess", raise_timeout)
+
+    output_dir = tmp_path / "runs"
+    run_dir = output_dir / "fixed-run"
+    unit_dir = run_dir / "E1_A_r1"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / "simulation.log").write_text("line 1\nline 2\n", encoding="utf-8")
+
+    argv = [
+        "run_ecnbench_protocol.py",
+        "--seeds-dir",
+        str(tmp_path / "seeds"),
+        "--events-raw",
+        str(tmp_path / "events.json"),
+        "--output-dir",
+        str(output_dir),
+    ]
+    monkeypatch.setattr(protocol_script.sys, "argv", argv)
+
+    protocol_script.main()
+
+    rows = json.loads((run_dir / "event_results.json").read_text(encoding="utf-8"))
+    assert rows[0]["simulation_status"] == "simulation_failed"
+    assert "timed out after" in rows[0]["error"]
+    assert "simulation.log tail" in rows[0]["error"]
+    assert "line 2" in rows[0]["error"]
+
+
 def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_path):
     captured = {}
 
@@ -338,3 +419,6 @@ def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_pa
     assert env["LLM_API_KEY"] == "router-key"
     assert env["LLM_BASE_URL"] == "https://openrouter.ai/api/v1"
     assert env["LLM_MODEL_NAME"] == "openrouter/benchmark-model"
+    assert captured["kwargs"]["timeout"] == protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS
+    assert captured["kwargs"]["stdout"] == subprocess.DEVNULL
+    assert captured["kwargs"]["stderr"] == subprocess.DEVNULL

@@ -1099,8 +1099,54 @@ def get_active_agents_for_round(
             active_agents.append((agent_id, agent))
         except Exception:
             pass
-    
+
     return active_agents
+
+
+def collect_scheduled_posts_for_round(event_config: Dict[str, Any], round_num: int) -> List[Dict[str, Any]]:
+    """Collect scheduled create-post events for the given round."""
+    scheduled_posts: List[Dict[str, Any]] = []
+
+    for scheduled_event in event_config.get("scheduled_events", []) or []:
+        if not isinstance(scheduled_event, dict):
+            continue
+
+        trigger_round = scheduled_event.get("trigger_round")
+        try:
+            if int(trigger_round) != round_num:
+                continue
+        except (TypeError, ValueError):
+            continue
+
+        posts = scheduled_event.get("posts", [])
+        if not isinstance(posts, list):
+            continue
+
+        for post in posts:
+            if not isinstance(post, dict):
+                continue
+
+            content = post.get("content")
+            poster_agent_id = post.get("poster_agent_id")
+
+            if not isinstance(content, str):
+                continue
+
+            content = content.strip()
+            if not content:
+                continue
+
+            try:
+                poster_agent_id = int(poster_agent_id)
+            except (TypeError, ValueError):
+                continue
+
+            scheduled_posts.append({
+                "poster_agent_id": poster_agent_id,
+                "content": content,
+            })
+
+    return scheduled_posts
 
 
 class PlatformSimulation:
@@ -1256,31 +1302,65 @@ async def run_twitter_simulation(
         # Log round start regardless of active agents
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
-        
-        if not active_agents:
-            # Log round end even without active agents (actions_count=0)
-            if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
-            continue
-        
-        actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
-        
-        # Get actual executed actions from Database and log
-        actual_actions, last_rowid = fetch_new_actions_from_db(
-            db_path, last_rowid, agent_names
-        )
-        
+
         round_action_count = 0
-        for action_data in actual_actions:
-            if action_logger:
-                action_logger.log_action(
-                    round_num=round_num + 1,
-                    agent_id=action_data['agent_id'],
-                    agent_name=action_data['agent_name'],
-                    action_type=action_data['action_type'],
-                    action_args=action_data['action_args']
+        scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num + 1)
+        if scheduled_posts:
+            scheduled_actions = {}
+            for post in scheduled_posts:
+                agent_id = post["poster_agent_id"]
+                content = post["content"]
+                try:
+                    agent = result.env.agent_graph.get_agent(agent_id)
+                    action = ManualAction(
+                        action_type=ActionType.CREATE_POST,
+                        action_args={"content": content}
+                    )
+                    if agent in scheduled_actions:
+                        if not isinstance(scheduled_actions[agent], list):
+                            scheduled_actions[agent] = [scheduled_actions[agent]]
+                        scheduled_actions[agent].append(action)
+                    else:
+                        scheduled_actions[agent] = action
+                except Exception:
+                    pass
+
+            if scheduled_actions:
+                await result.env.step(scheduled_actions)
+
+                scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
+                    db_path, last_rowid, agent_names
                 )
+                for action_data in scheduled_actions_list:
+                    if action_logger:
+                        action_logger.log_action(
+                            round_num=round_num + 1,
+                            agent_id=action_data['agent_id'],
+                            agent_name=action_data['agent_name'],
+                            action_type=action_data['action_type'],
+                            action_args=action_data['action_args']
+                        )
+                    total_actions += 1
+                    round_action_count += 1
+
+        if active_agents:
+            actions = {agent: LLMAction() for _, agent in active_agents}
+            await result.env.step(actions)
+
+            # Get actual executed actions from Database and log
+            actual_actions, last_rowid = fetch_new_actions_from_db(
+                db_path, last_rowid, agent_names
+            )
+
+            for action_data in actual_actions:
+                if action_logger:
+                    action_logger.log_action(
+                        round_num=round_num + 1,
+                        agent_id=action_data['agent_id'],
+                        agent_name=action_data['agent_name'],
+                        action_type=action_data['action_type'],
+                        action_args=action_data['action_args']
+                    )
                 total_actions += 1
                 round_action_count += 1
         
@@ -1455,31 +1535,65 @@ async def run_reddit_simulation(
         # Log round start regardless of active agents
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
-        
-        if not active_agents:
-            # Log round end even without active agents (actions_count=0)
-            if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
-            continue
-        
-        actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
-        
-        # Get actual executed actions from Database and log
-        actual_actions, last_rowid = fetch_new_actions_from_db(
-            db_path, last_rowid, agent_names
-        )
-        
+
         round_action_count = 0
-        for action_data in actual_actions:
-            if action_logger:
-                action_logger.log_action(
-                    round_num=round_num + 1,
-                    agent_id=action_data['agent_id'],
-                    agent_name=action_data['agent_name'],
-                    action_type=action_data['action_type'],
-                    action_args=action_data['action_args']
+        scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num + 1)
+        if scheduled_posts:
+            scheduled_actions = {}
+            for post in scheduled_posts:
+                agent_id = post["poster_agent_id"]
+                content = post["content"]
+                try:
+                    agent = result.env.agent_graph.get_agent(agent_id)
+                    action = ManualAction(
+                        action_type=ActionType.CREATE_POST,
+                        action_args={"content": content}
+                    )
+                    if agent in scheduled_actions:
+                        if not isinstance(scheduled_actions[agent], list):
+                            scheduled_actions[agent] = [scheduled_actions[agent]]
+                        scheduled_actions[agent].append(action)
+                    else:
+                        scheduled_actions[agent] = action
+                except Exception:
+                    pass
+
+            if scheduled_actions:
+                await result.env.step(scheduled_actions)
+
+                scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
+                    db_path, last_rowid, agent_names
                 )
+                for action_data in scheduled_actions_list:
+                    if action_logger:
+                        action_logger.log_action(
+                            round_num=round_num + 1,
+                            agent_id=action_data['agent_id'],
+                            agent_name=action_data['agent_name'],
+                            action_type=action_data['action_type'],
+                            action_args=action_data['action_args']
+                        )
+                    total_actions += 1
+                    round_action_count += 1
+
+        if active_agents:
+            actions = {agent: LLMAction() for _, agent in active_agents}
+            await result.env.step(actions)
+
+            # Get actual executed actions from Database and log
+            actual_actions, last_rowid = fetch_new_actions_from_db(
+                db_path, last_rowid, agent_names
+            )
+
+            for action_data in actual_actions:
+                if action_logger:
+                    action_logger.log_action(
+                        round_num=round_num + 1,
+                        agent_id=action_data['agent_id'],
+                        agent_name=action_data['agent_name'],
+                        action_type=action_data['action_type'],
+                        action_args=action_data['action_args']
+                    )
                 total_actions += 1
                 round_action_count += 1
         

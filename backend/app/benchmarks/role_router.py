@@ -9,27 +9,50 @@ BENCHMARK_ROLES = ("graph", "benchmark", "evaluator")
 class BenchmarkRoleRouter:
     """Route benchmark roles to explicit OpenRouter model configuration."""
 
-    def __init__(self, config=Config):
-        self._api_key = getattr(config, "OPENROUTER_API_KEY", None) or getattr(config, "LLM_API_KEY", None)
-        self._base_url = getattr(config, "OPENROUTER_BASE_URL", None)
+    def __init__(
+        self,
+        api_key,
+        base_url,
+        graph_model,
+        benchmark_model,
+        evaluator_model,
+    ):
+        self._api_key = api_key
+        self._base_url = base_url
         self._role_models = {
-            "graph": getattr(config, "OPENROUTER_GRAPH_MODEL", None),
-            "benchmark": getattr(config, "OPENROUTER_BENCHMARK_MODEL", None),
-            "evaluator": getattr(config, "OPENROUTER_EVALUATOR_MODEL", None),
+            "graph": graph_model,
+            "benchmark": benchmark_model,
+            "evaluator": evaluator_model,
         }
         self._validate()
+
+    @classmethod
+    def from_config(cls, config=Config):
+        """Build a router from application config values."""
+        return cls(
+            api_key=getattr(config, "OPENROUTER_API_KEY", None)
+            or getattr(config, "LLM_API_KEY", None),
+            base_url=getattr(config, "OPENROUTER_BASE_URL", None),
+            graph_model=getattr(config, "OPENROUTER_GRAPH_MODEL", None),
+            benchmark_model=getattr(config, "OPENROUTER_BENCHMARK_MODEL", None),
+            evaluator_model=getattr(config, "OPENROUTER_EVALUATOR_MODEL", None),
+        )
 
     def _validate(self) -> None:
         missing = []
         if not self._api_key:
-            missing.append("OPENROUTER_API_KEY")
+            missing.append(
+                "api_key (prefer OPENROUTER_API_KEY, fall back to LLM_API_KEY, or pass api_key explicitly)"
+            )
         if not self._base_url:
-            missing.append("OPENROUTER_BASE_URL")
+            missing.append("base_url (set OPENROUTER_BASE_URL, or pass base_url explicitly)")
         for role in BENCHMARK_ROLES:
             if not self._role_models.get(role):
-                missing.append(f"OPENROUTER_{role.upper()}_MODEL")
+                missing.append(
+                    f"{role}_model (set OPENROUTER_{role.upper()}_MODEL, or pass {role}_model explicitly)"
+                )
         if missing:
-            raise ValueError("Missing benchmark router config: " + ", ".join(missing))
+            raise ValueError("Missing benchmark router config: " + "; ".join(missing))
 
     def model_for(self, role: str) -> str:
         try:

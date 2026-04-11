@@ -186,6 +186,28 @@ Get-ChildItem ..\..\..\..\data\seeds -Directory | ForEach-Object {
   --variance-out logs\variance_summary.json
 ```
 
+Run the end-to-end ECN-BENCH protocol benchmark:
+
+```powershell
+Set-Location backend
+
+.\.venv311\Scripts\python scripts\run_ecnbench_protocol.py `
+  --seeds-dir ..\..\..\data\seeds `
+  --events-raw ..\..\..\data\events_raw.json `
+  --injection-bank ..\..\..\data\injections\step30_injection_bank.json `
+  --output-dir logs\benchmark_runs `
+  --events 30 `
+  --repeats 1
+```
+
+Artifacts are written to `logs\benchmark_runs\<run_id>\`:
+
+- `run_manifest.json` — run inputs, selected events, and generated file list
+- `traces\execution.jsonl` — per-unit benchmark trace events
+- `event_results.json` — one row per event × condition × repeat
+- `summary.json` — mean Brier scores, lift, and success/failure counts
+- `simulation_config.json`, `twitter_profiles.csv`, `reddit_profiles.json` — per-unit simulation inputs
+
 ## Architecture
 
 This fork introduces a clean abstraction layer between the application and the graph database:

@@ -52,7 +52,7 @@ def test_resolve_default_injection_bank_returns_deterministic_fallback(monkeypat
 
 def test_default_output_dir_is_backend_absolute_path():
     assert protocol_script.DEFAULT_OUTPUT_DIR.is_absolute()
-    assert str(protocol_script.DEFAULT_OUTPUT_DIR).endswith(r"backend\logs\benchmark_runs")
+    assert protocol_script.DEFAULT_OUTPUT_DIR.parts[-3:] == ("backend", "logs", "benchmark_runs")
 
 
 def test_load_events_from_nested_payload_shape(tmp_path):
@@ -259,5 +259,6 @@ def test_main_writes_artifacts(monkeypatch, tmp_path):
 
     run_dir = output_dir / "fixed-run"
     assert (run_dir / "run_manifest.json").exists()
+    assert (run_dir / "traces" / "execution.jsonl").exists()
     assert (run_dir / "event_results.json").exists()
     assert (run_dir / "summary.json").exists()

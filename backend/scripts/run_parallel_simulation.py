@@ -1149,6 +1149,40 @@ def collect_scheduled_posts_for_round(event_config: Dict[str, Any], round_num: i
     return scheduled_posts
 
 
+async def apply_scheduled_posts_for_round(env, event_config: Dict[str, Any], round_num: int) -> int:
+    """Apply scheduled create-post events for the given round."""
+    scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num)
+    if not scheduled_posts:
+        return 0
+
+    scheduled_actions = {}
+    scheduled_action_count = 0
+
+    for post in scheduled_posts:
+        agent_id = post["poster_agent_id"]
+        content = post["content"]
+        try:
+            agent = env.agent_graph.get_agent(agent_id)
+            action = ManualAction(
+                action_type=ActionType.CREATE_POST,
+                action_args={"content": content}
+            )
+            if agent in scheduled_actions:
+                if not isinstance(scheduled_actions[agent], list):
+                    scheduled_actions[agent] = [scheduled_actions[agent]]
+                scheduled_actions[agent].append(action)
+            else:
+                scheduled_actions[agent] = action
+            scheduled_action_count += 1
+        except Exception:
+            pass
+
+    if scheduled_actions:
+        await env.step(scheduled_actions)
+
+    return scheduled_action_count
+
+
 class PlatformSimulation:
     """Platform simulation result container"""
     def __init__(self):
@@ -1304,44 +1338,24 @@ async def run_twitter_simulation(
             action_logger.log_round_start(round_num + 1, simulated_hour)
 
         round_action_count = 0
-        scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num + 1)
-        if scheduled_posts:
-            scheduled_actions = {}
-            for post in scheduled_posts:
-                agent_id = post["poster_agent_id"]
-                content = post["content"]
-                try:
-                    agent = result.env.agent_graph.get_agent(agent_id)
-                    action = ManualAction(
-                        action_type=ActionType.CREATE_POST,
-                        action_args={"content": content}
+        scheduled_action_count = await apply_scheduled_posts_for_round(
+            result.env, event_config, round_num + 1
+        )
+        if scheduled_action_count:
+            scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
+                db_path, last_rowid, agent_names
+            )
+            for action_data in scheduled_actions_list:
+                if action_logger:
+                    action_logger.log_action(
+                        round_num=round_num + 1,
+                        agent_id=action_data['agent_id'],
+                        agent_name=action_data['agent_name'],
+                        action_type=action_data['action_type'],
+                        action_args=action_data['action_args']
                     )
-                    if agent in scheduled_actions:
-                        if not isinstance(scheduled_actions[agent], list):
-                            scheduled_actions[agent] = [scheduled_actions[agent]]
-                        scheduled_actions[agent].append(action)
-                    else:
-                        scheduled_actions[agent] = action
-                except Exception:
-                    pass
-
-            if scheduled_actions:
-                await result.env.step(scheduled_actions)
-
-                scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
-                    db_path, last_rowid, agent_names
-                )
-                for action_data in scheduled_actions_list:
-                    if action_logger:
-                        action_logger.log_action(
-                            round_num=round_num + 1,
-                            agent_id=action_data['agent_id'],
-                            agent_name=action_data['agent_name'],
-                            action_type=action_data['action_type'],
-                            action_args=action_data['action_args']
-                        )
-                    total_actions += 1
-                    round_action_count += 1
+                total_actions += 1
+                round_action_count += 1
 
         if active_agents:
             actions = {agent: LLMAction() for _, agent in active_agents}
@@ -1537,44 +1551,24 @@ async def run_reddit_simulation(
             action_logger.log_round_start(round_num + 1, simulated_hour)
 
         round_action_count = 0
-        scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num + 1)
-        if scheduled_posts:
-            scheduled_actions = {}
-            for post in scheduled_posts:
-                agent_id = post["poster_agent_id"]
-                content = post["content"]
-                try:
-                    agent = result.env.agent_graph.get_agent(agent_id)
-                    action = ManualAction(
-                        action_type=ActionType.CREATE_POST,
-                        action_args={"content": content}
+        scheduled_action_count = await apply_scheduled_posts_for_round(
+            result.env, event_config, round_num + 1
+        )
+        if scheduled_action_count:
+            scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
+                db_path, last_rowid, agent_names
+            )
+            for action_data in scheduled_actions_list:
+                if action_logger:
+                    action_logger.log_action(
+                        round_num=round_num + 1,
+                        agent_id=action_data['agent_id'],
+                        agent_name=action_data['agent_name'],
+                        action_type=action_data['action_type'],
+                        action_args=action_data['action_args']
                     )
-                    if agent in scheduled_actions:
-                        if not isinstance(scheduled_actions[agent], list):
-                            scheduled_actions[agent] = [scheduled_actions[agent]]
-                        scheduled_actions[agent].append(action)
-                    else:
-                        scheduled_actions[agent] = action
-                except Exception:
-                    pass
-
-            if scheduled_actions:
-                await result.env.step(scheduled_actions)
-
-                scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
-                    db_path, last_rowid, agent_names
-                )
-                for action_data in scheduled_actions_list:
-                    if action_logger:
-                        action_logger.log_action(
-                            round_num=round_num + 1,
-                            agent_id=action_data['agent_id'],
-                            agent_name=action_data['agent_name'],
-                            action_type=action_data['action_type'],
-                            action_args=action_data['action_args']
-                        )
-                    total_actions += 1
-                    round_action_count += 1
+                total_actions += 1
+                round_action_count += 1
 
         if active_agents:
             actions = {agent: LLMAction() for _, agent in active_agents}

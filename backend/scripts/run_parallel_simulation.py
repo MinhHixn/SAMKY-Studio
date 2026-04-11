@@ -1107,15 +1107,17 @@ def collect_scheduled_posts_for_round(event_config: Dict[str, Any], round_num: i
     """Collect scheduled create-post events for the given round."""
     scheduled_posts: List[Dict[str, Any]] = []
 
+    if not isinstance(event_config, dict):
+        return scheduled_posts
+
     for scheduled_event in event_config.get("scheduled_events", []) or []:
         if not isinstance(scheduled_event, dict):
             continue
 
         trigger_round = scheduled_event.get("trigger_round")
-        try:
-            if int(trigger_round) != round_num:
-                continue
-        except (TypeError, ValueError):
+        if not isinstance(trigger_round, int) or isinstance(trigger_round, bool):
+            continue
+        if trigger_round != round_num:
             continue
 
         posts = scheduled_event.get("posts", [])
@@ -1136,9 +1138,7 @@ def collect_scheduled_posts_for_round(event_config: Dict[str, Any], round_num: i
             if not content:
                 continue
 
-            try:
-                poster_agent_id = int(poster_agent_id)
-            except (TypeError, ValueError):
+            if not isinstance(poster_agent_id, int) or isinstance(poster_agent_id, bool):
                 continue
 
             scheduled_posts.append({

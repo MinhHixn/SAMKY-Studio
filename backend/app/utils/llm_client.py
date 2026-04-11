@@ -7,6 +7,7 @@ Supports Ollama num_ctx parameter to prevent prompt truncation
 import json
 import os
 import re
+import random
 import time
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
@@ -62,6 +63,10 @@ class LLMClient:
         self._retry_max_delay = self._coerce_non_negative_float(
             Config.LLM_RETRY_MAX_DELAY,
             "LLM_RETRY_MAX_DELAY",
+        )
+        self._retry_jitter_max = self._coerce_non_negative_float(
+            Config.LLM_RETRY_JITTER_MAX,
+            "LLM_RETRY_JITTER_MAX",
         )
 
         # Ollama context window size — prevents prompt truncation.
@@ -141,8 +146,12 @@ class LLMClient:
                 if attempt >= self._retry_max_retries or not should_retry:
                     raise
 
-                if delay > 0:
-                    time.sleep(min(delay, self._retry_max_delay))
+                current_delay = min(delay, self._retry_max_delay)
+                sleep_delay = current_delay
+                if self._retry_jitter_max > 0:
+                    sleep_delay += random.uniform(0, self._retry_jitter_max)
+
+                time.sleep(sleep_delay)
                 delay = min(delay * 2 if delay > 0 else 0.0, self._retry_max_delay)
 
     def chat(

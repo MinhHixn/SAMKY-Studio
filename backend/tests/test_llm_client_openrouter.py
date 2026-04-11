@@ -198,6 +198,46 @@ def test_negative_retry_max_delay_is_clamped(monkeypatch):
     assert store["sleep_calls"] == [0.0]
 
 
+def test_retry_backoff_applies_deterministic_jitter(monkeypatch):
+    store = {"calls": 0, "sleep_calls": []}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            store["calls"] += 1
+            if store["calls"] < 3:
+                raise TimeoutError(f"temporary timeout {store['calls']}")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    jitter_values = iter([0.125, 0.25])
+
+    monkeypatch.setattr(llm_client_module, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(llm_client_module.time, "sleep", store["sleep_calls"].append)
+    monkeypatch.setattr(llm_client_module.random, "uniform", lambda a, b: next(jitter_values))
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 3, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.5, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 2.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_JITTER_MAX", 0.25, raising=False)
+
+    client = llm_client_module.LLMClient()
+    response = client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
+
+    assert response == "ok"
+    assert store["calls"] == 3
+    assert store["sleep_calls"] == [0.625, 1.25]
+
+
 def test_invalid_retry_config_raises_clear_error(monkeypatch):
     store = {}
     _install_fake_openai(monkeypatch, store)
@@ -210,6 +250,22 @@ def test_invalid_retry_config_raises_clear_error(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
 
     with pytest.raises(ValueError, match="LLM_RETRY_MAX_RETRIES must be an integer >= 0"):
+        llm_client_module.LLMClient()
+
+
+def test_invalid_jitter_config_raises_clear_error(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 3, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.1, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_JITTER_MAX", "invalid-jitter", raising=False)
+
+    with pytest.raises(ValueError, match="LLM_RETRY_JITTER_MAX must be a number >= 0"):
         llm_client_module.LLMClient()
 
 

@@ -1,0 +1,243 @@
+import importlib
+from types import SimpleNamespace
+
+import pytest
+
+from app.utils import llm_client as llm_client_module
+
+
+def _install_fake_openai(monkeypatch, store):
+    class FakeCompletions:
+        def create(self, **kwargs):
+            store["create_kwargs"] = kwargs
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            store["init_kwargs"] = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(llm_client_module, "OpenAI", FakeOpenAI)
+
+
+def test_config_reads_openrouter_and_benchmark_flags(monkeypatch):
+    import dotenv
+    import app.config as config_module
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: True)
+    monkeypatch.setenv("OPENROUTER_HTTP_REFERER", "https://example.test")
+    monkeypatch.setenv("OPENROUTER_X_TITLE", "MiroFish Benchmark")
+    monkeypatch.setenv("BENCHMARK_MODE", "true")
+    monkeypatch.setenv("BENCHMARK_TEMPERATURE", "0.0")
+    monkeypatch.setenv("BENCHMARK_SEED", "2025")
+    monkeypatch.setenv("LLM_RETRY_MAX_RETRIES", "4")
+    monkeypatch.setenv("LLM_RETRY_INITIAL_DELAY", "0.25")
+    monkeypatch.setenv("LLM_RETRY_MAX_DELAY", "2.0")
+
+    config_module = importlib.reload(config_module)
+    cfg = config_module.Config
+
+    assert cfg.OPENROUTER_HTTP_REFERER == "https://example.test"
+    assert cfg.OPENROUTER_X_TITLE == "MiroFish Benchmark"
+    assert cfg.BENCHMARK_MODE is True
+    assert cfg.BENCHMARK_TEMPERATURE == 0.0
+    assert cfg.BENCHMARK_SEED == 2025
+    assert cfg.LLM_RETRY_MAX_RETRIES == 4
+    assert cfg.LLM_RETRY_INITIAL_DELAY == 0.25
+    assert cfg.LLM_RETRY_MAX_DELAY == 2.0
+
+
+def test_invalid_retry_env_values_do_not_crash_config_import(monkeypatch):
+    import dotenv
+    import app.config as config_module
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: True)
+    monkeypatch.setenv("LLM_RETRY_MAX_RETRIES", "invalid-int")
+    monkeypatch.setenv("LLM_RETRY_INITIAL_DELAY", "invalid-float-1")
+    monkeypatch.setenv("LLM_RETRY_MAX_DELAY", "invalid-float-2")
+
+    config_module = importlib.reload(config_module)
+
+    assert config_module.Config.LLM_RETRY_MAX_RETRIES == "invalid-int"
+    assert config_module.Config.LLM_RETRY_INITIAL_DELAY == "invalid-float-1"
+    assert config_module.Config.LLM_RETRY_MAX_DELAY == "invalid-float-2"
+
+
+def test_invalid_benchmark_env_values_do_not_crash_config_import(monkeypatch):
+    import dotenv
+    import app.config as config_module
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: True)
+    monkeypatch.setenv("BENCHMARK_TEMPERATURE", "invalid-temp")
+    monkeypatch.setenv("BENCHMARK_SEED", "invalid-seed")
+
+    config_module = importlib.reload(config_module)
+
+    assert config_module.Config.BENCHMARK_TEMPERATURE == "invalid-temp"
+    assert config_module.Config.BENCHMARK_SEED == "invalid-seed"
+
+
+def test_openrouter_headers_are_attached(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(
+        llm_client_module.Config,
+        "OPENROUTER_HTTP_REFERER",
+        "https://example.test",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        llm_client_module.Config,
+        "OPENROUTER_X_TITLE",
+        "MiroFish Offline",
+        raising=False,
+    )
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+
+    client = llm_client_module.LLMClient()
+    client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
+
+    assert store["create_kwargs"]["extra_headers"] == {
+        "HTTP-Referer": "https://example.test",
+        "X-Title": "MiroFish Offline",
+    }
+
+
+def test_benchmark_mode_forces_temperature_seed(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", 0.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", 2025, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
+
+    client = llm_client_module.LLMClient()
+    client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.9)
+
+    assert store["create_kwargs"]["temperature"] == 0.0
+    assert store["create_kwargs"]["seed"] == 2025
+
+
+def test_negative_retry_max_retries_is_clamped(monkeypatch):
+    store = {"calls": 0}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            store["calls"] += 1
+            store["create_kwargs"] = kwargs
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(llm_client_module, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", -7, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.1, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
+
+    client = llm_client_module.LLMClient()
+    response = client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
+
+    assert response == "ok"
+    assert store["calls"] == 1
+
+
+def test_negative_retry_max_delay_is_clamped(monkeypatch):
+    store = {"calls": 0, "sleep_calls": []}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            store["calls"] += 1
+            if store["calls"] == 1:
+                raise TimeoutError("temporary timeout")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(llm_client_module, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(llm_client_module.time, "sleep", store["sleep_calls"].append)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 2, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.2, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", -5.0, raising=False)
+
+    client = llm_client_module.LLMClient()
+    response = client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
+
+    assert response == "ok"
+    assert store["calls"] == 2
+    assert store["sleep_calls"] == [0.0]
+
+
+def test_invalid_retry_config_raises_clear_error(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", "invalid", raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.1, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
+
+    with pytest.raises(ValueError, match="LLM_RETRY_MAX_RETRIES must be an integer >= 0"):
+        llm_client_module.LLMClient()
+
+
+def test_invalid_benchmark_config_raises_clear_error(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", "invalid", raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", 2025, raising=False)
+
+    with pytest.raises(ValueError, match="BENCHMARK_TEMPERATURE must be a number"):
+        llm_client_module.LLMClient()
+
+
+def test_invalid_benchmark_seed_raises_clear_error(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", 0.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", "invalid-seed", raising=False)
+
+    with pytest.raises(ValueError, match="BENCHMARK_SEED must be an integer"):
+        llm_client_module.LLMClient()

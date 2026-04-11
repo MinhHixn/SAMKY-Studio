@@ -381,6 +381,29 @@ class IPCHandler:
             self.send_response(command_id, "failed", error=f"Unknown command type: {command_type}")
             return True
 
+def _apply_benchmark_env(config: Optional[Dict[str, Any]] = None) -> str:
+    """Apply deterministic benchmark OpenRouter bridge variables."""
+    llm_api_key = os.environ.get("LLM_API_KEY", "")
+    llm_base_url = os.environ.get("LLM_BASE_URL", "")
+    llm_model = os.environ.get("LLM_MODEL_NAME", "") or (config or {}).get("llm_model", "gpt-4o-mini")
+    benchmark_mode_enabled = os.environ.get("BENCHMARK_MODE", "").strip().lower() == "true"
+
+    if not llm_api_key:
+        raise ValueError("LLM_API_KEY is required")
+
+    os.environ["OPENAI_API_KEY"] = llm_api_key
+    if llm_base_url:
+        os.environ["OPENAI_API_BASE_URL"] = llm_base_url
+    else:
+        os.environ.pop("OPENAI_API_BASE_URL", None)
+
+    if benchmark_mode_enabled:
+        os.environ.setdefault("BENCHMARK_TEMPERATURE", "0")
+        os.environ.setdefault("BENCHMARK_SEED", "42")
+        random.seed(int(os.environ["BENCHMARK_SEED"]))
+
+    return llm_model
+
 
 class TwitterSimulationRunner:
     """Twitter simulation runner"""
@@ -427,31 +450,10 @@ class TwitterSimulationRunner:
     def _create_model(self):
         """
         Create LLM model
-        
-        Unified use of configuration in project root .env file (highest priority)：
-        - LLM_API_KEY: API key
-        - LLM_BASE_URL: API base URL
-        - LLM_MODEL_NAME: Model name
         """
-        # Read configuration from .env first
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
-        llm_base_url = os.environ.get("LLM_BASE_URL", "")
-        llm_model = os.environ.get("LLM_MODEL_NAME", "")
-        
-        # If not in .env, use config as fallback
-        if not llm_model:
-            llm_model = self.config.get("llm_model", "gpt-4o-mini")
-        
-        # Set environment variables required by camel-ai
-        if llm_api_key:
-            os.environ["OPENAI_API_KEY"] = llm_api_key
-        
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("Missing API Key configuration, please set LLM_API_KEY in .env file in project root")
-        
-        if llm_base_url:
-            os.environ["OPENAI_API_BASE_URL"] = llm_base_url
-        
+        llm_model = _apply_benchmark_env(config=self.config)
+        llm_base_url = os.environ.get("OPENAI_API_BASE_URL", "")
+
         print(f"LLM configuration: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else 'default'}...")
         
         return ModelFactory.create(

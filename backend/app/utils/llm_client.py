@@ -7,8 +7,9 @@ Supports Ollama num_ctx parameter to prevent prompt truncation
 import json
 import os
 import re
+import time
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
 
 from ..config import Config
 
@@ -36,6 +37,33 @@ class LLMClient:
             timeout=timeout,
         )
 
+        self._openrouter_http_referer = Config.OPENROUTER_HTTP_REFERER
+        self._openrouter_x_title = Config.OPENROUTER_X_TITLE
+        self._benchmark_mode = Config.BENCHMARK_MODE
+        self._benchmark_temperature = Config.BENCHMARK_TEMPERATURE
+        self._benchmark_seed = Config.BENCHMARK_SEED
+        if self._benchmark_mode:
+            self._benchmark_temperature = self._coerce_float(
+                Config.BENCHMARK_TEMPERATURE,
+                "BENCHMARK_TEMPERATURE",
+            )
+            self._benchmark_seed = self._coerce_int(
+                Config.BENCHMARK_SEED,
+                "BENCHMARK_SEED",
+            )
+        self._retry_max_retries = self._coerce_non_negative_int(
+            Config.LLM_RETRY_MAX_RETRIES,
+            "LLM_RETRY_MAX_RETRIES",
+        )
+        self._retry_initial_delay = self._coerce_non_negative_float(
+            Config.LLM_RETRY_INITIAL_DELAY,
+            "LLM_RETRY_INITIAL_DELAY",
+        )
+        self._retry_max_delay = self._coerce_non_negative_float(
+            Config.LLM_RETRY_MAX_DELAY,
+            "LLM_RETRY_MAX_DELAY",
+        )
+
         # Ollama context window size — prevents prompt truncation.
         # Read from env OLLAMA_NUM_CTX, default 8192 (Ollama default is only 2048).
         self._num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '8192'))
@@ -43,6 +71,79 @@ class LLMClient:
     def _is_ollama(self) -> bool:
         """Check if we're talking to an Ollama server."""
         return '11434' in (self.base_url or '')
+
+    @staticmethod
+    def _extract_error_code(error: Exception) -> Optional[str]:
+        body = getattr(error, 'body', None)
+        if isinstance(body, dict):
+            detail = body.get('error', body)
+            if isinstance(detail, dict):
+                code = detail.get('code') or detail.get('type')
+                if isinstance(code, str):
+                    return code.lower()
+        return None
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, name: str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must be an integer >= 0") from error
+        return max(0, parsed)
+
+    @staticmethod
+    def _coerce_non_negative_float(value: Any, name: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must be a number >= 0") from error
+        return max(0.0, parsed)
+
+    @staticmethod
+    def _coerce_int(value: Any, name: str) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must be an integer") from error
+
+    @staticmethod
+    def _coerce_float(value: Any, name: str) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must be a number") from error
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if isinstance(error, (APIConnectionError, APITimeoutError, TimeoutError, ConnectionError)):
+            return True
+
+        error_code = self._extract_error_code(error)
+        quota_codes = {'insufficient_quota', 'quota_exceeded'}
+        if isinstance(error, RateLimitError):
+            return error_code not in quota_codes
+
+        if isinstance(error, APIStatusError):
+            status_code = getattr(error, 'status_code', None)
+            if status_code == 429:
+                return error_code not in quota_codes
+            return isinstance(status_code, int) and 500 <= status_code < 600
+
+        return False
+
+    def _chat_create_with_retry(self, kwargs: Dict[str, Any]):
+        delay = max(0.0, self._retry_initial_delay)
+
+        for attempt in range(self._retry_max_retries + 1):
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except Exception as error:
+                should_retry = self._is_retryable_error(error)
+                if attempt >= self._retry_max_retries or not should_retry:
+                    raise
+
+                if delay > 0:
+                    time.sleep(min(delay, self._retry_max_delay))
+                delay = min(delay * 2 if delay > 0 else 0.0, self._retry_max_delay)
 
     def chat(
         self,
@@ -66,12 +167,23 @@ class LLMClient:
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": self._benchmark_temperature if self._benchmark_mode else temperature,
             "max_tokens": max_tokens,
         }
 
+        if self._benchmark_mode:
+            kwargs["seed"] = self._benchmark_seed
+
         if response_format:
             kwargs["response_format"] = response_format
+
+        extra_headers = {}
+        if self._openrouter_http_referer:
+            extra_headers["HTTP-Referer"] = self._openrouter_http_referer
+        if self._openrouter_x_title:
+            extra_headers["X-Title"] = self._openrouter_x_title
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
 
         # For Ollama: pass num_ctx via extra_body to prevent prompt truncation
         if self._is_ollama() and self._num_ctx:
@@ -79,7 +191,7 @@ class LLMClient:
                 "options": {"num_ctx": self._num_ctx}
             }
 
-        response = self.client.chat.completions.create(**kwargs)
+        response = self._chat_create_with_retry(kwargs)
         content = response.choices[0].message.content
         # Some models (like MiniMax M2.5) include <think>thinking content in response, need to remove
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()

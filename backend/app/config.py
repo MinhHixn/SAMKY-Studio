@@ -17,6 +17,27 @@ else:
     load_dotenv(override=True)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name, str(default))
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_int_or_raw(name: str, default: int):
+    value = os.environ.get(name, str(default))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _env_float_or_raw(name: str, default: float):
+    value = os.environ.get(name, str(default))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
 class Config:
     """Flask configuration class"""
 
@@ -31,6 +52,14 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'qwen2.5:32b')
+    OPENROUTER_HTTP_REFERER = os.environ.get('OPENROUTER_HTTP_REFERER')
+    OPENROUTER_X_TITLE = os.environ.get('OPENROUTER_X_TITLE')
+    BENCHMARK_MODE = _env_bool('BENCHMARK_MODE', False)
+    BENCHMARK_TEMPERATURE = _env_float_or_raw('BENCHMARK_TEMPERATURE', 0.0)
+    BENCHMARK_SEED = _env_int_or_raw('BENCHMARK_SEED', 42)
+    LLM_RETRY_MAX_RETRIES = _env_int_or_raw('LLM_RETRY_MAX_RETRIES', 3)
+    LLM_RETRY_INITIAL_DELAY = _env_float_or_raw('LLM_RETRY_INITIAL_DELAY', 1.0)
+    LLM_RETRY_MAX_DELAY = _env_float_or_raw('LLM_RETRY_MAX_DELAY', 30.0)
 
     # Neo4j configuration
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')

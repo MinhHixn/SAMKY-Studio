@@ -116,6 +116,8 @@ All settings are in `.env` (copy from `.env.example`):
 LLM_API_KEY=ollama
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_MODEL_NAME=qwen2.5:32b
+OPENROUTER_HTTP_REFERER=
+OPENROUTER_X_TITLE=
 
 # Neo4j
 NEO4J_URI=bolt://localhost:7687
@@ -125,9 +127,64 @@ NEO4J_PASSWORD=mirofish
 # Embeddings
 EMBEDDING_MODEL=nomic-embed-text
 EMBEDDING_BASE_URL=http://localhost:11434
+
+# Deterministic benchmark mode
+BENCHMARK_MODE=false
+BENCHMARK_TEMPERATURE=0.0
+BENCHMARK_SEED=42
+
+# LLM transient retry policy
+LLM_RETRY_MAX_RETRIES=3
+LLM_RETRY_INITIAL_DELAY=1.0
+LLM_RETRY_MAX_DELAY=30.0
 ```
 
 Works with any OpenAI-compatible API — swap Ollama for Claude, GPT, or any other provider by changing `LLM_BASE_URL` and `LLM_API_KEY`.
+
+### OpenRouter prototype mode
+
+To run against OpenRouter, set:
+
+- `LLM_BASE_URL=https://openrouter.ai/api/v1`
+- `LLM_API_KEY=<your_openrouter_key>`
+- Optional attribution headers:
+  - `OPENROUTER_HTTP_REFERER=https://your-project-url`
+  - `OPENROUTER_X_TITLE=MiroFish Offline`
+
+For reproducible benchmark runs, enable deterministic mode:
+
+- `BENCHMARK_MODE=true` forces chat temperature to `BENCHMARK_TEMPERATURE`
+- `BENCHMARK_SEED` is sent on each chat request
+- Retries are transient-only (429/5xx + transport errors), configurable via `LLM_RETRY_*`
+
+Run the ECN-BENCH OpenRouter prototype from `backend`:
+
+```powershell
+Set-Location backend
+
+# Targeted OpenRouter prototype tests
+.\.venv311\Scripts\python -m pytest tests\test_llm_client_openrouter.py tests\test_benchmark_trace.py tests\test_run_ecnbench_openrouter.py -q
+
+# Flatten 30 seed context files into a single directory expected by the orchestrator
+$flatSeeds = "tmp_seeds_flat"
+if (Test-Path $flatSeeds) { Remove-Item $flatSeeds -Recurse -Force }
+New-Item -ItemType Directory -Path $flatSeeds | Out-Null
+Get-ChildItem ..\..\..\..\data\seeds -Directory | ForEach-Object {
+    $contextPath = Join-Path $_.FullName "context.md"
+    if (Test-Path $contextPath) {
+        Copy-Item $contextPath (Join-Path $flatSeeds "$($_.Name).md")
+    }
+}
+
+# Queue ECN-BENCH batches (dry-run style queue output)
+.\.venv311\Scripts\python scripts\run_ecnbench_openrouter.py `
+  --seeds-dir $flatSeeds `
+  --events-raw ..\..\..\..\data\events_raw.json `
+  --batch-size 10 `
+  --repeat-runs 2 `
+  --trace-out logs\ecnbench_trace.jsonl `
+  --variance-out logs\variance_summary.json
+```
 
 ## Architecture
 

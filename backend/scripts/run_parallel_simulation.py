@@ -981,6 +981,35 @@ def _get_comment_info(
     return None
 
 
+def _apply_benchmark_env(
+    llm_api_key: Optional[str] = None,
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Apply deterministic benchmark OpenRouter bridge variables."""
+    llm_api_key = llm_api_key or os.environ.get("LLM_API_KEY", "")
+    llm_base_url = llm_base_url or os.environ.get("LLM_BASE_URL", "")
+    llm_model = llm_model or os.environ.get("LLM_MODEL_NAME", "") or (config or {}).get("llm_model", "gpt-4o-mini")
+    benchmark_mode_enabled = os.environ.get("BENCHMARK_MODE", "").strip().lower() == "true"
+
+    if not llm_api_key:
+        raise ValueError("LLM_API_KEY is required")
+
+    os.environ["OPENAI_API_KEY"] = llm_api_key
+    if llm_base_url:
+        os.environ["OPENAI_API_BASE_URL"] = llm_base_url
+    else:
+        os.environ.pop("OPENAI_API_BASE_URL", None)
+
+    if benchmark_mode_enabled:
+        os.environ.setdefault("BENCHMARK_TEMPERATURE", "0")
+        os.environ.setdefault("BENCHMARK_SEED", "42")
+        random.seed(int(os.environ["BENCHMARK_SEED"]))
+
+    return llm_model
+
+
 def create_model(config: Dict[str, Any], use_boost: bool = False):
     """
     Create LLM model
@@ -995,40 +1024,24 @@ def create_model(config: Dict[str, Any], use_boost: bool = False):
         config: Simulation configuration dictionary
         use_boost: Whether to use acceleration LLM configuration (if available)
     """
-    # Check if acceleration configuration exists
     boost_api_key = os.environ.get("LLM_BOOST_API_KEY", "")
     boost_base_url = os.environ.get("LLM_BOOST_BASE_URL", "")
     boost_model = os.environ.get("LLM_BOOST_MODEL_NAME", "")
-    has_boost_config = bool(boost_api_key)
-    
-    # Choose which LLM to use based on parameters and configuration
+    has_boost_config = bool(boost_api_key and boost_base_url)
+
     if use_boost and has_boost_config:
-        # Use acceleration configuration
-        llm_api_key = boost_api_key
-        llm_base_url = boost_base_url
-        llm_model = boost_model or os.environ.get("LLM_MODEL_NAME", "")
+        llm_model = _apply_benchmark_env(
+            llm_api_key=boost_api_key,
+            llm_base_url=boost_base_url,
+            llm_model=boost_model,
+            config=config,
+        )
         config_label = "[Acceleration LLM]"
     else:
-        # useCommon configuration
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
-        llm_base_url = os.environ.get("LLM_BASE_URL", "")
-        llm_model = os.environ.get("LLM_MODEL_NAME", "")
+        llm_model = _apply_benchmark_env(config=config)
         config_label = "[Common LLM]"
-    
-    # If model name is not in .env, use config as fallback
-    if not llm_model:
-        llm_model = config.get("llm_model", "gpt-4o-mini")
-    
-    # Set environment variables required by camel-ai
-    if llm_api_key:
-        os.environ["OPENAI_API_KEY"] = llm_api_key
-    
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ValueError("Missing API Key configuration, please set LLM_API_KEY in .env file in project root")
-    
-    if llm_base_url:
-        os.environ["OPENAI_API_BASE_URL"] = llm_base_url
-    
+
+    llm_base_url = os.environ.get("OPENAI_API_BASE_URL", "")
     print(f"{config_label} model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else 'default'}...")
     
     return ModelFactory.create(

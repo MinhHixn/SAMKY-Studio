@@ -13,6 +13,11 @@ def test_brier_score_matches_multiclass_expected_value():
     assert score == pytest.approx(0.38)
 
 
+def test_brier_score_treats_missing_truth_label_as_zero_probability():
+    score = brier_score({"A": 0.7, "B": 0.3}, "C")
+    assert score == pytest.approx(1.58)
+
+
 def test_summarize_condition_scores_computes_means_and_lift():
     summary = summarize_condition_scores(
         [
@@ -58,6 +63,29 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
     ],
 )
 def test_probability_evaluator_rejects_missing_invalid_or_zero_mass_probabilities(payload, match):
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096):
+            return payload
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+
+    with pytest.raises(ValueError, match=match):
+        evaluator.evaluate("Q", "A", "E")
+
+
+@pytest.mark.parametrize(
+    "payload, match",
+    [
+        ({"probabilities": {"A": float("nan"), "B": 1, "C": 1}}, r"finite"),
+        ({"probabilities": {"A": float("inf"), "B": 1, "C": 1}}, r"finite"),
+        ({"probabilities": {"A": 1, "B": -float("inf"), "C": 1}}, r"finite"),
+    ],
+)
+def test_probability_evaluator_rejects_non_finite_probabilities(payload, match):
     class FakeClient:
         def chat_json(self, messages, temperature=0.3, max_tokens=4096):
             return payload

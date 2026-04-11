@@ -7,11 +7,11 @@ from typing import Dict, List
 
 
 def brier_score(probabilities: Dict[str, float], truth: str) -> float:
-    if truth not in probabilities:
-        raise ValueError(f"truth outcome {truth!r} missing from probabilities")
-
+    labels = set(probabilities)
+    labels.add(truth)
     score = 0.0
-    for outcome, probability in probabilities.items():
+    for outcome in labels:
+        probability = probabilities.get(outcome, 0.0)
         if not isinstance(probability, (int, float)):
             raise ValueError(f"Invalid probability for outcome {outcome!r}: {probability!r}")
         observed = 1.0 if outcome == truth else 0.0

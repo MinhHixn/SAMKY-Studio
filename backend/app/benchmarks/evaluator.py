@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Mapping
 
 from .role_router import BenchmarkRoleRouter
@@ -57,8 +58,10 @@ class ProbabilityEvaluator:
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Invalid probability for outcome {label!r}: {value!r}")
             numeric = float(value)
-            if numeric < 0.0:
-                raise ValueError(f"Invalid probability for outcome {label!r}: {value!r} (must be non-negative)")
+            if not math.isfinite(numeric) or numeric < 0.0:
+                raise ValueError(
+                    f"Invalid probability for outcome {label!r}: {value!r} (must be finite and non-negative)"
+                )
             normalized[label] = numeric
             total += numeric
 

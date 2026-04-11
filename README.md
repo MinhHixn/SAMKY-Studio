@@ -192,9 +192,9 @@ Run the end-to-end ECN-BENCH protocol benchmark:
 Set-Location backend
 
 .\.venv311\Scripts\python scripts\run_ecnbench_protocol.py `
-  --seeds-dir ..\..\..\data\seeds `
-  --events-raw ..\..\..\data\events_raw.json `
-  --injection-bank ..\..\..\data\injections\step30_injection_bank.json `
+  --seeds-dir ..\..\..\..\data\seeds `
+  --events-raw ..\..\..\..\data\events_raw.json `
+  --injection-bank ..\..\..\..\data\injections\step30_injection_bank.json `
   --output-dir logs\benchmark_runs `
   --events 30 `
   --repeats 1

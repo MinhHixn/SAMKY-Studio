@@ -21,6 +21,34 @@ def test_build_condition_matrix_counts_and_contents():
     ]
 
 
+def test_resolve_default_injection_bank_prefers_first_existing_path(monkeypatch, tmp_path):
+    first = tmp_path / "missing" / "step30_injection_bank.json"
+    second = tmp_path / "data" / "injections" / "step30_injection_bank.json"
+    second.parent.mkdir(parents=True, exist_ok=True)
+    second.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        protocol_script,
+        "_default_injection_bank_candidates",
+        lambda: [first, second],
+    )
+
+    assert protocol_script._resolve_default_injection_bank() == str(second)
+
+
+def test_resolve_default_injection_bank_returns_deterministic_fallback(monkeypatch, tmp_path):
+    first = tmp_path / "missing" / "step30_injection_bank.json"
+    second = tmp_path / "also_missing" / "step30_injection_bank.json"
+
+    monkeypatch.setattr(
+        protocol_script,
+        "_default_injection_bank_candidates",
+        lambda: [first, second],
+    )
+
+    assert protocol_script._resolve_default_injection_bank() == str(first)
+
+
 def test_load_events_from_nested_payload_shape(tmp_path):
     payload = {
         "dataset": {

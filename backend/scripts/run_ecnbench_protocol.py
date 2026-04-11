@@ -21,7 +21,32 @@ from app.benchmarks.role_router import BenchmarkRoleRouter
 from app.benchmarks.scoring import brier_score, summarize_condition_scores
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
-DEFAULT_INJECTION_BANK = str(_PROJECT_ROOT / "data" / "injections" / "step30_injection_bank.json")
+
+def _script_parent(level: int) -> Path | None:
+    parents = _SCRIPTS_DIR.parents
+    if level < len(parents):
+        return parents[level]
+    return None
+
+
+def _default_injection_bank_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    workspace_root = _script_parent(4)
+    if workspace_root is not None:
+        candidates.append(workspace_root / "data" / "injections" / "step30_injection_bank.json")
+    candidates.append(_PROJECT_ROOT / "data" / "injections" / "step30_injection_bank.json")
+    return candidates
+
+
+def _resolve_default_injection_bank() -> str:
+    candidates = _default_injection_bank_candidates()
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return str(candidates[0])
+
+
+DEFAULT_INJECTION_BANK = _resolve_default_injection_bank()
 DEFAULT_OUTPUT_DIR = "backend/logs/benchmark_runs"
 CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000

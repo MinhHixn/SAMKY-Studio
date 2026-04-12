@@ -211,6 +211,14 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - `summary.json` — mean Brier scores, lift, and success/failure counts
 - `simulation_config.json`, `twitter_profiles.csv`, `reddit_profiles.json` — per-unit simulation inputs
 
+#### ECN-BENCH continuation invariants
+
+- Workflow mode remains A/B/C per event (`workflow_mode: "abc-per-event"`).
+- `run_manifest.json` includes:
+  - `benchmark_model`
+  - `expected_run_units` (`events_loaded * 3 * repeats`)
+- `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
+
 ### ECN-BENCH v0.3 parity architecture update
 
 - Benchmark run lifecycle now uses reusable orchestrator classes in `backend/app/benchmarks/orchestrator.py`:

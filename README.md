@@ -169,7 +169,7 @@ Set-Location backend
 $flatSeeds = "tmp_seeds_flat"
 if (Test-Path $flatSeeds) { Remove-Item $flatSeeds -Recurse -Force }
 New-Item -ItemType Directory -Path $flatSeeds | Out-Null
-Get-ChildItem ..\data\seeds -Directory | ForEach-Object {
+Get-ChildItem ..\..\data\seeds -Directory | ForEach-Object {
     $contextPath = Join-Path $_.FullName "context.md"
     if (Test-Path $contextPath) {
         Copy-Item $contextPath (Join-Path $flatSeeds "$($_.Name).md")
@@ -179,7 +179,7 @@ Get-ChildItem ..\data\seeds -Directory | ForEach-Object {
 # Queue ECN-BENCH batches (dry-run style queue output)
 .\.venv311\Scripts\python scripts\run_ecnbench_openrouter.py `
   --seeds-dir $flatSeeds `
-  --events-raw ..\data\events_raw.json `
+  --events-raw ..\..\data\events_raw.json `
   --batch-size 10 `
   --repeat-runs 2 `
   --trace-out logs\ecnbench_trace.jsonl `
@@ -192,9 +192,9 @@ Run the end-to-end ECN-BENCH protocol benchmark:
 Set-Location backend
 
 .\.venv311\Scripts\python scripts\run_ecnbench_protocol.py `
-  --seeds-dir ..\data\seeds `
-  --events-raw ..\data\events_raw.json `
-  --injection-bank ..\data\injections\step30_injection_bank.json `
+  --seeds-dir ..\..\data\seeds `
+  --events-raw ..\..\data\events_raw.json `
+  --injection-bank ..\..\data\injections\step30_injection_bank.json `
   --output-dir logs\benchmark_runs `
   --events 30 `
   --repeats 1 `
@@ -224,7 +224,7 @@ Run from `backend` to keep this parity work auditable:
 
 ```powershell
 python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q
-python scripts\run_ecnbench_protocol.py --seeds-dir ..\data\seeds --events-raw ..\data\events_raw.json --injection-bank ..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1 --trace-out logs\benchmark_traces\ecnbench_trace_sanity.jsonl
+python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-raw ..\..\data\events_raw.json --injection-bank ..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1 --trace-out logs\benchmark_traces\ecnbench_trace_sanity.jsonl
 # Broader regression sweep traceability: python -m pytest tests -q
 # Blocker in this environment: collection fails with `ModuleNotFoundError: camel` (install `oasis-ai`/`camel-ai`).
 ```

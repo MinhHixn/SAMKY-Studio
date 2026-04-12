@@ -219,6 +219,15 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
   - `expected_run_units` (derived from generated condition matrix size; in current A/B/C mode this equals `events_loaded * 3 * repeats`)
 - `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
 
+#### ECN-BENCH rubric evaluator contract (additive)
+
+- Evaluator output now includes:
+  - `probabilities` (legacy output, unchanged)
+  - `mcq_dimensions` (7 dimensions × 4 buckets: `very_low`, `low`, `high`, `very_high`)
+  - `validated_scales` (contains `schema_version` and normalized `scores`)
+- Numeric aggregation remains unchanged: multiclass Brier scoring + condition lift (`A_to_B`, `A_to_C`, `B_to_C`).
+- Weighted 7-dimension aggregate scoring is intentionally deferred.
+
 ### ECN-BENCH v0.3 parity architecture update
 
 - Benchmark run lifecycle now uses reusable orchestrator classes in `backend/app/benchmarks/orchestrator.py`:

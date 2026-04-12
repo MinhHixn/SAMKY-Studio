@@ -68,6 +68,7 @@ class ConditionExecutor:
     ) -> Dict[str, Any]:
         unit_dir = Path(unit_dir)
         unit_dir.mkdir(parents=True, exist_ok=True)
+        unit_id = f"{event['event_id']}_{condition}_r{repeat}"
 
         config = config_builder(event, condition)
         config_path = unit_dir / "simulation_config.json"
@@ -77,6 +78,7 @@ class ConditionExecutor:
             "event_id": str(event["event_id"]),
             "condition": condition,
             "repeat": repeat,
+            "unit_id": unit_id,
             "run_id": run_id,
             "seed_file": str(seed_file),
         }
@@ -357,6 +359,7 @@ class BenchmarkRunOrchestrator:
                 fallback_repeat = int(fallback_repeat_raw)
             except Exception:
                 fallback_repeat = 0
+            fallback_unit_id = f"{fallback_event_id}_{fallback_condition}_r{fallback_repeat}"
 
             try:
                 event = event_lookup[str(matrix_row["event_id"])]
@@ -386,12 +389,15 @@ class BenchmarkRunOrchestrator:
                         evaluator=row_evaluator,
                     )
                 )
+                if "unit_id" not in rows[-1]:
+                    rows[-1]["unit_id"] = f"{event['event_id']}_{condition}_r{repeat}"
             except Exception as exc:
                 rows.append(
                     {
                         "event_id": fallback_event_id,
                         "condition": fallback_condition,
                         "repeat": fallback_repeat,
+                        "unit_id": fallback_unit_id,
                         "run_id": run_id,
                         "seed_file": str(unit_seed_file),
                         "simulation_status": "simulation_failed",

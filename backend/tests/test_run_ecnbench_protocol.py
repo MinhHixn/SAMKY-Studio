@@ -135,6 +135,8 @@ def test_build_event_result_row_full_simulation_completed_logic():
 
     assert incomplete["full_simulation_completed"] is False
     assert complete["full_simulation_completed"] is True
+    assert incomplete["unit_id"] == "E1_A_r1"
+    assert complete["unit_id"] == "E1_A_r1"
 
 
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
@@ -410,6 +412,7 @@ def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert rows[0]["simulation_status"] == "simulation_failed"
+    assert rows[0]["unit_id"] == "E1_A_r1"
     assert summary["simulation_failure_count"] == 1
 
 
@@ -445,6 +448,7 @@ def test_main_records_evaluation_failure_and_summary(monkeypatch, tmp_path):
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert rows[0]["simulation_status"] == "evaluation_failed"
+    assert rows[0]["unit_id"] == "E1_A_r1"
     assert summary["evaluation_failure_count"] == 1
 
 

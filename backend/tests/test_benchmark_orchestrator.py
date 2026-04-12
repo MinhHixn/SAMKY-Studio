@@ -42,6 +42,7 @@ def test_condition_executor_returns_simulation_failed_row(monkeypatch, tmp_path)
     assert row["evaluation_status"] == "not_run"
     assert row["full_simulation_completed"] is False
     assert row["run_id"] == "r1"
+    assert row["unit_id"] == "E1_A_r1"
     assert row["seed_file"] == str(tmp_path / "seed.md")
     assert row["probabilities"] is None
     assert row["brier"] is None
@@ -85,6 +86,7 @@ def test_condition_executor_returns_evaluation_failed_row(monkeypatch, tmp_path)
     assert row["simulation_status"] == "evaluation_failed"
     assert row["evaluation_status"] == "failed"
     assert row["run_id"] == "r1"
+    assert row["unit_id"] == "E1_A_r1"
     assert row["seed_file"] == str(tmp_path / "seed.md")
     assert row["probabilities"] is None
     assert row["brier"] is None
@@ -210,6 +212,7 @@ def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
     assert len(rows) == 2
     first_row, second_row = rows
     assert first_row["event_id"] == "E1"
+    assert first_row["unit_id"] == "E1_A_r1"
     assert first_row["simulation_status"] == "simulation_failed"
     assert first_row["evaluation_status"] == "not_run"
     assert first_row["run_id"] == "isolated-run"
@@ -218,6 +221,7 @@ def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
     assert first_row["brier"] is None
     assert "RuntimeError: unit boom" == first_row["error"]
     assert second_row["event_id"] == "E2"
+    assert second_row["unit_id"] == "E2_B_r1"
     assert second_row["simulation_status"] == "completed"
 
 
@@ -267,12 +271,14 @@ def test_orchestrator_isolates_malformed_rows_and_missing_event_lookup(tmp_path)
 
     assert rows[1]["event_id"] == "E2"
     assert rows[1]["condition"] == "unknown_condition"
+    assert rows[1]["unit_id"] == "E2_unknown_condition_r1"
     assert rows[1]["simulation_status"] == "simulation_failed"
     assert rows[1]["evaluation_status"] == "not_run"
     assert "'condition'" in rows[1]["error"]
 
     assert rows[2]["event_id"] == "MISSING"
     assert rows[2]["condition"] == "C"
+    assert rows[2]["unit_id"] == "MISSING_C_r1"
     assert rows[2]["simulation_status"] == "simulation_failed"
     assert rows[2]["evaluation_status"] == "not_run"
     assert "'MISSING'" in rows[2]["error"]

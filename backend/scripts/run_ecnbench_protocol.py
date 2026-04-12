@@ -428,8 +428,10 @@ def build_event_result_row(
     evidence_text: str | None = None,
 ) -> Dict[str, Any]:
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
+    event_id = str(event["event_id"])
     return {
-        "event_id": str(event["event_id"]),
+        "event_id": event_id,
+        "unit_id": f"{event_id}_{condition}_r{repeat}",
         "question": event.get("question", ""),
         "ground_truth": event.get("outcome") or event.get("answer", ""),
         "options": event.get("options", []),

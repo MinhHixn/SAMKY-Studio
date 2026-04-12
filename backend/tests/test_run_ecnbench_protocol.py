@@ -129,6 +129,28 @@ def test_load_events_ignores_taxonomy_key_value_maps(tmp_path):
     assert [event["event_id"] for event in events] == ["S2"]
 
 
+def test_load_events_keeps_scalar_events_with_metadata_keys(tmp_path):
+    payload = {
+        "study": {
+            "event": {
+                "id": "M1",
+                "question": "Q",
+                "outcome": "YES",
+                "source": "ecnb-event-pack",
+                "category": "geopolitics",
+            }
+        }
+    }
+    path = tmp_path / "events.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    events = protocol_script.load_events_from_raw(path)
+
+    assert [event["event_id"] for event in events] == ["M1"]
+    assert events[0]["source"] == "ecnb-event-pack"
+    assert events[0]["category"] == "geopolitics"
+
+
 def test_build_event_result_row_full_simulation_completed_logic():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 

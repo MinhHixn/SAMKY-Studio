@@ -110,7 +110,7 @@ def _looks_like_scalar_event_map(payload: Mapping[str, Any]) -> bool:
         return False
     if any(isinstance(value, (dict, list, tuple)) for value in payload.values()):
         return False
-    allowed_keys = {
+    event_keys = {
         "event_id",
         "id",
         "question",
@@ -127,7 +127,9 @@ def _looks_like_scalar_event_map(payload: Mapping[str, Any]) -> bool:
         "choices",
         "answers",
     }
-    return set(str(key) for key in payload.keys()).issubset(allowed_keys)
+    keys = {str(key) for key in payload.keys()}
+    non_id_event_keys = event_keys - {"event_id", "id"}
+    return bool(keys & non_id_event_keys) or keys.issubset({"event_id", "id"})
 
 
 def _normalize_event_record(record: Mapping[str, Any], fallback_index: int) -> Dict[str, Any]:

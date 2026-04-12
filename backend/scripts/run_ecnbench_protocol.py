@@ -580,7 +580,8 @@ def main() -> None:
 
     trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
     trace_writer = _LazyTraceWriter(trace_path)
-    expected_run_units = len(events) * len(CONDITIONS) * args.repeats
+    condition_matrix = build_condition_matrix(events, args.repeats)
+    expected_run_units = len(condition_matrix)
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -628,7 +629,7 @@ def main() -> None:
         output_root=output_root,
         events=events,
         repeats=args.repeats,
-        build_condition_matrix=build_condition_matrix,
+        build_condition_matrix=lambda _events, _repeats: list(condition_matrix),
         event_lookup=event_lookup,
         write_summary=write_summary,
         config_builder=lambda event, condition: build_simulation_config(

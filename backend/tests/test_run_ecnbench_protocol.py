@@ -323,7 +323,8 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert captured["output_root"] == tmp_path / "runs"
     assert captured["events"] == [{"event_id": "E1", "question": "Q", "outcome": "A"}]
     assert captured["repeats"] == 1
-    assert captured["build_condition_matrix"] is protocol_script.build_condition_matrix
+    assert callable(captured["build_condition_matrix"])
+    assert captured["build_condition_matrix"]([], 99) == protocol_script.build_condition_matrix(captured["events"], captured["repeats"])
     assert captured["event_lookup"] == {"E1": {"event_id": "E1", "question": "Q", "outcome": "A"}}
     assert captured["write_summary"] is protocol_script.write_summary
     assert captured["evaluator"] is protocol_script._evaluate_row
@@ -348,6 +349,19 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
 def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    custom_events = [
+        {"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]},
+        {"event_id": "E2", "question": "Q2", "outcome": "B", "options": ["A", "B"]},
+    ]
+    custom_matrix = [
+        {"event_id": "E1", "condition": "A", "repeat": 1},
+        {"event_id": "E1", "condition": "B", "repeat": 1},
+        {"event_id": "E2", "condition": "A", "repeat": 1},
+        {"event_id": "E2", "condition": "C", "repeat": 1},
+        {"event_id": "E2", "condition": "C", "repeat": 2},
+    ]
+    monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *args, **kwargs: custom_events)
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", lambda *args, **kwargs: list(custom_matrix))
 
     output_dir = tmp_path / "runs"
     argv = [
@@ -358,6 +372,10 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
         str(tmp_path / "events.json"),
         "--output-dir",
         str(output_dir),
+        "--events",
+        "2",
+        "--repeats",
+        "2",
     ]
     monkeypatch.setattr(protocol_script.sys, "argv", argv)
 
@@ -366,7 +384,7 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["workflow_mode"] == "abc-per-event"
     assert manifest["benchmark_model"] == "openrouter/benchmark-model"
-    assert manifest["expected_run_units"] == 3
+    assert manifest["expected_run_units"] == len(custom_matrix)
 
 
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):

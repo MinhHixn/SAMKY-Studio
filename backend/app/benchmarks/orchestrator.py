@@ -42,9 +42,17 @@ class ConditionExecutor:
             text=True,
             timeout=60 * 60 * 60,
             env=self._subprocess_env(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
         )
+
+    @staticmethod
+    def _write_simulation_log(unit_dir: Path, stdout: str | None, stderr: str | None) -> None:
+        lines: list[str] = []
+        if stdout:
+            lines.append(stdout.rstrip("\n"))
+        if stderr:
+            lines.append(stderr.rstrip("\n"))
+        (Path(unit_dir) / "simulation.log").write_text("\n".join(lines), encoding="utf-8")
 
     def execute(
         self,
@@ -65,7 +73,6 @@ class ConditionExecutor:
         config_path = unit_dir / "simulation_config.json"
         config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        completed = self._run_simulation(config_path)
         base_row = {
             "event_id": str(event["event_id"]),
             "condition": condition,
@@ -73,7 +80,12 @@ class ConditionExecutor:
             "run_id": run_id,
             "seed_file": str(seed_file),
         }
-        if completed.returncode != 0:
+
+        try:
+            completed = self._run_simulation(config_path)
+            self._write_simulation_log(unit_dir, completed.stdout, completed.stderr)
+        except Exception as exc:
+            self._write_simulation_log(unit_dir, "", f"{type(exc).__name__}: {exc}")
             return {
                 **base_row,
                 "simulation_status": "simulation_failed",
@@ -81,6 +93,19 @@ class ConditionExecutor:
                 "full_simulation_completed": False,
                 "probabilities": None,
                 "brier": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+        if completed.returncode != 0:
+            error_output = (completed.stderr or completed.stdout or "").strip() or "Simulation process exited with non-zero status"
+            return {
+                **base_row,
+                "simulation_status": "simulation_failed",
+                "evaluation_status": "not_run",
+                "full_simulation_completed": False,
+                "probabilities": None,
+                "brier": None,
+                "error": error_output,
             }
 
         try:
@@ -164,18 +189,35 @@ class BenchmarkRunOrchestrator:
                     )
                     + "\n"
                 )
-            rows.append(
-                self._executor.execute(
-                    event=event,
-                    condition=condition,
-                    repeat=repeat,
-                    run_id=run_id,
-                    unit_dir=run_dir / f"{event['event_id']}_{condition}_r{repeat}",
-                    seed_file=unit_seed_file,
-                    config_builder=row_config_builder,
-                    evaluator=row_evaluator,
+            try:
+                rows.append(
+                    self._executor.execute(
+                        event=event,
+                        condition=condition,
+                        repeat=repeat,
+                        run_id=run_id,
+                        unit_dir=run_dir / f"{event['event_id']}_{condition}_r{repeat}",
+                        seed_file=unit_seed_file,
+                        config_builder=row_config_builder,
+                        evaluator=row_evaluator,
+                    )
                 )
-            )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "event_id": str(event["event_id"]),
+                        "condition": condition,
+                        "repeat": repeat,
+                        "run_id": run_id,
+                        "seed_file": str(unit_seed_file),
+                        "simulation_status": "unit_failed",
+                        "evaluation_status": "not_run",
+                        "full_simulation_completed": False,
+                        "probabilities": None,
+                        "brier": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
 
         (run_dir / "event_results.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         write_summary(run_dir, rows)

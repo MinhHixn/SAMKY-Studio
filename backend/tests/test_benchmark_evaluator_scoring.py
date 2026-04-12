@@ -33,11 +33,24 @@ def test_summarize_condition_scores_computes_means_and_lift():
 
 
 def test_summarize_rubric_artifacts_counts_presence_and_scale_keys():
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 2, "high": 3, "very_high": 4} for key in dimension_keys
+    }
     rows = [
         {
             "full_simulation_completed": True,
-            "mcq_dimensions": {"prediction_accuracy": {}},
+            "mcq_dimensions": mcq_dimensions,
             "validated_scales": {
+                "schema_version": "v1",
                 "scores": {
                     "calibration_consistency": 0.7,
                     "evidence_alignment": 0.8,
@@ -52,6 +65,44 @@ def test_summarize_rubric_artifacts_counts_presence_and_scale_keys():
     assert summary["rubric_completed_count"] == 1
     assert summary["rubric_missing_count"] == 1
     assert summary["validated_scale_keys"] == ["calibration_consistency", "evidence_alignment"]
+
+
+def test_summarize_rubric_artifacts_excludes_malformed_rubric_dicts():
+    valid_dimensions = {
+        key: {"very_low": 1, "low": 2, "high": 3, "very_high": 4}
+        for key in [
+            "prediction_accuracy",
+            "polarization",
+            "herd_effect",
+            "deliberation_quality",
+            "susceptibility",
+            "convergence",
+            "information_diversity",
+        ]
+    }
+    rows = [
+        {
+            "full_simulation_completed": True,
+            "mcq_dimensions": valid_dimensions,
+            "validated_scales": {"schema_version": "v1", "scores": {"evidence_alignment": 0.8}},
+        },
+        {
+            "full_simulation_completed": True,
+            "mcq_dimensions": {"prediction_accuracy": {"very_low": 1, "low": 1, "high": 1, "very_high": 1}},
+            "validated_scales": {"schema_version": "v1", "scores": {"evidence_alignment": 0.8}},
+        },
+        {
+            "full_simulation_completed": True,
+            "mcq_dimensions": valid_dimensions,
+            "validated_scales": {"schema_version": "v2", "scores": {"evidence_alignment": 0.8}},
+        },
+    ]
+
+    summary = summarize_rubric_artifacts(rows)
+
+    assert summary["rubric_completed_count"] == 1
+    assert summary["rubric_missing_count"] == 2
+    assert summary["validated_scale_keys"] == ["evidence_alignment"]
 
 
 def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role():

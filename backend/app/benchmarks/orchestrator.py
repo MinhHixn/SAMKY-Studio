@@ -7,6 +7,14 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, TypeAlias, TypedDict
 
+from .evaluator import (
+    MCQ_BUCKET_KEYS,
+    MCQ_DIMENSION_KEYS,
+    VALIDATED_SCALES_SCHEMA_VERSION,
+    _normalize_probability_mapping,
+    _validate_numeric_scores_mapping,
+)
+
 LegacyEvaluatorPayload: TypeAlias = tuple[Dict[str, float], float]
 
 
@@ -20,6 +28,64 @@ class MappingEvaluatorPayload(TypedDict):
 ProtocolEvaluatorPayload: TypeAlias = LegacyEvaluatorPayload | MappingEvaluatorPayload
 LegacyEvaluatorCallable: TypeAlias = Callable[..., LegacyEvaluatorPayload]
 ProtocolEvaluatorCallable: TypeAlias = Callable[..., ProtocolEvaluatorPayload]
+
+
+def _validate_probability_payload(probabilities: Any, *, context: str) -> Dict[str, float]:
+    normalized = _normalize_probability_mapping(probabilities, f"{context} 'probabilities'")
+    return {label: float(value) for label, value in normalized.items()}
+
+
+def _validate_brier_payload(brier: Any, *, context: str) -> float:
+    try:
+        parsed_brier = float(brier)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{context} 'brier' must be numeric") from exc
+    if not math.isfinite(parsed_brier):
+        raise ValueError(f"{context} 'brier' must be finite")
+    return parsed_brier
+
+
+def _validate_mcq_dimensions_payload(mcq_dimensions: Any, *, context: str) -> Dict[str, Dict[str, float]]:
+    if not isinstance(mcq_dimensions, Mapping):
+        raise ValueError(f"{context} 'mcq_dimensions' must be a mapping")
+
+    provided_dimensions = set(mcq_dimensions.keys())
+    expected_dimensions = set(MCQ_DIMENSION_KEYS)
+    if provided_dimensions != expected_dimensions:
+        raise ValueError(f"{context} 'mcq_dimensions' must include exactly the required dimensions")
+
+    normalized_dimensions: Dict[str, Dict[str, float]] = {}
+    expected_bucket_keys = set(MCQ_BUCKET_KEYS)
+    for dimension in MCQ_DIMENSION_KEYS:
+        buckets = mcq_dimensions.get(dimension)
+        if not isinstance(buckets, Mapping):
+            raise ValueError(f"{context} 'mcq_dimensions.{dimension}' must be a mapping")
+        if set(buckets.keys()) != expected_bucket_keys:
+            raise ValueError(
+                f"{context} 'mcq_dimensions.{dimension}' must include exactly these buckets: {', '.join(MCQ_BUCKET_KEYS)}"
+            )
+        normalized_dimensions[dimension] = _normalize_probability_mapping(
+            buckets,
+            f"{context} 'mcq_dimensions.{dimension}'",
+        )
+    return normalized_dimensions
+
+
+def _validate_validated_scales_payload(validated_scales: Any, *, context: str) -> Dict[str, Any]:
+    if not isinstance(validated_scales, Mapping):
+        raise ValueError(f"{context} 'validated_scales' must be a mapping")
+
+    schema_version = validated_scales.get("schema_version")
+    if schema_version != VALIDATED_SCALES_SCHEMA_VERSION:
+        raise ValueError(
+            f"{context} 'validated_scales.schema_version' must be {VALIDATED_SCALES_SCHEMA_VERSION!r}"
+        )
+
+    scores = _validate_numeric_scores_mapping(
+        validated_scales.get("scores"),
+        f"{context} 'validated_scales.scores'",
+    )
+    return {"schema_version": schema_version, "scores": scores}
 
 
 class ConditionExecutor:
@@ -285,6 +351,11 @@ class ProtocolConditionExecutor:
                         if isinstance(evaluation_payload, tuple):
                             # Intentional compatibility path for legacy tuple-based evaluators.
                             probabilities, brier = evaluation_payload
+                            probabilities = _validate_probability_payload(
+                                probabilities,
+                                context="Evaluator tuple field",
+                            )
+                            brier = _validate_brier_payload(brier, context="Evaluator tuple field")
                             mcq_dimensions = None
                             validated_scales = None
                         elif isinstance(evaluation_payload, Mapping):
@@ -293,54 +364,22 @@ class ProtocolConditionExecutor:
                             if missing_keys:
                                 raise ValueError(f"Evaluator mapping missing required keys: {', '.join(missing_keys)}")
 
-                            raw_probabilities = evaluation_payload["probabilities"]
-                            if not isinstance(raw_probabilities, Mapping):
-                                raise ValueError("Evaluator mapping field 'probabilities' must be a mapping")
-
-                            parsed_probabilities: Dict[str, float] = {}
-                            total_probability_mass = 0.0
-                            for key, value in raw_probabilities.items():
-                                try:
-                                    probability = float(value)
-                                except (TypeError, ValueError) as exc:
-                                    raise ValueError(
-                                        "Evaluator mapping field 'probabilities' must contain numeric values"
-                                    ) from exc
-                                if not math.isfinite(probability):
-                                    raise ValueError(
-                                        "Evaluator mapping field 'probabilities' must contain finite numeric values"
-                                    )
-                                if probability < 0:
-                                    raise ValueError(
-                                        "Evaluator mapping field 'probabilities' must contain non-negative values"
-                                    )
-                                parsed_probabilities[str(key)] = probability
-                                total_probability_mass += probability
-
-                            if total_probability_mass <= 0:
-                                raise ValueError(
-                                    "Evaluator mapping field 'probabilities' must have a positive total mass"
-                                )
-
-                            try:
-                                parsed_brier = float(evaluation_payload["brier"])
-                            except (TypeError, ValueError) as exc:
-                                raise ValueError("Evaluator mapping field 'brier' must be numeric") from exc
-                            if not math.isfinite(parsed_brier):
-                                raise ValueError("Evaluator mapping field 'brier' must be finite")
-
-                            parsed_mcq_dimensions = evaluation_payload["mcq_dimensions"]
-                            if not isinstance(parsed_mcq_dimensions, Mapping):
-                                raise ValueError("Evaluator mapping field 'mcq_dimensions' must be a mapping")
-
-                            parsed_validated_scales = evaluation_payload["validated_scales"]
-                            if not isinstance(parsed_validated_scales, Mapping):
-                                raise ValueError("Evaluator mapping field 'validated_scales' must be a mapping")
-
-                            probabilities = parsed_probabilities
-                            brier = parsed_brier
-                            mcq_dimensions = parsed_mcq_dimensions
-                            validated_scales = parsed_validated_scales
+                            probabilities = _validate_probability_payload(
+                                evaluation_payload["probabilities"],
+                                context="Evaluator mapping field",
+                            )
+                            brier = _validate_brier_payload(
+                                evaluation_payload["brier"],
+                                context="Evaluator mapping field",
+                            )
+                            mcq_dimensions = _validate_mcq_dimensions_payload(
+                                evaluation_payload["mcq_dimensions"],
+                                context="Evaluator mapping field",
+                            )
+                            validated_scales = _validate_validated_scales_payload(
+                                evaluation_payload["validated_scales"],
+                                context="Evaluator mapping field",
+                            )
                         else:
                             raise ValueError("Evaluator result must be a tuple or mapping")
                         evaluation_completed = True
@@ -359,6 +398,10 @@ class ProtocolConditionExecutor:
                         )
                     except Exception as exc:
                         simulation_status = "evaluation_failed"
+                        probabilities = None
+                        brier = None
+                        mcq_dimensions = None
+                        validated_scales = None
                         row_error = self._exception_formatter(exc)
                         self._trace_writer.write(
                             {

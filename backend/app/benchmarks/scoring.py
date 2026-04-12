@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Dict, List
+
+from .evaluator import (
+    MCQ_BUCKET_KEYS,
+    MCQ_DIMENSION_KEYS,
+    VALIDATED_SCALES_SCHEMA_VERSION,
+    _validate_numeric_scores_mapping,
+)
 
 
 def brier_score(probabilities: Dict[str, float], truth: str) -> float:
@@ -44,7 +52,7 @@ def summarize_rubric_artifacts(rows: List[Dict]) -> Dict:
     for row in completed_rows:
         mcq_dimensions = row.get("mcq_dimensions")
         validated_scales = row.get("validated_scales")
-        if not isinstance(mcq_dimensions, dict) or not isinstance(validated_scales, dict):
+        if not _is_valid_rubric_artifact(mcq_dimensions, validated_scales):
             continue
         rubric_ready_count += 1
 
@@ -57,3 +65,35 @@ def summarize_rubric_artifacts(rows: List[Dict]) -> Dict:
         "rubric_missing_count": len(completed_rows) - rubric_ready_count,
         "validated_scale_keys": sorted(validated_scale_keys),
     }
+
+
+def _is_valid_rubric_artifact(mcq_dimensions: object, validated_scales: object) -> bool:
+    if not isinstance(mcq_dimensions, dict) or not isinstance(validated_scales, dict):
+        return False
+
+    if set(mcq_dimensions.keys()) != set(MCQ_DIMENSION_KEYS):
+        return False
+
+    expected_buckets = set(MCQ_BUCKET_KEYS)
+    for dimension in MCQ_DIMENSION_KEYS:
+        buckets = mcq_dimensions.get(dimension)
+        if not isinstance(buckets, dict) or set(buckets.keys()) != expected_buckets:
+            return False
+        total = 0.0
+        for value in buckets.values():
+            if not isinstance(value, (int, float)):
+                return False
+            numeric = float(value)
+            if not math.isfinite(numeric) or numeric < 0.0:
+                return False
+            total += numeric
+        if total <= 0.0:
+            return False
+
+    if validated_scales.get("schema_version") != VALIDATED_SCALES_SCHEMA_VERSION:
+        return False
+    try:
+        _validate_numeric_scores_mapping(validated_scales.get("scores"), "validated_scales.scores")
+    except ValueError:
+        return False
+    return True

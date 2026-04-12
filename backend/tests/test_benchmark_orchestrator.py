@@ -155,6 +155,26 @@ def _build_protocol_executor(tmp_path):
     return executor, trace_entries
 
 
+def _valid_mcq_dimensions():
+    dimension_keys = (
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    )
+    return {
+        key: {"very_low": 1.0, "low": 1.0, "high": 1.0, "very_high": 1.0}
+        for key in dimension_keys
+    }
+
+
+def _valid_validated_scales():
+    return {"schema_version": "v1", "scores": {"evidence_alignment": 0.7}}
+
+
 def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
     executor, trace_entries = _build_protocol_executor(tmp_path)
 
@@ -169,8 +189,8 @@ def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
         evaluator=lambda *_args, **_kwargs: {
             "probabilities": {"A": 0.7, "B": 0.3},
             "brier": 0.09,
-            "mcq_dimensions": {"accuracy": 4},
-            "validated_scales": {"schema_version": "v1"},
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
         },
     )
 
@@ -178,8 +198,16 @@ def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
     assert row["evaluation_completed"] is True
     assert row["probabilities"] == {"A": 0.7, "B": 0.3}
     assert row["brier"] == 0.09
-    assert row["mcq_dimensions"] == {"accuracy": 4}
-    assert row["validated_scales"] == {"schema_version": "v1"}
+    assert set(row["mcq_dimensions"]) == {
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    }
+    assert row["validated_scales"] == _valid_validated_scales()
     assert trace_entries[-1]["status"] == "completed"
 
 
@@ -232,12 +260,37 @@ def test_protocol_condition_executor_execute_unsupported_payload_falls_back_to_e
 @pytest.mark.parametrize(
     "payload",
     [
-        {"brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": ["A", 0.7], "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": "NaN?"}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": 0.7}, "brier": "not-a-number", "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": 0.7}, "brier": 0.09, "mcq_dimensions": [], "validated_scales": {}},
-        {"probabilities": {"A": 0.7}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": []},
+        {"brier": 0.09, "mcq_dimensions": _valid_mcq_dimensions(), "validated_scales": _valid_validated_scales()},
+        {
+            "probabilities": ["A", 0.7],
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": "NaN?"},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7},
+            "brier": "not-a-number",
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7},
+            "brier": 0.09,
+            "mcq_dimensions": [],
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": [],
+        },
     ],
 )
 def test_protocol_condition_executor_execute_malformed_mapping_payload_falls_back_to_evaluation_failed(
@@ -266,10 +319,30 @@ def test_protocol_condition_executor_execute_malformed_mapping_payload_falls_bac
 @pytest.mark.parametrize(
     "payload",
     [
-        {"probabilities": {"A": float("nan"), "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": float("inf"), "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": 1.0, "B": 0.0}, "brier": float("nan"), "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": 1.0, "B": 0.0}, "brier": float("inf"), "mcq_dimensions": {}, "validated_scales": {}},
+        {
+            "probabilities": {"A": float("nan"), "B": 1.0},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": float("inf"), "B": 1.0},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 1.0, "B": 0.0},
+            "brier": float("nan"),
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 1.0, "B": 0.0},
+            "brier": float("inf"),
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
     ],
 )
 def test_protocol_condition_executor_execute_non_finite_mapping_payload_falls_back_to_evaluation_failed(
@@ -298,12 +371,137 @@ def test_protocol_condition_executor_execute_non_finite_mapping_payload_falls_ba
 @pytest.mark.parametrize(
     "payload",
     [
-        {"probabilities": {"A": -0.1, "B": 1.1}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": 0.0, "B": 0.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
-        {"probabilities": {"A": -1.0, "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {
+            "probabilities": {"A": -0.1, "B": 1.1},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.0, "B": 0.0},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": -1.0, "B": 1.0},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
     ],
 )
 def test_protocol_condition_executor_execute_invalid_probability_mass_falls_back_to_evaluation_failed(
+    tmp_path, payload
+):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: payload,
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
+    assert trace_entries[-1]["status"] == "evaluation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ({"A": float("nan"), "B": 1.0}, 0.09),
+        ({"A": float("inf"), "B": 1.0}, 0.09),
+        ({"A": -1.0, "B": 1.0}, 0.09),
+        ({"A": 0.0, "B": 0.0}, 0.09),
+        ({"A": 1.0, "B": 0.0}, float("nan")),
+        ({"A": 1.0, "B": 0.0}, float("inf")),
+        ({"A": 1.0, "B": 0.0}, "bad"),
+    ],
+)
+def test_protocol_condition_executor_execute_invalid_tuple_payload_falls_back_to_evaluation_failed(
+    tmp_path, payload
+):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+    probabilities, brier = payload
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: (probabilities, brier),
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
+    assert trace_entries[-1]["status"] == "evaluation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"probabilities": {"A": 0.7, "B": 0.3}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": _valid_validated_scales()},
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": {
+                **_valid_mcq_dimensions(),
+                "extra_dimension": {"very_low": 1.0, "low": 1.0, "high": 1.0, "very_high": 1.0},
+            },
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": {
+                **_valid_mcq_dimensions(),
+                "prediction_accuracy": {"very_low": 1.0, "low": 1.0, "high": 1.0},
+            },
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": {
+                **_valid_mcq_dimensions(),
+                "prediction_accuracy": {"very_low": 1.0, "low": -1.0, "high": 1.0, "very_high": 1.0},
+            },
+            "validated_scales": _valid_validated_scales(),
+        },
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": {"schema_version": "v2", "scores": {"evidence_alignment": 0.7}},
+        },
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": {"schema_version": "v1", "scores": {}},
+        },
+        {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": {"schema_version": "v1", "scores": {"evidence_alignment": float("nan")}},
+        },
+    ],
+)
+def test_protocol_condition_executor_execute_invalid_mapping_rubric_falls_back_to_evaluation_failed(
     tmp_path, payload
 ):
     executor, trace_entries = _build_protocol_executor(tmp_path)

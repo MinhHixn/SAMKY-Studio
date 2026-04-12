@@ -2,7 +2,11 @@ import json
 import subprocess
 from pathlib import Path
 
-from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ConditionExecutor
+from app.benchmarks.orchestrator import (
+    BenchmarkRunOrchestrator,
+    ConditionExecutor,
+    ProtocolConditionExecutor,
+)
 
 
 def test_condition_executor_returns_simulation_failed_row(monkeypatch, tmp_path):
@@ -92,6 +96,134 @@ def test_condition_executor_returns_evaluation_failed_row(monkeypatch, tmp_path)
     assert row["brier"] is None
     assert "ValueError: bad evaluation" == row["error"]
     assert (tmp_path / "E1_A_r1" / "simulation.log").read_text(encoding="utf-8") == "simulation ok"
+
+
+def _build_protocol_executor(tmp_path):
+    trace_entries: list[dict[str, object]] = []
+
+    class FakeRouter:
+        def model_for(self, role):
+            return "openrouter/benchmark-model"
+
+    class FakeTraceWriter:
+        def write(self, payload):
+            trace_entries.append(payload)
+
+    def simulation_runner(python_exe, config_path, router, *, log_path):
+        del router
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("simulation ok", encoding="utf-8")
+        return subprocess.CompletedProcess(args=[python_exe, str(config_path)], returncode=0)
+
+    def config_writer(unit_dir, config):
+        config_path = Path(unit_dir) / "simulation_config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        return config_path
+
+    def profile_writer(unit_dir, profiles):
+        (Path(unit_dir) / "profiles.json").write_text(json.dumps(profiles), encoding="utf-8")
+
+    def row_builder(event, condition, repeat, **kwargs):
+        return {
+            "event_id": str(event["event_id"]),
+            "condition": condition,
+            "repeat": repeat,
+            "unit_id": f"{event['event_id']}_{condition}_r{repeat}",
+            **kwargs,
+        }
+
+    executor = ProtocolConditionExecutor(
+        router=FakeRouter(),
+        python_exe="python",
+        profiles=[],
+        seed_files=[tmp_path / "seed.md"],
+        event_index_lookup={"E1": 0},
+        trace_writer=FakeTraceWriter(),
+        simulation_timeout_seconds=30,
+        simulation_runner=simulation_runner,
+        simulation_failure_error_builder=lambda *_args, **_kwargs: "simulation failed",
+        config_writer=config_writer,
+        profile_writer=profile_writer,
+        evidence_builder=lambda *_args, **_kwargs: "evidence text",
+        row_builder=row_builder,
+        exception_formatter=lambda exc: f"{type(exc).__name__}: {exc}",
+    )
+
+    return executor, trace_entries
+
+
+def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": {"accuracy": 4},
+            "validated_scales": {"schema_version": "v1"},
+        },
+    )
+
+    assert row["simulation_status"] == "completed"
+    assert row["evaluation_completed"] is True
+    assert row["probabilities"] == {"A": 0.7, "B": 0.3}
+    assert row["brier"] == 0.09
+    assert row["mcq_dimensions"] == {"accuracy": 4}
+    assert row["validated_scales"] == {"schema_version": "v1"}
+    assert trace_entries[-1]["status"] == "completed"
+
+
+def test_protocol_condition_executor_execute_supports_legacy_tuple_payload(tmp_path):
+    executor, _trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: ({"A": 1.0}, 0.0),
+    )
+
+    assert row["simulation_status"] == "completed"
+    assert row["evaluation_completed"] is True
+    assert row["probabilities"] == {"A": 1.0}
+    assert row["brier"] == 0.0
+    assert row["mcq_dimensions"] is None
+    assert row["validated_scales"] is None
+
+
+def test_protocol_condition_executor_execute_unsupported_payload_falls_back_to_evaluation_failed(tmp_path):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: "bad payload",
+    )
+
+    # Unsupported evaluator payloads should produce the evaluation_failed fallback row.
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
+    assert row["error"] == "ValueError: Evaluator result must be a tuple or mapping"
+    assert trace_entries[-1]["status"] == "evaluation_failed"
 
 
 def test_orchestrator_writes_event_results_and_summary(tmp_path):

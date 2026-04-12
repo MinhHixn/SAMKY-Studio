@@ -4,7 +4,21 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping
+from typing import Any, Callable, Dict, Mapping, TypeAlias, TypedDict
+
+LegacyEvaluatorPayload: TypeAlias = tuple[Dict[str, float], float]
+
+
+class MappingEvaluatorPayload(TypedDict, total=False):
+    probabilities: Dict[str, float]
+    brier: float
+    mcq_dimensions: Mapping[str, Any]
+    validated_scales: Mapping[str, Any]
+
+
+ProtocolEvaluatorPayload: TypeAlias = LegacyEvaluatorPayload | MappingEvaluatorPayload
+LegacyEvaluatorCallable: TypeAlias = Callable[..., LegacyEvaluatorPayload]
+ProtocolEvaluatorCallable: TypeAlias = Callable[..., ProtocolEvaluatorPayload]
 
 
 class ConditionExecutor:
@@ -64,7 +78,7 @@ class ConditionExecutor:
         unit_dir: Path,
         seed_file: Path,
         config_builder: Callable[..., Dict[str, Any]],
-        evaluator: Callable[..., Any],
+        evaluator: LegacyEvaluatorCallable,
     ) -> Dict[str, Any]:
         unit_dir = Path(unit_dir)
         unit_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +195,7 @@ class ProtocolConditionExecutor:
         unit_dir: Path,
         seed_file: Path,
         config_builder: Callable[..., Dict[str, Any]],
-        evaluator: Callable[..., tuple[Dict[str, float], float]],
+        evaluator: ProtocolEvaluatorCallable,
     ) -> Dict[str, Any]:
         del seed_file
         event_id = str(event["event_id"])

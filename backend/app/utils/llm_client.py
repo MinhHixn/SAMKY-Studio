@@ -68,6 +68,8 @@ class LLMClient:
             Config.LLM_RETRY_JITTER_MAX,
             "LLM_RETRY_JITTER_MAX",
         )
+        self._rate_limit_reset_min_wait = 0.1
+        self._rate_limit_reset_max_wait = 300.0
 
         # Ollama context window size — prevents prompt truncation.
         # Read from env OLLAMA_NUM_CTX, default 8192 (Ollama default is only 2048).
@@ -169,6 +171,11 @@ class LLMClient:
 
         return False
 
+    def _normalize_rate_limit_reset_wait_seconds(self, wait_seconds: float) -> float:
+        if wait_seconds <= 0:
+            return self._rate_limit_reset_min_wait
+        return min(wait_seconds, self._rate_limit_reset_max_wait)
+
     def _compute_retry_sleep_delay(self, delay: float) -> tuple[float, float]:
         current_delay = min(delay, self._retry_max_delay)
         sleep_delay = current_delay
@@ -206,7 +213,7 @@ class LLMClient:
                     if reset_wait is None:
                         sleep_delay, delay = self._compute_retry_sleep_delay(delay)
                     else:
-                        sleep_delay = reset_wait
+                        sleep_delay = self._normalize_rate_limit_reset_wait_seconds(reset_wait)
                     time.sleep(sleep_delay)
                     continue
 

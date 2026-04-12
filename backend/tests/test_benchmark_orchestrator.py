@@ -122,6 +122,50 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "run_manifest.json").exists()
     assert (run_dir / "traces" / "execution.jsonl").exists()
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "run_id": "fixed-run",
+        "events_loaded": 1,
+        "repeats": 1,
+    }
+
+
+def test_orchestrator_writes_provided_manifest_payload(tmp_path):
+    class FakeExecutor:
+        def execute(self, **kwargs):
+            return {
+                "event_id": kwargs["event"]["event_id"],
+                "condition": kwargs["condition"],
+                "repeat": kwargs["repeat"],
+                "simulation_status": "completed",
+                "full_simulation_completed": True,
+                "brier": 0.2,
+            }
+
+    orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
+    manifest_payload = {
+        "run_id": "fixed-run",
+        "events_loaded": 1,
+        "repeats": 1,
+        "trace_out": "custom/trace.jsonl",
+        "seed_files": ["seed-a.md"],
+    }
+
+    run_dir = orchestrator.run(
+        run_id="fixed-run",
+        output_root=tmp_path,
+        events=[{"event_id": "E1"}],
+        repeats=1,
+        build_condition_matrix=lambda events, repeats: [{"event_id": "E1", "condition": "A", "repeat": 1}],
+        event_lookup={"E1": {"event_id": "E1"}},
+        write_summary=lambda path, rows: (path / "summary.json").write_text(
+            json.dumps({"total_rows": len(rows)}), encoding="utf-8"
+        ),
+        manifest=manifest_payload,
+    )
+
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest == manifest_payload
 
 
 def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):

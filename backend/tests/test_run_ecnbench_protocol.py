@@ -246,13 +246,19 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
 def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
     config_builder_calls: list[tuple[dict[str, object], str, list[dict[str, object]], object, str]] = []
+    executor_ctor_calls: dict[str, object] = {}
 
     class DummyInjectionLoader:
         pass
 
+    class FakeProtocolExecutor:
+        def __init__(self, **kwargs):
+            executor_ctor_calls.update(kwargs)
+
     class FakeOrchestrator:
         def __init__(self, executor):
             self.executor = executor
+            captured["executor"] = executor
 
         def run(self, **kwargs):
             captured.update(kwargs)
@@ -287,6 +293,7 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: DummyInjectionLoader())
+    monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
     monkeypatch.setattr(
         protocol_script,
         "build_simulation_config",
@@ -320,9 +327,15 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert captured["event_lookup"] == {"E1": {"event_id": "E1", "question": "Q", "outcome": "A"}}
     assert captured["write_summary"] is protocol_script.write_summary
     assert captured["evaluator"] is protocol_script._evaluate_row
+    assert captured["manifest"]["run_id"] == "fixed-run"
+    assert captured["manifest"]["events_loaded"] == 1
+    assert captured["manifest"]["trace_out"].endswith("traces\\execution.jsonl")
     assert captured["run_dir_exists_before_run"] is False
     assert captured["manifest_exists_before_run"] is False
     assert captured["built_config"] == {"event_id": "E1", "condition": "A"}
+    assert isinstance(captured["executor"], FakeProtocolExecutor)
+    assert executor_ctor_calls["python_exe"] == protocol_script.sys.executable
+    assert executor_ctor_calls["seed_files"] == [tmp_path / "seed.md"]
     assert len(config_builder_calls) == 1
     event, condition, profiles, injection_loader, llm_model = config_builder_calls[0]
     assert event == {"event_id": "E1", "question": "Q", "outcome": "A"}

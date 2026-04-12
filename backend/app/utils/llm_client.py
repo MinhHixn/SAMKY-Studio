@@ -68,6 +68,8 @@ class LLMClient:
             Config.LLM_RETRY_JITTER_MAX,
             "LLM_RETRY_JITTER_MAX",
         )
+        self._rate_limit_reset_min_wait = 0.1
+        self._rate_limit_reset_max_wait = 300.0
 
         # Ollama context window size — prevents prompt truncation.
         # Read from env OLLAMA_NUM_CTX, default 8192 (Ollama default is only 2048).
@@ -118,41 +120,110 @@ class LLMClient:
         except (TypeError, ValueError) as error:
             raise ValueError(f"{name} must be a number") from error
 
+    @staticmethod
+    def _is_quota_error_code(error_code: Optional[str]) -> bool:
+        return error_code in {'insufficient_quota', 'quota_exceeded'}
+
+    @staticmethod
+    def _extract_rate_limit_reset_wait_seconds(error: Exception) -> Optional[float]:
+        body = getattr(error, 'body', None)
+        if not isinstance(body, dict):
+            return None
+
+        detail = body.get('error', body)
+        if not isinstance(detail, dict):
+            return None
+
+        metadata = detail.get('metadata')
+        if not isinstance(metadata, dict):
+            return None
+
+        headers = metadata.get('headers')
+        if not isinstance(headers, dict):
+            return None
+
+        raw_reset = None
+        for key, value in headers.items():
+            if isinstance(key, str) and key.lower() == 'x-ratelimit-reset':
+                raw_reset = value
+                break
+        if raw_reset is None:
+            return None
+
+        try:
+            reset_epoch = float(raw_reset)
+        except (TypeError, ValueError):
+            return None
+
+        reset_epoch_seconds = reset_epoch / 1000.0 if reset_epoch > 100000000000 else reset_epoch
+        return max(0.0, reset_epoch_seconds - time.time())
+
+    def _is_rate_limit_error(self, error: Exception) -> bool:
+        error_code = self._extract_error_code(error)
+        if self._is_quota_error_code(error_code):
+            return False
+
+        if isinstance(error, RateLimitError):
+            return True
+
+        if isinstance(error, APIStatusError):
+            return getattr(error, 'status_code', None) == 429
+
+        return False
+
+    def _normalize_rate_limit_reset_wait_seconds(self, wait_seconds: float) -> float:
+        if wait_seconds <= 0:
+            return self._rate_limit_reset_min_wait
+        return min(wait_seconds, self._rate_limit_reset_max_wait)
+
+    def _compute_retry_sleep_delay(self, delay: float) -> tuple[float, float]:
+        current_delay = min(delay, self._retry_max_delay)
+        sleep_delay = current_delay
+        if self._retry_jitter_max > 0:
+            sleep_delay += random.uniform(0, self._retry_jitter_max)
+        next_delay = min(delay * 2 if delay > 0 else 0.0, self._retry_max_delay)
+        return sleep_delay, next_delay
+
     def _is_retryable_error(self, error: Exception) -> bool:
         if isinstance(error, (APIConnectionError, APITimeoutError, TimeoutError, ConnectionError)):
             return True
 
         error_code = self._extract_error_code(error)
-        quota_codes = {'insufficient_quota', 'quota_exceeded'}
         if isinstance(error, RateLimitError):
-            return error_code not in quota_codes
+            return not self._is_quota_error_code(error_code)
 
         if isinstance(error, APIStatusError):
             status_code = getattr(error, 'status_code', None)
             if status_code == 429:
-                return error_code not in quota_codes
+                return not self._is_quota_error_code(error_code)
             return isinstance(status_code, int) and 500 <= status_code < 600
 
         return False
 
     def _chat_create_with_retry(self, kwargs: Dict[str, Any]):
         delay = max(0.0, self._retry_initial_delay)
+        attempt = 0
 
-        for attempt in range(self._retry_max_retries + 1):
+        while True:
             try:
                 return self.client.chat.completions.create(**kwargs)
             except Exception as error:
+                if self._is_rate_limit_error(error):
+                    reset_wait = self._extract_rate_limit_reset_wait_seconds(error)
+                    if reset_wait is None:
+                        sleep_delay, delay = self._compute_retry_sleep_delay(delay)
+                    else:
+                        sleep_delay = self._normalize_rate_limit_reset_wait_seconds(reset_wait)
+                    time.sleep(sleep_delay)
+                    continue
+
                 should_retry = self._is_retryable_error(error)
                 if attempt >= self._retry_max_retries or not should_retry:
                     raise
 
-                current_delay = min(delay, self._retry_max_delay)
-                sleep_delay = current_delay
-                if self._retry_jitter_max > 0:
-                    sleep_delay += random.uniform(0, self._retry_jitter_max)
-
+                sleep_delay, delay = self._compute_retry_sleep_delay(delay)
                 time.sleep(sleep_delay)
-                delay = min(delay * 2 if delay > 0 else 0.0, self._retry_max_delay)
+                attempt += 1
 
     def chat(
         self,

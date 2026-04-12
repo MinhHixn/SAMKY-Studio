@@ -105,6 +105,33 @@ def _looks_like_event(record: Mapping[str, Any]) -> bool:
     return has_id or (has_question and has_outcome)
 
 
+def _looks_like_scalar_event_map(payload: Mapping[str, Any]) -> bool:
+    if not payload:
+        return False
+    if any(isinstance(value, (dict, list, tuple)) for value in payload.values()):
+        return False
+    event_keys = {
+        "event_id",
+        "id",
+        "question",
+        "prompt",
+        "text",
+        "title",
+        "outcome",
+        "answer",
+        "label",
+        "ground_truth",
+        "target",
+        "correct_answer",
+        "options",
+        "choices",
+        "answers",
+    }
+    keys = {str(key) for key in payload.keys()}
+    non_id_event_keys = event_keys - {"event_id", "id"}
+    return bool(keys & non_id_event_keys) or keys.issubset({"event_id", "id"})
+
+
 def _normalize_event_record(record: Mapping[str, Any], fallback_index: int) -> Dict[str, Any]:
     event_id = record.get("event_id") or record.get("id") or f"event-{fallback_index}"
     question = _first_text(record, ("question", "prompt", "text", "title"))
@@ -144,23 +171,15 @@ def _collect_events(payload: Any, *, _fallback_index: List[int] | None = None) -
         return events
 
     if isinstance(payload, dict):
+        if payload and all(not isinstance(value, (dict, list, tuple)) for value in payload.values()):
+            if _looks_like_scalar_event_map(payload) and _looks_like_event(payload):
+                _fallback_index[0] += 1
+                events.append(_normalize_event_record(payload, _fallback_index[0]))
+            return events
+
         if _looks_like_event(payload):
             _fallback_index[0] += 1
             events.append(_normalize_event_record(payload, _fallback_index[0]))
-            return events
-
-        if payload and all(not isinstance(value, (dict, list, tuple)) for value in payload.values()):
-            for key, value in payload.items():
-                _fallback_index[0] += 1
-                events.append(
-                    _normalize_event_record(
-                        {
-                            "event_id": key,
-                            "answer": value,
-                        },
-                        _fallback_index[0],
-                    )
-                )
             return events
 
         for value in payload.values():
@@ -177,6 +196,35 @@ def load_events_from_raw(events_raw_path: Path | str, limit: int | None = None) 
     if limit is not None:
         return events[:limit]
     return events
+
+
+def validate_injection_coverage(
+    events: Iterable[Mapping[str, Any]], injection_loader: Step30InjectionLoader
+) -> None:
+    preflight_failures: list[str] = []
+    seen_event_ids: set[str] = set()
+    for event in events:
+        event_id = str(event["event_id"])
+        if event_id in seen_event_ids:
+            continue
+        seen_event_ids.add(event_id)
+
+        if not injection_loader.has_event(event_id):
+            preflight_failures.append(f"{event_id}: missing event id in injection bank")
+            continue
+
+        for condition in ("B", "C"):
+            try:
+                payload = injection_loader.get_payload(event_id, condition)
+                if payload is None or not isinstance(payload, Mapping):
+                    raise ValueError("payload must be a JSON object")
+            except Exception as exc:  # noqa: BLE001 - aggregate all payload failures into one preflight error
+                detail = str(exc.args[0]) if getattr(exc, "args", None) else str(exc)
+                preflight_failures.append(f"{event_id} [{condition}]: {detail}")
+
+    if preflight_failures:
+        failures = "\n- ".join(preflight_failures)
+        raise ValueError(f"Injection payload preflight failed:\n- {failures}")
 
 
 def build_condition_matrix(events: List[Mapping[str, Any]], repeats: int) -> List[Dict[str, Any]]:
@@ -590,6 +638,7 @@ def main() -> None:
     seed_files = load_seed_files(args.seeds_dir)
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
     injection_loader = Step30InjectionLoader(args.injection_bank)
+    validate_injection_coverage(events, injection_loader)
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()

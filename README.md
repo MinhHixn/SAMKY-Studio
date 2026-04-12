@@ -230,6 +230,16 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 
 Run from `backend` to keep this parity work auditable:
 
+Sanity preflight (set before running the protocol sanity command):
+
+- `OPENROUTER_API_KEY` (or `LLM_API_KEY` fallback)
+- `OPENROUTER_BASE_URL` (defaults to `https://openrouter.ai/api/v1`; override only if needed)
+- `OPENROUTER_GRAPH_MODEL`
+- `OPENROUTER_BENCHMARK_MODEL`
+- `OPENROUTER_EVALUATOR_MODEL`
+
+If these are missing/empty, sanity execution can be blocked with `ValueError: Missing benchmark router config ...`. Re-run the same sanity command after exporting the missing values in the current shell/session.
+
 ```powershell
 python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q
 python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-raw ..\..\data\events_raw.json --injection-bank ..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1 --trace-out logs\benchmark_traces\ecnbench_trace_sanity.jsonl

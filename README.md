@@ -169,7 +169,7 @@ Set-Location backend
 $flatSeeds = "tmp_seeds_flat"
 if (Test-Path $flatSeeds) { Remove-Item $flatSeeds -Recurse -Force }
 New-Item -ItemType Directory -Path $flatSeeds | Out-Null
-Get-ChildItem ..\..\..\..\data\seeds -Directory | ForEach-Object {
+Get-ChildItem ..\..\data\seeds -Directory | ForEach-Object {
     $contextPath = Join-Path $_.FullName "context.md"
     if (Test-Path $contextPath) {
         Copy-Item $contextPath (Join-Path $flatSeeds "$($_.Name).md")
@@ -179,7 +179,7 @@ Get-ChildItem ..\..\..\..\data\seeds -Directory | ForEach-Object {
 # Queue ECN-BENCH batches (dry-run style queue output)
 .\.venv311\Scripts\python scripts\run_ecnbench_openrouter.py `
   --seeds-dir $flatSeeds `
-  --events-raw ..\..\..\..\data\events_raw.json `
+  --events-raw ..\..\data\events_raw.json `
   --batch-size 10 `
   --repeat-runs 2 `
   --trace-out logs\ecnbench_trace.jsonl `
@@ -192,9 +192,9 @@ Run the end-to-end ECN-BENCH protocol benchmark:
 Set-Location backend
 
 .\.venv311\Scripts\python scripts\run_ecnbench_protocol.py `
-  --seeds-dir ..\..\..\..\data\seeds `
-  --events-raw ..\..\..\..\data\events_raw.json `
-  --injection-bank ..\..\..\..\data\injections\step30_injection_bank.json `
+  --seeds-dir ..\..\data\seeds `
+  --events-raw ..\..\data\events_raw.json `
+  --injection-bank ..\..\data\injections\step30_injection_bank.json `
   --output-dir logs\benchmark_runs `
   --events 30 `
   --repeats 1 `
@@ -210,6 +210,87 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - `event_results.json` — one row per event × condition × repeat
 - `summary.json` — mean Brier scores, lift, and success/failure counts
 - `simulation_config.json`, `twitter_profiles.csv`, `reddit_profiles.json` — per-unit simulation inputs
+
+#### ECN-BENCH continuation invariants
+
+- Workflow mode remains A/B/C per event (`workflow_mode: "abc-per-event"`).
+- `run_manifest.json` includes:
+  - `benchmark_model`
+  - `expected_run_units` (derived from generated condition matrix size; in current A/B/C mode this equals `events_loaded * 3 * repeats`)
+- `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
+
+### ECN-BENCH v0.3 parity architecture update
+
+- Benchmark run lifecycle now uses reusable orchestrator classes in `backend/app/benchmarks/orchestrator.py`:
+  - `ConditionExecutor` / `ProtocolConditionExecutor` for per-condition execution and evaluation handling
+  - `BenchmarkRunOrchestrator` for run-level lifecycle (manifest, traces, event-results, summary coordination)
+- `backend/scripts/run_ecnbench_protocol.py` remains the CLI entrypoint and delegates orchestration to these classes.
+
+#### Verification traceability (v0.3 parity)
+
+Run from `backend` to keep this parity work auditable:
+
+Sanity preflight (set before running the protocol sanity command):
+
+- `OPENROUTER_API_KEY` (or `LLM_API_KEY` fallback)
+- `OPENROUTER_BASE_URL` (defaults to `https://openrouter.ai/api/v1`; override only if needed)
+- `OPENROUTER_GRAPH_MODEL`
+- `OPENROUTER_BENCHMARK_MODEL`
+- `OPENROUTER_EVALUATOR_MODEL`
+
+If these are missing/empty, sanity execution can be blocked with `ValueError: Missing benchmark router config ...`. Re-run the same sanity command after exporting the missing values in the current shell/session.
+
+```powershell
+python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q
+python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-raw ..\..\data\events_raw.json --injection-bank ..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1 --trace-out logs\benchmark_traces\ecnbench_trace_sanity.jsonl
+# Broader regression sweep traceability: python -m pytest tests -q
+# Blocker in this environment: collection fails with `ModuleNotFoundError: camel` (install `oasis-ai`/`camel-ai`).
+```
+
+##### Verification evidence (this branch)
+
+- Benchmark regression command: `python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q`
+- Observed in this branch: `60 passed`.
+- Sanity command form (with preflight vars, run from `backend`): `$env:OPENROUTER_API_KEY='<set>'; $env:OPENROUTER_BASE_URL='https://openrouter.ai/api/v1'; $env:OPENROUTER_GRAPH_MODEL='<set>'; $env:OPENROUTER_BENCHMARK_MODEL='<set>'; $env:OPENROUTER_EVALUATOR_MODEL='<set>'; python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-raw ..\..\data\events_raw.json --injection-bank ..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1`
+- Observed branch sanity outcome: command exit code `0`; artifacts written under `backend\logs\benchmark_runs\ecnbench_<UTC timestamp>\`.
+- Post-run field check in this branch: across `run_manifest.json` and `event_results.json`, the traceability fields `workflow_mode`, `benchmark_model`, `expected_run_units` (matrix-derived; currently `events_loaded * 3 * repeats` in A/B/C mode), and `unit_id` are present after run (`unit_id` is per-row in `event_results.json`).
+
+### System status endpoint
+
+`GET /api/status` returns a top-level response envelope with `success` and `data`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "neo4j": {
+      "connected": true,
+      "error": null
+    },
+    "ollama": {
+      "reachable": true,
+      "model_configured": "qwen2.5:32b",
+      "model_available": true,
+      "error": null
+    },
+    "disk": {
+      "path": "data/simulation_data",
+      "total_bytes": 1000000000,
+      "used_bytes": 400000000,
+      "free_bytes": 600000000,
+      "error": null
+    },
+    "timestamp_utc": "2026-04-12T10:00:00Z"
+  }
+}
+```
+
+Inside `data`, the status payload includes:
+
+- `neo4j`: connectivity state and sanitized error details
+- `ollama`: service reachability, configured model, model availability, and sanitized error details
+- `disk`: configured simulation data path plus total/used/free bytes (or a sanitized disk-check error)
+- `timestamp_utc`: server timestamp for the status snapshot
 
 ## Architecture
 

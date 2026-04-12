@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPTS_DIR.parent
@@ -16,6 +16,7 @@ if str(_BACKEND_DIR) not in sys.path:
 
 from app.benchmarks.evaluator import ProbabilityEvaluator
 from app.benchmarks.injection_loader import Step30InjectionLoader
+from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.role_router import BenchmarkRoleRouter
 from app.benchmarks.scoring import brier_score, summarize_condition_scores
@@ -50,6 +51,25 @@ TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
 MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
+
+EventRecord = Mapping[str, Any]
+SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
+ConditionEvaluator = Callable[[EventRecord, str, str, BenchmarkRoleRouter], tuple[Dict[str, float], float]]
+
+
+class TraceWriterAdapter(Protocol):
+    def write(self, payload: Mapping[str, Any]) -> None: ...
+
+
+class _LazyTraceWriter:
+    def __init__(self, path: Path):
+        self._path = path
+        self._writer: BenchmarkTraceWriter | None = None
+
+    def write(self, payload: Mapping[str, Any]) -> None:
+        if self._writer is None:
+            self._writer = BenchmarkTraceWriter(self._path)
+        self._writer.write(dict(payload))
 
 
 def _utc_run_id() -> str:
@@ -408,8 +428,10 @@ def build_event_result_row(
     evidence_text: str | None = None,
 ) -> Dict[str, Any]:
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
+    event_id = str(event["event_id"])
     return {
-        "event_id": str(event["event_id"]),
+        "event_id": event_id,
+        "unit_id": f"{event_id}_{condition}_r{repeat}",
         "question": event.get("question", ""),
         "ground_truth": event.get("outcome") or event.get("answer", ""),
         "options": event.get("options", []),
@@ -547,6 +569,7 @@ def main() -> None:
         raise ValueError("--repeats must be > 0")
 
     router = BenchmarkRoleRouter.from_config()
+    benchmark_model = router.model_for("benchmark")
     events = load_events_from_raw(args.events_raw, limit=args.events)
     seed_files = load_seed_files(args.seeds_dir)
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
@@ -556,11 +579,11 @@ def main() -> None:
     run_id = _utc_run_id()
     run_dir = output_root / run_id
     traces_dir = run_dir / "traces"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    traces_dir.mkdir(parents=True, exist_ok=True)
 
     trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
-    trace_writer = BenchmarkTraceWriter(trace_path)
+    trace_writer = _LazyTraceWriter(trace_path)
+    condition_matrix = build_condition_matrix(events, args.repeats)
+    expected_run_units = len(condition_matrix)
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -579,159 +602,53 @@ def main() -> None:
         "trace_out": str(trace_path),
         "seed_files": [str(path) for path in seed_files],
         "event_ids": [str(event["event_id"]) for event in events],
+        "workflow_mode": "abc-per-event",
+        "benchmark_model": benchmark_model,
+        "expected_run_units": expected_run_units,
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    event_results: List[Dict[str, Any]] = []
-    condition_matrix = build_condition_matrix(events, args.repeats)
     event_lookup = {str(event["event_id"]): event for event in events}
     event_index_lookup = {str(event["event_id"]): index for index, event in enumerate(events)}
+    executor = ProtocolConditionExecutor(
+        router=router,
+        python_exe=args.python_exe,
+        profiles=profiles,
+        seed_files=seed_files,
+        event_index_lookup=event_index_lookup,
+        trace_writer=trace_writer,
+        simulation_timeout_seconds=SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
+        simulation_runner=_run_simulation_subprocess,
+        simulation_failure_error_builder=_simulation_failure_error,
+        config_writer=write_simulation_config,
+        profile_writer=write_profiles,
+        evidence_builder=build_evidence_text,
+        row_builder=build_event_result_row,
+        exception_formatter=_format_exception,
+    )
+    orchestrator = BenchmarkRunOrchestrator(executor=executor)
+    orchestrator.run(
+        run_id=run_id,
+        output_root=output_root,
+        events=events,
+        repeats=args.repeats,
+        build_condition_matrix=lambda _events, _repeats: list(condition_matrix),
+        event_lookup=event_lookup,
+        write_summary=write_summary,
+        config_builder=lambda event, condition: build_simulation_config(
+            event,
+            condition,
+            profiles,
+            injection_loader,
+            llm_model=benchmark_model,
+        ),
+        evaluator=_evaluate_row,
+        manifest=manifest,
+    )
 
-    for matrix_row in condition_matrix:
-        event = event_lookup[matrix_row["event_id"]]
-        condition = matrix_row["condition"]
-        repeat = matrix_row["repeat"]
-        seed_path = seed_files[event_index_lookup[matrix_row["event_id"]] % len(seed_files)]
-        unit_id = f"{event['event_id']}_{condition}_r{repeat}"
-        unit_dir = run_dir / unit_id
-        unit_dir.mkdir(parents=True, exist_ok=True)
-
-        trace_writer.write(
-            {
-                "event_id": event["event_id"],
-                "condition": condition,
-                "repeat": repeat,
-                "unit_id": unit_id,
-                "status": "starting",
-            }
-        )
-
-        row_error: str | None = None
-        probabilities: Dict[str, float] | None = None
-        brier: float | None = None
-        simulation_status = "simulation_failed"
-        simulation_completed = False
-        evaluation_completed = False
-        evidence_text = ""
-
-        try:
-            config = build_simulation_config(
-                event,
-                condition,
-                profiles,
-                injection_loader,
-                llm_model=router.model_for("benchmark"),
-            )
-            config["run_unit"] = {
-                "run_id": run_id,
-                "unit_id": unit_id,
-                "seed_file": str(seed_path),
-            }
-            config_path = write_simulation_config(unit_dir, config)
-            write_profiles(unit_dir, profiles)
-
-            simulation_log_path = unit_dir / "simulation.log"
-            try:
-                completed = _run_simulation_subprocess(
-                    args.python_exe,
-                    config_path,
-                    router,
-                    log_path=simulation_log_path,
-                )
-            except subprocess.TimeoutExpired:
-                simulation_status = "simulation_failed"
-                row_error = _simulation_failure_error(
-                    unit_dir,
-                    timeout_seconds=SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
-                )
-                trace_writer.write(
-                    {
-                        "event_id": event["event_id"],
-                        "condition": condition,
-                        "repeat": repeat,
-                        "unit_id": unit_id,
-                        "status": simulation_status,
-                        "timeout_seconds": SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
-                        "error": row_error,
-                    }
-                )
-            else:
-                simulation_completed = completed.returncode == 0
-                if not simulation_completed:
-                    row_error = _simulation_failure_error(unit_dir, returncode=completed.returncode)
-                    simulation_status = "simulation_failed"
-                    trace_writer.write(
-                        {
-                            "event_id": event["event_id"],
-                            "condition": condition,
-                            "repeat": repeat,
-                            "unit_id": unit_id,
-                            "status": simulation_status,
-                            "returncode": completed.returncode,
-                            "error": row_error,
-                        }
-                    )
-                else:
-                    simulation_status = "completed"
-                    evidence_text = build_evidence_text(simulation_log_path, seed_path)
-                    try:
-                        probabilities, brier = _evaluate_row(event, condition, evidence_text, router)
-                        evaluation_completed = True
-                        trace_writer.write(
-                            {
-                                "event_id": event["event_id"],
-                                "condition": condition,
-                                "repeat": repeat,
-                                "unit_id": unit_id,
-                                "status": "completed",
-                                "probabilities": probabilities,
-                                "brier": brier,
-                            }
-                        )
-                    except Exception as exc:
-                        simulation_status = "evaluation_failed"
-                        row_error = _format_exception(exc)
-                        trace_writer.write(
-                            {
-                                "event_id": event["event_id"],
-                                "condition": condition,
-                                "repeat": repeat,
-                                "unit_id": unit_id,
-                                "status": simulation_status,
-                                "error": row_error,
-                            }
-                        )
-        except Exception as exc:
-            row_error = _format_exception(exc)
-            trace_writer.write(
-                {
-                    "event_id": event["event_id"],
-                    "condition": condition,
-                    "repeat": repeat,
-                    "unit_id": unit_id,
-                    "status": "failed",
-                    "error": row_error,
-                }
-            )
-
-        event_results.append(
-            build_event_result_row(
-                event,
-                condition,
-                repeat,
-                simulation_status=simulation_status,
-                simulation_completed=simulation_completed,
-                evaluation_completed=evaluation_completed,
-                probabilities=probabilities,
-                brier=brier,
-                error=row_error,
-                seed_file=str(seed_path),
-                evidence_text=evidence_text or None,
-            )
-        )
-
-    (run_dir / "event_results.json").write_text(json.dumps(event_results, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_summary(run_dir, event_results)
+    if args.trace_out:
+        default_trace_path = traces_dir / "execution.jsonl"
+        if default_trace_path.exists():
+            default_trace_path.unlink()
 
 
 if __name__ == "__main__":

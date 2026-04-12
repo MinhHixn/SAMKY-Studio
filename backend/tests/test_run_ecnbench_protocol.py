@@ -135,6 +135,8 @@ def test_build_event_result_row_full_simulation_completed_logic():
 
     assert incomplete["full_simulation_completed"] is False
     assert complete["full_simulation_completed"] is True
+    assert incomplete["unit_id"] == "E1_A_r1"
+    assert complete["unit_id"] == "E1_A_r1"
 
 
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
@@ -243,6 +245,150 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         monkeypatch.setattr(protocol_script, "_evaluate_row", lambda *args, **kwargs: ({"A": 1.0}, 0.0))
 
 
+def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    config_builder_calls: list[tuple[dict[str, object], str, list[dict[str, object]], object, str]] = []
+    executor_ctor_calls: dict[str, object] = {}
+
+    class DummyInjectionLoader:
+        pass
+
+    class FakeProtocolExecutor:
+        def __init__(self, **kwargs):
+            executor_ctor_calls.update(kwargs)
+
+    class FakeOrchestrator:
+        def __init__(self, executor):
+            self.executor = executor
+            captured["executor"] = executor
+
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
+            captured["run_dir_exists_before_run"] = run_dir.exists()
+            captured["manifest_exists_before_run"] = (run_dir / "run_manifest.json").exists()
+            built_config = kwargs["config_builder"]({"event_id": "E1", "question": "Q", "outcome": "A"}, "A")
+            captured["built_config"] = built_config
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
+            (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+            return run_dir
+
+    monkeypatch.setattr(protocol_script, "BenchmarkRunOrchestrator", FakeOrchestrator, raising=False)
+    monkeypatch.setattr(protocol_script, "_utc_run_id", lambda: "fixed-run")
+    monkeypatch.setattr(
+        protocol_script,
+        "load_events_from_raw",
+        lambda *args, **kwargs: [{"event_id": "E1", "question": "Q", "outcome": "A"}],
+    )
+    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [tmp_path / "seed.md"])
+    monkeypatch.setattr(protocol_script, "build_profiles", lambda *args, **kwargs: [{"agent_id": 1}])
+    monkeypatch.setattr(
+        protocol_script.BenchmarkRoleRouter,
+        "from_config",
+        classmethod(
+            lambda cls, config=None: type(
+                "R",
+                (),
+                {"model_for": lambda self, role: "m", "api_key": "k", "base_url": "u"},
+            )()
+        ),
+    )
+    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: DummyInjectionLoader())
+    monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
+    monkeypatch.setattr(
+        protocol_script,
+        "build_simulation_config",
+        lambda event, condition, profiles, injection_loader, llm_model: (
+            config_builder_calls.append((event, condition, profiles, injection_loader, llm_model))
+            or {"event_id": event["event_id"], "condition": condition}
+        ),
+    )
+    monkeypatch.setattr(protocol_script, "write_summary", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+
+    protocol_script.main()
+
+    assert captured["run_id"] == "fixed-run"
+    assert captured["output_root"] == tmp_path / "runs"
+    assert captured["events"] == [{"event_id": "E1", "question": "Q", "outcome": "A"}]
+    assert captured["repeats"] == 1
+    assert callable(captured["build_condition_matrix"])
+    assert captured["build_condition_matrix"]([], 99) == protocol_script.build_condition_matrix(captured["events"], captured["repeats"])
+    assert captured["event_lookup"] == {"E1": {"event_id": "E1", "question": "Q", "outcome": "A"}}
+    assert captured["write_summary"] is protocol_script.write_summary
+    assert captured["evaluator"] is protocol_script._evaluate_row
+    assert captured["manifest"]["run_id"] == "fixed-run"
+    assert captured["manifest"]["events_loaded"] == 1
+    assert captured["manifest"]["trace_out"].endswith("traces\\execution.jsonl")
+    assert captured["run_dir_exists_before_run"] is False
+    assert captured["manifest_exists_before_run"] is False
+    assert captured["built_config"] == {"event_id": "E1", "condition": "A"}
+    assert isinstance(captured["executor"], FakeProtocolExecutor)
+    assert executor_ctor_calls["python_exe"] == protocol_script.sys.executable
+    assert executor_ctor_calls["seed_files"] == [tmp_path / "seed.md"]
+    assert len(config_builder_calls) == 1
+    event, condition, profiles, injection_loader, llm_model = config_builder_calls[0]
+    assert event == {"event_id": "E1", "question": "Q", "outcome": "A"}
+    assert condition == "A"
+    assert profiles == [{"agent_id": 1}]
+    assert isinstance(injection_loader, DummyInjectionLoader)
+    assert llm_model == "m"
+
+
+def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    custom_events = [
+        {"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]},
+        {"event_id": "E2", "question": "Q2", "outcome": "B", "options": ["A", "B"]},
+    ]
+    custom_matrix = [
+        {"event_id": "E1", "condition": "A", "repeat": 1},
+        {"event_id": "E1", "condition": "B", "repeat": 1},
+        {"event_id": "E2", "condition": "A", "repeat": 1},
+        {"event_id": "E2", "condition": "C", "repeat": 1},
+        {"event_id": "E2", "condition": "C", "repeat": 2},
+    ]
+    monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *args, **kwargs: custom_events)
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", lambda *args, **kwargs: list(custom_matrix))
+
+    output_dir = tmp_path / "runs"
+    argv = [
+        "run_ecnbench_protocol.py",
+        "--seeds-dir",
+        str(tmp_path / "seeds"),
+        "--events-raw",
+        str(tmp_path / "events.json"),
+        "--output-dir",
+        str(output_dir),
+        "--events",
+        "2",
+        "--repeats",
+        "2",
+    ]
+    monkeypatch.setattr(protocol_script.sys, "argv", argv)
+
+    protocol_script.main()
+
+    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["workflow_mode"] == "abc-per-event"
+    assert manifest["benchmark_model"] == "openrouter/benchmark-model"
+    assert manifest["expected_run_units"] == len(custom_matrix)
+
+
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=1, stdout="", stderr="boom")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
@@ -266,6 +412,7 @@ def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert rows[0]["simulation_status"] == "simulation_failed"
+    assert rows[0]["unit_id"] == "E1_A_r1"
     assert summary["simulation_failure_count"] == 1
 
 
@@ -301,6 +448,7 @@ def test_main_records_evaluation_failure_and_summary(monkeypatch, tmp_path):
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert rows[0]["simulation_status"] == "evaluation_failed"
+    assert rows[0]["unit_id"] == "E1_A_r1"
     assert summary["evaluation_failure_count"] == 1
 
 

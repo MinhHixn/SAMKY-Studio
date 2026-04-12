@@ -67,7 +67,26 @@ def _check_ollama():
 @system_bp.route("/status", methods=["GET"])
 def get_status():
     disk_path = Config.OASIS_SIMULATION_DATA_DIR or Config.UPLOAD_FOLDER or "."
-    total, used, free = shutil.disk_usage(disk_path)
+    disk = {"path": disk_path, "error": None}
+    try:
+        total, used, free = shutil.disk_usage(disk_path)
+        disk.update(
+            {
+                "total_bytes": int(total),
+                "used_bytes": int(used),
+                "free_bytes": int(free),
+            }
+        )
+    except Exception as exc:
+        current_app.logger.exception("Disk status check failed: %s", exc)
+        disk.update(
+            {
+                "total_bytes": None,
+                "used_bytes": None,
+                "free_bytes": None,
+                "error": "Failed to determine disk usage",
+            }
+        )
 
     return jsonify(
         {
@@ -75,12 +94,7 @@ def get_status():
             "data": {
                 "neo4j": _check_neo4j(),
                 "ollama": _check_ollama(),
-                "disk": {
-                    "path": disk_path,
-                    "total_bytes": int(total),
-                    "used_bytes": int(used),
-                    "free_bytes": int(free),
-                },
+                "disk": disk,
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         }

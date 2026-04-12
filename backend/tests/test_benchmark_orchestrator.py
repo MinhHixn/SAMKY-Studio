@@ -286,3 +286,46 @@ def test_orchestrator_isolates_malformed_rows_and_missing_event_lookup(tmp_path)
     assert rows[3]["event_id"] == "E2"
     assert rows[3]["condition"] == "B"
     assert rows[3]["simulation_status"] == "completed"
+
+
+def test_orchestrator_fallback_row_contains_rubric_keys(tmp_path):
+    class FakeExecutor:
+        def execute(self, **kwargs):
+            return {
+                "event_id": kwargs["event"]["event_id"],
+                "condition": kwargs["condition"],
+                "repeat": kwargs["repeat"],
+                "run_id": kwargs["run_id"],
+                "seed_file": str(kwargs["seed_file"]),
+                "simulation_status": "completed",
+                "evaluation_status": "completed",
+                "full_simulation_completed": True,
+                "probabilities": {"A": 1.0},
+                "brier": 0.0,
+            }
+
+    orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
+    seed_path = tmp_path / "seed.md"
+    seed_path.write_text("seed", encoding="utf-8")
+
+    run_dir = orchestrator.run(
+        run_id="fallback-rubric-run",
+        output_root=tmp_path,
+        events=[{"event_id": "E1"}],
+        repeats=1,
+        build_condition_matrix=lambda events, repeats: [
+            {"event_id": "E1", "repeat": 1},
+        ],
+        event_lookup={"E1": {"event_id": "E1"}},
+        write_summary=lambda path, rows: (path / "summary.json").write_text(
+            json.dumps({"total_rows": len(rows)}), encoding="utf-8"
+        ),
+        seed_file=seed_path,
+    )
+
+    rows = json.loads((run_dir / "event_results.json").read_text(encoding="utf-8"))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["simulation_status"] == "simulation_failed"
+    assert row["mcq_dimensions"] is None
+    assert row["validated_scales"] is None

@@ -64,7 +64,7 @@ class ConditionExecutor:
         unit_dir: Path,
         seed_file: Path,
         config_builder: Callable[..., Dict[str, Any]],
-        evaluator: Callable[..., tuple[Dict[str, float], float]],
+        evaluator: Callable[..., Any],
     ) -> Dict[str, Any]:
         unit_dir = Path(unit_dir)
         unit_dir.mkdir(parents=True, exist_ok=True)
@@ -201,6 +201,8 @@ class ProtocolConditionExecutor:
         row_error: str | None = None
         probabilities: Dict[str, float] | None = None
         brier: float | None = None
+        mcq_dimensions: Mapping[str, Any] | None = None
+        validated_scales: Mapping[str, Any] | None = None
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
@@ -264,7 +266,18 @@ class ProtocolConditionExecutor:
                     simulation_status = "completed"
                     evidence_text = self._evidence_builder(simulation_log_path, seed_path)
                     try:
-                        probabilities, brier = evaluator(event, condition, evidence_text, self._router)
+                        evaluation_payload = evaluator(event, condition, evidence_text, self._router)
+                        if isinstance(evaluation_payload, tuple):
+                            probabilities, brier = evaluation_payload
+                            mcq_dimensions = None
+                            validated_scales = None
+                        elif isinstance(evaluation_payload, Mapping):
+                            probabilities = evaluation_payload.get("probabilities")
+                            brier = evaluation_payload.get("brier")
+                            mcq_dimensions = evaluation_payload.get("mcq_dimensions")
+                            validated_scales = evaluation_payload.get("validated_scales")
+                        else:
+                            raise ValueError("Evaluator result must be a tuple or mapping")
                         evaluation_completed = True
                         self._trace_writer.write(
                             {
@@ -275,6 +288,8 @@ class ProtocolConditionExecutor:
                                 "status": "completed",
                                 "probabilities": probabilities,
                                 "brier": brier,
+                                "mcq_dimensions": mcq_dimensions,
+                                "validated_scales": validated_scales,
                             }
                         )
                     except Exception as exc:
@@ -312,6 +327,8 @@ class ProtocolConditionExecutor:
             evaluation_completed=evaluation_completed,
             probabilities=probabilities,
             brier=brier,
+            mcq_dimensions=mcq_dimensions,
+            validated_scales=validated_scales,
             error=row_error,
             seed_file=str(seed_path),
             evidence_text=evidence_text or None,
@@ -334,7 +351,7 @@ class BenchmarkRunOrchestrator:
         write_summary: Callable[[Path, list[Dict[str, Any]]], Any],
         seed_file: Path | None = None,
         config_builder: Callable[..., Dict[str, Any]] | None = None,
-        evaluator: Callable[..., tuple[Dict[str, float], float]] | None = None,
+        evaluator: Callable[..., Any] | None = None,
         manifest: Mapping[str, Any] | None = None,
     ) -> Path:
         run_dir = Path(output_root) / run_id
@@ -405,6 +422,8 @@ class BenchmarkRunOrchestrator:
                         "full_simulation_completed": False,
                         "probabilities": None,
                         "brier": None,
+                        "mcq_dimensions": None,
+                        "validated_scales": None,
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )

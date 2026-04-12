@@ -139,6 +139,26 @@ def test_build_event_result_row_full_simulation_completed_logic():
     assert complete["unit_id"] == "E1_A_r1"
 
 
+def test_build_event_result_row_includes_rubric_artifacts():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 1.0},
+        brier=0.0,
+        mcq_dimensions={"accuracy": 4, "calibration": 3},
+        validated_scales={"likelihood": {"value": 4, "max": 5}},
+    )
+
+    assert row["mcq_dimensions"] == {"accuracy": 4, "calibration": 3}
+    assert row["validated_scales"] == {"likelihood": {"value": 4, "max": 5}}
+
+
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
     monkeypatch.setattr(protocol_script, "enforce_protocol_constraints", lambda config: None)
 

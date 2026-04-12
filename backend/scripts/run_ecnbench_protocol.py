@@ -423,6 +423,8 @@ def build_event_result_row(
     evaluation_completed: bool,
     probabilities: Mapping[str, float] | None,
     brier: float | None,
+    mcq_dimensions: Mapping[str, Any] | None = None,
+    validated_scales: Mapping[str, Any] | None = None,
     error: str | None = None,
     seed_file: str | None = None,
     evidence_text: str | None = None,
@@ -442,6 +444,8 @@ def build_event_result_row(
         "full_simulation_completed": full_simulation_completed,
         "probabilities": dict(probabilities) if isinstance(probabilities, Mapping) else None,
         "brier": brier,
+        "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
+        "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "error": error,
         "evidence_text": evidence_text,
     }
@@ -511,19 +515,30 @@ def _evaluate_row(
     condition: str,
     evidence_text: str,
     router: BenchmarkRoleRouter,
-) -> tuple[Dict[str, float], float]:
+) -> Dict[str, Any]:
     evaluator = ProbabilityEvaluator(router)
     evaluation = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
     probabilities = evaluation.get("normalized_probabilities") or evaluation.get("probabilities")
     if not isinstance(probabilities, Mapping):
         raise ValueError("Evaluator did not return probabilities")
+    mcq_dimensions = evaluation.get("mcq_dimensions")
+    validated_scales = evaluation.get("validated_scales")
+    if not isinstance(mcq_dimensions, Mapping):
+        raise ValueError("Evaluator did not return mcq_dimensions")
+    if not isinstance(validated_scales, Mapping):
+        raise ValueError("Evaluator did not return validated_scales")
 
     ground_truth = event.get("outcome") or event.get("answer", "")
     if not isinstance(ground_truth, str) or not ground_truth.strip():
         raise ValueError("Event is missing a ground-truth outcome")
 
     normalized_probabilities = {str(label): float(value) for label, value in probabilities.items()}
-    return normalized_probabilities, brier_score(normalized_probabilities, ground_truth)
+    return {
+        "probabilities": normalized_probabilities,
+        "brier": brier_score(normalized_probabilities, ground_truth),
+        "mcq_dimensions": dict(mcq_dimensions),
+        "validated_scales": dict(validated_scales),
+    }
 
 
 def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:

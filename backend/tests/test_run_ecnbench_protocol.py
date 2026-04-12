@@ -243,6 +243,61 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         monkeypatch.setattr(protocol_script, "_evaluate_row", lambda *args, **kwargs: ({"A": 1.0}, 0.0))
 
 
+def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
+    called = {"count": 0}
+
+    class FakeOrchestrator:
+        def __init__(self, executor):
+            self.executor = executor
+
+        def run(self, **kwargs):
+            called["count"] += 1
+            run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
+            (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+            return run_dir
+
+    monkeypatch.setattr(protocol_script, "BenchmarkRunOrchestrator", FakeOrchestrator, raising=False)
+    monkeypatch.setattr(protocol_script, "_utc_run_id", lambda: "fixed-run")
+    monkeypatch.setattr(
+        protocol_script,
+        "load_events_from_raw",
+        lambda *args, **kwargs: [{"event_id": "E1", "question": "Q", "outcome": "A"}],
+    )
+    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [tmp_path / "seed.md"])
+    monkeypatch.setattr(protocol_script, "build_profiles", lambda *args, **kwargs: [{"agent_id": 1}])
+    monkeypatch.setattr(
+        protocol_script.BenchmarkRoleRouter,
+        "from_config",
+        classmethod(
+            lambda cls, config=None: type(
+                "R",
+                (),
+                {"model_for": lambda self, role: "m", "api_key": "k", "base_url": "u"},
+            )()
+        ),
+    )
+    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+
+    protocol_script.main()
+
+    assert called["count"] == 1
+
+
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=1, stdout="", stderr="boom")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)

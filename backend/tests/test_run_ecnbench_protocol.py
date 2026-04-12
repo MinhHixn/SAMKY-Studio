@@ -129,6 +129,17 @@ def test_load_events_ignores_taxonomy_key_value_maps(tmp_path):
     assert [event["event_id"] for event in events] == ["S2"]
 
 
+def test_validate_injection_coverage_raises_for_missing_event():
+    class DummyInjectionLoader:
+        def has_event(self, event_id):
+            return event_id == "E1"
+
+    events = [{"event_id": "E1"}, {"event_id": "E2"}]
+
+    with pytest.raises(ValueError, match=r"Missing injection payloads for event_ids: E2"):
+        protocol_script.validate_injection_coverage(events, DummyInjectionLoader())
+
+
 def test_load_events_keeps_scalar_events_with_metadata_keys(tmp_path):
     payload = {
         "study": {
@@ -278,6 +289,9 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         def __init__(self, path):
             self.path = path
 
+        def has_event(self, event_id):
+            return True
+
     class DummyRouter:
         api_key = "router-key"
         base_url = "https://openrouter.ai/api/v1"
@@ -313,7 +327,8 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     executor_ctor_calls: dict[str, object] = {}
 
     class DummyInjectionLoader:
-        pass
+        def has_event(self, event_id):
+            return True
 
     class FakeProtocolExecutor:
         def __init__(self, **kwargs):

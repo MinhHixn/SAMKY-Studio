@@ -198,6 +198,24 @@ def load_events_from_raw(events_raw_path: Path | str, limit: int | None = None) 
     return events
 
 
+def validate_injection_coverage(
+    events: Iterable[Mapping[str, Any]], injection_loader: Step30InjectionLoader
+) -> None:
+    missing_event_ids: list[str] = []
+    seen_event_ids: set[str] = set()
+    for event in events:
+        event_id = str(event["event_id"])
+        if event_id in seen_event_ids:
+            continue
+        seen_event_ids.add(event_id)
+        if not injection_loader.has_event(event_id):
+            missing_event_ids.append(event_id)
+
+    if missing_event_ids:
+        missing_list = ", ".join(missing_event_ids)
+        raise ValueError(f"Missing injection payloads for event_ids: {missing_list}")
+
+
 def build_condition_matrix(events: List[Mapping[str, Any]], repeats: int) -> List[Dict[str, Any]]:
     if repeats <= 0:
         raise ValueError("repeats must be > 0")
@@ -609,6 +627,7 @@ def main() -> None:
     seed_files = load_seed_files(args.seeds_dir)
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
     injection_loader = Step30InjectionLoader(args.injection_bank)
+    validate_injection_coverage(events, injection_loader)
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()

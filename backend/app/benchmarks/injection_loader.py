@@ -29,6 +29,9 @@ class Step30InjectionLoader:
                 raise ValueError("Each injection event must include event_id")
             self._events[str(event_id)] = event
 
+    def has_event(self, event_id: str) -> bool:
+        return str(event_id) in self._events
+
     def get_payload(self, event_id: str, condition: Condition) -> Dict[str, Any] | None:
         """Return the payload for a condition-specific event."""
         if condition not in ("A", "B", "C"):

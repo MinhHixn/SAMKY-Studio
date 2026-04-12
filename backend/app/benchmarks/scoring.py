@@ -34,3 +34,26 @@ def summarize_condition_scores(rows: List[Dict]) -> Dict:
             "B_to_C": round(means.get("B", 0.0) - means.get("C", 0.0), 6),
         },
     }
+
+
+def summarize_rubric_artifacts(rows: List[Dict]) -> Dict:
+    completed_rows = [row for row in rows if row.get("full_simulation_completed")]
+    validated_scale_keys = set()
+    rubric_ready_count = 0
+
+    for row in completed_rows:
+        mcq_dimensions = row.get("mcq_dimensions")
+        validated_scales = row.get("validated_scales")
+        if not isinstance(mcq_dimensions, dict) or not isinstance(validated_scales, dict):
+            continue
+        rubric_ready_count += 1
+
+        scores = validated_scales.get("scores")
+        if isinstance(scores, dict):
+            validated_scale_keys.update(str(key) for key in scores.keys())
+
+    return {
+        "rubric_completed_count": rubric_ready_count,
+        "rubric_missing_count": len(completed_rows) - rubric_ready_count,
+        "validated_scale_keys": sorted(validated_scale_keys),
+    }

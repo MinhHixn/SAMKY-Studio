@@ -1,7 +1,7 @@
 import pytest
 
 from app.benchmarks.evaluator import ProbabilityEvaluator
-from app.benchmarks.scoring import brier_score, summarize_condition_scores
+from app.benchmarks.scoring import brier_score, summarize_condition_scores, summarize_rubric_artifacts
 
 
 def test_brier_score_is_zero_for_correct_certainty():
@@ -30,6 +30,28 @@ def test_summarize_condition_scores_computes_means_and_lift():
 
     assert summary["condition_mean_brier"] == {"A": 0.3, "B": 0.1, "C": 0.25}
     assert summary["lift"] == {"A_to_B": 0.2, "A_to_C": 0.05, "B_to_C": -0.15}
+
+
+def test_summarize_rubric_artifacts_counts_presence_and_scale_keys():
+    rows = [
+        {
+            "full_simulation_completed": True,
+            "mcq_dimensions": {"prediction_accuracy": {}},
+            "validated_scales": {
+                "scores": {
+                    "calibration_consistency": 0.7,
+                    "evidence_alignment": 0.8,
+                }
+            },
+        },
+        {"full_simulation_completed": True},
+    ]
+
+    summary = summarize_rubric_artifacts(rows)
+
+    assert summary["rubric_completed_count"] == 1
+    assert summary["rubric_missing_count"] == 1
+    assert summary["validated_scale_keys"] == ["calibration_consistency", "evidence_alignment"]
 
 
 def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role():

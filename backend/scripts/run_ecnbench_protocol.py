@@ -19,7 +19,7 @@ from app.benchmarks.injection_loader import Step30InjectionLoader
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.role_router import BenchmarkRoleRouter
-from app.benchmarks.scoring import brier_score, summarize_condition_scores
+from app.benchmarks.scoring import brier_score, summarize_condition_scores, summarize_rubric_artifacts
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
@@ -546,6 +546,7 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
     evaluation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "evaluation_failed")
     summary = summarize_condition_scores([row for row in completed_rows if row.get("brier") is not None])
+    summary["rubric"] = summarize_rubric_artifacts(rows)
     summary.update(
         {
             "total_rows": len(rows),

@@ -71,6 +71,18 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
     assert result["normalized_probabilities"] == {"A": 0.2, "B": 0.3, "C": 0.5}
     assert result["probabilities"] == {"A": 0.2, "B": 0.3, "C": 0.5}
     assert calls and calls[0]["messages"][0]["role"] == "system"
+    system_prompt = calls[0]["messages"][0]["content"]
+    assert "probabilities" in system_prompt
+    assert "mcq_dimensions" in system_prompt
+    assert "validated_scales" in system_prompt
+    assert "schema_version" in system_prompt
+    assert "v1" in system_prompt
+    assert "scores" in system_prompt
+    assert "numeric" in system_prompt
+    for key in dimension_keys:
+        assert key in system_prompt
+    for bucket_key in ("very_low", "low", "high", "very_high"):
+        assert bucket_key in system_prompt
 
 
 @pytest.mark.parametrize(
@@ -186,4 +198,143 @@ def test_probability_evaluator_rejects_missing_rubric_dimension():
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"mcq_dimensions"):
+        evaluator.evaluate("Q", "A", "E")
+
+
+def test_probability_evaluator_rejects_missing_validated_scales():
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1} for key in dimension_keys
+    }
+
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096):
+            return {"probabilities": {"A": 1, "B": 2, "C": 3}, "mcq_dimensions": mcq_dimensions}
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+
+    with pytest.raises(ValueError, match=r"validated_scales"):
+        evaluator.evaluate("Q", "A", "E")
+
+
+def test_probability_evaluator_rejects_invalid_validated_scales_schema_version():
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1} for key in dimension_keys
+    }
+
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096):
+            return {
+                "probabilities": {"A": 1, "B": 2, "C": 3},
+                "mcq_dimensions": mcq_dimensions,
+                "validated_scales": {
+                    "schema_version": "v0",
+                    "scores": {"evidence_alignment": 0.8},
+                },
+            }
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+
+    with pytest.raises(ValueError, match=r"schema_version"):
+        evaluator.evaluate("Q", "A", "E")
+
+
+def test_probability_evaluator_rejects_invalid_mcq_bucket_keys():
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1} for key in dimension_keys
+    }
+    mcq_dimensions["prediction_accuracy"] = {"very_low": 1, "low": 1, "high": 1}
+
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096):
+            return {
+                "probabilities": {"A": 1, "B": 2, "C": 3},
+                "mcq_dimensions": mcq_dimensions,
+                "validated_scales": {
+                    "schema_version": "v1",
+                    "scores": {"evidence_alignment": 0.8},
+                },
+            }
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+
+    with pytest.raises(ValueError, match=r"bucket keys"):
+        evaluator.evaluate("Q", "A", "E")
+
+
+@pytest.mark.parametrize(
+    "scores",
+    [
+        {"evidence_alignment": float("nan")},
+        {"evidence_alignment": float("inf")},
+        {"evidence_alignment": "bad"},
+    ],
+)
+def test_probability_evaluator_rejects_invalid_validated_scales_scores(scores):
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1} for key in dimension_keys
+    }
+
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096):
+            return {
+                "probabilities": {"A": 1, "B": 2, "C": 3},
+                "mcq_dimensions": mcq_dimensions,
+                "validated_scales": {"schema_version": "v1", "scores": scores},
+            }
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+
+    with pytest.raises(ValueError, match=r"validated_scales\.scores"):
         evaluator.evaluate("Q", "A", "E")

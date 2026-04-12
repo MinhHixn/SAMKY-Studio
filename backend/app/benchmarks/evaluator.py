@@ -76,8 +76,14 @@ class ProbabilityEvaluator:
                 {
                     "role": "system",
                     "content": (
-                        "You are an ECN-BENCH evaluator. Return a JSON object with a "
-                        "'probabilities' mapping from outcome label to numeric probability."
+                        "You are an ECN-BENCH evaluator. Return a JSON object with keys: "
+                        "probabilities (mapping outcome label to numeric probability), "
+                        "mcq_dimensions (object with exactly these dimensions: "
+                        "prediction_accuracy, polarization, herd_effect, deliberation_quality, "
+                        "susceptibility, convergence, information_diversity; each dimension maps "
+                        "to buckets very_low, low, high, very_high with numeric values), and "
+                        "validated_scales (object with schema_version 'v1' and scores mapping of "
+                        "numeric scale scores)."
                     ),
                 },
                 {

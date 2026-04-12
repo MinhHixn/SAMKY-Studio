@@ -105,6 +105,31 @@ def _looks_like_event(record: Mapping[str, Any]) -> bool:
     return has_id or (has_question and has_outcome)
 
 
+def _looks_like_scalar_event_map(payload: Mapping[str, Any]) -> bool:
+    if not payload:
+        return False
+    if any(isinstance(value, (dict, list, tuple)) for value in payload.values()):
+        return False
+    allowed_keys = {
+        "event_id",
+        "id",
+        "question",
+        "prompt",
+        "text",
+        "title",
+        "outcome",
+        "answer",
+        "label",
+        "ground_truth",
+        "target",
+        "correct_answer",
+        "options",
+        "choices",
+        "answers",
+    }
+    return set(str(key) for key in payload.keys()).issubset(allowed_keys)
+
+
 def _normalize_event_record(record: Mapping[str, Any], fallback_index: int) -> Dict[str, Any]:
     event_id = record.get("event_id") or record.get("id") or f"event-{fallback_index}"
     question = _first_text(record, ("question", "prompt", "text", "title"))
@@ -144,23 +169,15 @@ def _collect_events(payload: Any, *, _fallback_index: List[int] | None = None) -
         return events
 
     if isinstance(payload, dict):
+        if payload and all(not isinstance(value, (dict, list, tuple)) for value in payload.values()):
+            if _looks_like_scalar_event_map(payload) and _looks_like_event(payload):
+                _fallback_index[0] += 1
+                events.append(_normalize_event_record(payload, _fallback_index[0]))
+            return events
+
         if _looks_like_event(payload):
             _fallback_index[0] += 1
             events.append(_normalize_event_record(payload, _fallback_index[0]))
-            return events
-
-        if payload and all(not isinstance(value, (dict, list, tuple)) for value in payload.values()):
-            for key, value in payload.items():
-                _fallback_index[0] += 1
-                events.append(
-                    _normalize_event_record(
-                        {
-                            "event_id": key,
-                            "answer": value,
-                        },
-                        _fallback_index[0],
-                    )
-                )
             return events
 
         for value in payload.values():

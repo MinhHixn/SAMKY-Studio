@@ -109,6 +109,26 @@ def test_load_events_from_nested_payload_shape(tmp_path):
     assert events[2]["options"] == [1, 2]
 
 
+def test_load_events_ignores_taxonomy_key_value_maps(tmp_path):
+    payload = {
+        "study": {
+            "taxonomy_axes": {
+                "axis_2_resolution_horizon": {
+                    "short": "2-4 weeks",
+                    "medium": "1-3 months",
+                }
+            }
+        },
+        "core_events": [{"id": "S2", "question": "Q", "outcome": "YES"}],
+    }
+    path = tmp_path / "events.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    events = protocol_script.load_events_from_raw(path)
+
+    assert [event["event_id"] for event in events] == ["S2"]
+
+
 def test_build_event_result_row_full_simulation_completed_logic():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 

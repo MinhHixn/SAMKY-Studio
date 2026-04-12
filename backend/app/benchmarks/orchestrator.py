@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 from pathlib import Path
@@ -282,6 +283,7 @@ class ProtocolConditionExecutor:
                     try:
                         evaluation_payload = evaluator(event, condition, evidence_text, self._router)
                         if isinstance(evaluation_payload, tuple):
+                            # Intentional compatibility path for legacy tuple-based evaluators.
                             probabilities, brier = evaluation_payload
                             mcq_dimensions = None
                             validated_scales = None
@@ -296,18 +298,36 @@ class ProtocolConditionExecutor:
                                 raise ValueError("Evaluator mapping field 'probabilities' must be a mapping")
 
                             parsed_probabilities: Dict[str, float] = {}
+                            total_probability_mass = 0.0
                             for key, value in raw_probabilities.items():
                                 try:
-                                    parsed_probabilities[str(key)] = float(value)
+                                    probability = float(value)
                                 except (TypeError, ValueError) as exc:
                                     raise ValueError(
                                         "Evaluator mapping field 'probabilities' must contain numeric values"
                                     ) from exc
+                                if not math.isfinite(probability):
+                                    raise ValueError(
+                                        "Evaluator mapping field 'probabilities' must contain finite numeric values"
+                                    )
+                                if probability < 0:
+                                    raise ValueError(
+                                        "Evaluator mapping field 'probabilities' must contain non-negative values"
+                                    )
+                                parsed_probabilities[str(key)] = probability
+                                total_probability_mass += probability
+
+                            if total_probability_mass <= 0:
+                                raise ValueError(
+                                    "Evaluator mapping field 'probabilities' must have a positive total mass"
+                                )
 
                             try:
                                 parsed_brier = float(evaluation_payload["brier"])
                             except (TypeError, ValueError) as exc:
                                 raise ValueError("Evaluator mapping field 'brier' must be numeric") from exc
+                            if not math.isfinite(parsed_brier):
+                                raise ValueError("Evaluator mapping field 'brier' must be finite")
 
                             parsed_mcq_dimensions = evaluation_payload["mcq_dimensions"]
                             if not isinstance(parsed_mcq_dimensions, Mapping):

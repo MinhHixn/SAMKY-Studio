@@ -197,6 +197,7 @@ def test_protocol_condition_executor_execute_supports_legacy_tuple_payload(tmp_p
         evaluator=lambda *_args, **_kwargs: ({"A": 1.0}, 0.0),
     )
 
+    # Tuple payload support is intentional for legacy evaluator compatibility.
     assert row["simulation_status"] == "completed"
     assert row["evaluation_completed"] is True
     assert row["probabilities"] == {"A": 1.0}
@@ -240,6 +241,69 @@ def test_protocol_condition_executor_execute_unsupported_payload_falls_back_to_e
     ],
 )
 def test_protocol_condition_executor_execute_malformed_mapping_payload_falls_back_to_evaluation_failed(
+    tmp_path, payload
+):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: payload,
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
+    assert trace_entries[-1]["status"] == "evaluation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"probabilities": {"A": float("nan"), "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": float("inf"), "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": 1.0, "B": 0.0}, "brier": float("nan"), "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": 1.0, "B": 0.0}, "brier": float("inf"), "mcq_dimensions": {}, "validated_scales": {}},
+    ],
+)
+def test_protocol_condition_executor_execute_non_finite_mapping_payload_falls_back_to_evaluation_failed(
+    tmp_path, payload
+):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: payload,
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
+    assert trace_entries[-1]["status"] == "evaluation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"probabilities": {"A": -0.1, "B": 1.1}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": 0.0, "B": 0.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": -1.0, "B": 1.0}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+    ],
+)
+def test_protocol_condition_executor_execute_invalid_probability_mass_falls_back_to_evaluation_failed(
     tmp_path, payload
 ):
     executor, trace_entries = _build_protocol_executor(tmp_path)

@@ -216,7 +216,7 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - Workflow mode remains A/B/C per event (`workflow_mode: "abc-per-event"`).
 - `run_manifest.json` includes:
   - `benchmark_model`
-  - `expected_run_units` (`events_loaded * 3 * repeats`)
+  - `expected_run_units` (derived from generated condition matrix size; in current A/B/C mode this equals `events_loaded * 3 * repeats`)
 - `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
 
 ### ECN-BENCH v0.3 parity architecture update
@@ -250,10 +250,10 @@ python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-ra
 ##### Verification evidence (this branch)
 
 - Benchmark regression command: `python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q`
-- Observed in this branch: `60 passed in 2.77s`.
-- Sanity command form (with preflight vars + absolute paths): `$env:OPENROUTER_API_KEY='<set>'; $env:OPENROUTER_BASE_URL='https://openrouter.ai/api/v1'; $env:OPENROUTER_GRAPH_MODEL='<set>'; $env:OPENROUTER_BENCHMARK_MODEL='<set>'; $env:OPENROUTER_EVALUATOR_MODEL='<set>'; python C:\Users\TPGHien\Desktop\Claw-4-FUN\MiroFish-Offline\.worktrees\abc-workflow-continuation\backend\scripts\run_ecnbench_protocol.py --seeds-dir C:\Users\TPGHien\Desktop\Claw-4-FUN\data\seeds --events-raw C:\Users\TPGHien\Desktop\Claw-4-FUN\data\events_raw.json --injection-bank C:\Users\TPGHien\Desktop\Claw-4-FUN\data\injections\step30_injection_bank.json --output-dir C:\Users\TPGHien\Desktop\Claw-4-FUN\MiroFish-Offline\.worktrees\abc-workflow-continuation\backend\logs\benchmark_runs --events 1 --repeats 1`
+- Observed in this branch: `60 passed`.
+- Sanity command form (with preflight vars, run from `backend`): `$env:OPENROUTER_API_KEY='<set>'; $env:OPENROUTER_BASE_URL='https://openrouter.ai/api/v1'; $env:OPENROUTER_GRAPH_MODEL='<set>'; $env:OPENROUTER_BENCHMARK_MODEL='<set>'; $env:OPENROUTER_EVALUATOR_MODEL='<set>'; python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-raw ..\..\data\events_raw.json --injection-bank ..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1`
 - Observed branch sanity outcome: command exit code `0`; artifacts written under `backend\logs\benchmark_runs\ecnbench_<UTC timestamp>\`.
-- Post-run field check in this branch: across `run_manifest.json` and `event_results.json`, the traceability fields `workflow_mode`, `benchmark_model`, `expected_run_units`, and `unit_id` are present after run (`unit_id` is per-row in `event_results.json`).
+- Post-run field check in this branch: across `run_manifest.json` and `event_results.json`, the traceability fields `workflow_mode`, `benchmark_model`, `expected_run_units` (matrix-derived; currently `events_loaded * 3 * repeats` in A/B/C mode), and `unit_id` are present after run (`unit_id` is per-row in `event_results.json`).
 
 ### System status endpoint
 

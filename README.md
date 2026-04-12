@@ -218,9 +218,46 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
   - `BenchmarkRunOrchestrator` for run-level lifecycle (manifest, traces, event-results, summary coordination)
 - `backend/scripts/run_ecnbench_protocol.py` remains the CLI entrypoint and delegates orchestration to these classes.
 
+#### Verification traceability (v0.3 parity)
+
+Run from `backend` to keep this parity work auditable:
+
+```powershell
+python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q
+python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\..\..\data\seeds --events-raw ..\..\..\..\data\events_raw.json --injection-bank ..\..\..\..\data\injections\step30_injection_bank.json --output-dir logs\benchmark_runs --events 1 --repeats 1 --trace-out logs\benchmark_traces\ecnbench_trace_sanity.jsonl
+```
+
 ### System status endpoint
 
-`GET /api/status` returns a JSON payload with:
+`GET /api/status` returns a top-level response envelope with `success` and `data`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "neo4j": {
+      "ok": true,
+      "error": null
+    },
+    "ollama": {
+      "ok": true,
+      "configured_model": "qwen2.5:32b",
+      "model_available": true,
+      "error": null
+    },
+    "disk": {
+      "path": "data/simulation_data",
+      "total_bytes": 1000000000,
+      "used_bytes": 400000000,
+      "free_bytes": 600000000,
+      "error": null
+    },
+    "timestamp_utc": "2026-04-12T10:00:00Z"
+  }
+}
+```
+
+Inside `data`, the status payload includes:
 
 - `neo4j`: connectivity state and sanitized error details
 - `ollama`: service reachability, configured model, model availability, and sanitized error details

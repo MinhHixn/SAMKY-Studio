@@ -17,17 +17,21 @@ from ..config import Config
 def _check_neo4j():
     storage = current_app.extensions.get("neo4j_storage")
     if storage is None:
-        return {"connected": False, "error": "Neo4jStorage not initialized"}
+        return {"connected": False, "error": "Neo4j storage is not initialized"}
 
     try:
         verify_connection = getattr(storage, "verify_connection", None)
-        connected = bool(verify_connection()) if callable(verify_connection) else True
+        if not callable(verify_connection):
+            return {"connected": False, "error": "Neo4j health check unavailable"}
+
+        connected = bool(verify_connection())
         return {
             "connected": connected,
             "error": None if connected else "Neo4j verification failed",
         }
     except Exception as exc:
-        return {"connected": False, "error": str(exc)}
+        current_app.logger.exception("Neo4j status check failed: %s", exc)
+        return {"connected": False, "error": "Failed to verify Neo4j connectivity"}
 
 
 def _check_ollama():
@@ -51,17 +55,19 @@ def _check_ollama():
             "error": None,
         }
     except Exception as exc:
+        current_app.logger.exception("Ollama status check failed: %s", exc)
         return {
             "reachable": False,
             "model_configured": model,
             "model_available": False,
-            "error": str(exc),
+            "error": "Failed to reach Ollama service",
         }
 
 
 @system_bp.route("/status", methods=["GET"])
 def get_status():
-    total, used, free = shutil.disk_usage(".")
+    disk_path = Config.OASIS_SIMULATION_DATA_DIR or Config.UPLOAD_FOLDER or "."
+    total, used, free = shutil.disk_usage(disk_path)
 
     return jsonify(
         {
@@ -70,7 +76,7 @@ def get_status():
                 "neo4j": _check_neo4j(),
                 "ollama": _check_ollama(),
                 "disk": {
-                    "path": ".",
+                    "path": disk_path,
                     "total_bytes": int(total),
                     "used_bytes": int(used),
                     "free_bytes": int(free),

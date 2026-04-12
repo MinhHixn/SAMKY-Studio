@@ -20,7 +20,13 @@ def test_api_status_reports_healthy_dependencies(monkeypatch):
             },
         )(),
     )
-    monkeypatch.setattr(system_api.shutil, "disk_usage", lambda _path: (1000, 400, 600))
+    disk_usage_calls = []
+
+    def fake_disk_usage(path):
+        disk_usage_calls.append(path)
+        return (1000, 400, 600)
+
+    monkeypatch.setattr(system_api.shutil, "disk_usage", fake_disk_usage)
 
     client = app.test_client()
     response = client.get("/api/status")
@@ -33,18 +39,20 @@ def test_api_status_reports_healthy_dependencies(monkeypatch):
     assert payload["data"]["ollama"]["reachable"] is True
     assert payload["data"]["ollama"]["model_configured"] == "qwen2.5:32b"
     assert payload["data"]["ollama"]["model_available"] is True
+    assert payload["data"]["disk"]["path"] == app.config["OASIS_SIMULATION_DATA_DIR"]
     assert payload["data"]["disk"]["free_bytes"] == 600
+    assert disk_usage_calls == [app.config["OASIS_SIMULATION_DATA_DIR"]]
     assert "timestamp_utc" in payload["data"]
 
 
 def test_api_status_reports_degraded_subsystems(monkeypatch):
     app = create_app()
-    app.extensions["neo4j_storage"] = None
+    app.extensions["neo4j_storage"] = object()
 
     from app.api import system as system_api
 
     def raise_ollama(*_args, **_kwargs):
-        raise RuntimeError("ollama unavailable")
+        raise RuntimeError("connection refused at 127.0.0.1:11434")
 
     monkeypatch.setattr(system_api.requests, "get", raise_ollama)
     monkeypatch.setattr(system_api.shutil, "disk_usage", lambda _path: (1000, 900, 100))
@@ -55,5 +63,7 @@ def test_api_status_reports_degraded_subsystems(monkeypatch):
 
     assert response.status_code == 200
     assert payload["data"]["neo4j"]["connected"] is False
+    assert payload["data"]["neo4j"]["error"] == "Neo4j health check unavailable"
     assert payload["data"]["ollama"]["reachable"] is False
-    assert "error" in payload["data"]["ollama"]
+    assert payload["data"]["ollama"]["error"] == "Failed to reach Ollama service"
+    assert "127.0.0.1:11434" not in payload["data"]["ollama"]["error"]

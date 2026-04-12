@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from app.benchmarks.orchestrator import (
     BenchmarkRunOrchestrator,
     ConditionExecutor,
@@ -223,6 +225,40 @@ def test_protocol_condition_executor_execute_unsupported_payload_falls_back_to_e
     assert row["probabilities"] is None
     assert row["brier"] is None
     assert row["error"] == "ValueError: Evaluator result must be a tuple or mapping"
+    assert trace_entries[-1]["status"] == "evaluation_failed"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": ["A", 0.7], "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": "NaN?"}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": 0.7}, "brier": "not-a-number", "mcq_dimensions": {}, "validated_scales": {}},
+        {"probabilities": {"A": 0.7}, "brier": 0.09, "mcq_dimensions": [], "validated_scales": {}},
+        {"probabilities": {"A": 0.7}, "brier": 0.09, "mcq_dimensions": {}, "validated_scales": []},
+    ],
+)
+def test_protocol_condition_executor_execute_malformed_mapping_payload_falls_back_to_evaluation_failed(
+    tmp_path, payload
+):
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: payload,
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
+    assert row["probabilities"] is None
+    assert row["brier"] is None
     assert trace_entries[-1]["status"] == "evaluation_failed"
 
 

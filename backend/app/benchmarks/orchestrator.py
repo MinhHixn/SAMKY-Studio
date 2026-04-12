@@ -9,8 +9,8 @@ from typing import Any, Callable, Dict, Mapping, TypeAlias, TypedDict
 LegacyEvaluatorPayload: TypeAlias = tuple[Dict[str, float], float]
 
 
-class MappingEvaluatorPayload(TypedDict, total=False):
-    probabilities: Dict[str, float]
+class MappingEvaluatorPayload(TypedDict):
+    probabilities: Mapping[str, Any]
     brier: float
     mcq_dimensions: Mapping[str, Any]
     validated_scales: Mapping[str, Any]
@@ -286,10 +286,41 @@ class ProtocolConditionExecutor:
                             mcq_dimensions = None
                             validated_scales = None
                         elif isinstance(evaluation_payload, Mapping):
-                            probabilities = evaluation_payload.get("probabilities")
-                            brier = evaluation_payload.get("brier")
-                            mcq_dimensions = evaluation_payload.get("mcq_dimensions")
-                            validated_scales = evaluation_payload.get("validated_scales")
+                            required_keys = ("probabilities", "brier", "mcq_dimensions", "validated_scales")
+                            missing_keys = [key for key in required_keys if key not in evaluation_payload]
+                            if missing_keys:
+                                raise ValueError(f"Evaluator mapping missing required keys: {', '.join(missing_keys)}")
+
+                            raw_probabilities = evaluation_payload["probabilities"]
+                            if not isinstance(raw_probabilities, Mapping):
+                                raise ValueError("Evaluator mapping field 'probabilities' must be a mapping")
+
+                            parsed_probabilities: Dict[str, float] = {}
+                            for key, value in raw_probabilities.items():
+                                try:
+                                    parsed_probabilities[str(key)] = float(value)
+                                except (TypeError, ValueError) as exc:
+                                    raise ValueError(
+                                        "Evaluator mapping field 'probabilities' must contain numeric values"
+                                    ) from exc
+
+                            try:
+                                parsed_brier = float(evaluation_payload["brier"])
+                            except (TypeError, ValueError) as exc:
+                                raise ValueError("Evaluator mapping field 'brier' must be numeric") from exc
+
+                            parsed_mcq_dimensions = evaluation_payload["mcq_dimensions"]
+                            if not isinstance(parsed_mcq_dimensions, Mapping):
+                                raise ValueError("Evaluator mapping field 'mcq_dimensions' must be a mapping")
+
+                            parsed_validated_scales = evaluation_payload["validated_scales"]
+                            if not isinstance(parsed_validated_scales, Mapping):
+                                raise ValueError("Evaluator mapping field 'validated_scales' must be a mapping")
+
+                            probabilities = parsed_probabilities
+                            brier = parsed_brier
+                            mcq_dimensions = parsed_mcq_dimensions
+                            validated_scales = parsed_validated_scales
                         else:
                             raise ValueError("Evaluator result must be a tuple or mapping")
                         evaluation_completed = True

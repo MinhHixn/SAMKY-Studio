@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPTS_DIR.parent
@@ -51,6 +51,25 @@ TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
 MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
+
+EventRecord = Mapping[str, Any]
+SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
+ConditionEvaluator = Callable[[EventRecord, str, str, BenchmarkRoleRouter], tuple[Dict[str, float], float]]
+
+
+class TraceWriterAdapter(Protocol):
+    def write(self, payload: Mapping[str, Any]) -> None: ...
+
+
+class _LazyTraceWriter:
+    def __init__(self, path: Path):
+        self._path = path
+        self._writer: BenchmarkTraceWriter | None = None
+
+    def write(self, payload: Mapping[str, Any]) -> None:
+        if self._writer is None:
+            self._writer = BenchmarkTraceWriter(self._path)
+        self._writer.write(dict(payload))
 
 
 def _utc_run_id() -> str:
@@ -539,7 +558,7 @@ class _ProtocolConditionExecutor:
         profiles: List[Dict[str, Any]],
         seed_files: List[Path],
         event_index_lookup: Mapping[str, int],
-        trace_writer: BenchmarkTraceWriter,
+        trace_writer: TraceWriterAdapter,
     ):
         self._router = router
         self._python_exe = python_exe
@@ -555,14 +574,14 @@ class _ProtocolConditionExecutor:
     def execute(
         self,
         *,
-        event: Mapping[str, Any],
+        event: EventRecord,
         condition: str,
         repeat: int,
         run_id: str,
         unit_dir: Path,
         seed_file: Path,
-        config_builder: Any,
-        evaluator: Any,
+        config_builder: SimulationConfigBuilder,
+        evaluator: ConditionEvaluator,
     ) -> Dict[str, Any]:
         del seed_file
         event_id = str(event["event_id"])
@@ -723,11 +742,9 @@ def main() -> None:
     run_id = _utc_run_id()
     run_dir = output_root / run_id
     traces_dir = run_dir / "traces"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    traces_dir.mkdir(parents=True, exist_ok=True)
 
     trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
-    trace_writer = BenchmarkTraceWriter(trace_path)
+    trace_writer = _LazyTraceWriter(trace_path)
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -747,7 +764,6 @@ def main() -> None:
         "seed_files": [str(path) for path in seed_files],
         "event_ids": [str(event["event_id"]) for event in events],
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     event_lookup = {str(event["event_id"]): event for event in events}
     event_index_lookup = {str(event["event_id"]): index for index, event in enumerate(events)}
@@ -760,7 +776,7 @@ def main() -> None:
         trace_writer=trace_writer,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)
-    orchestrator.run(
+    run_dir = orchestrator.run(
         run_id=run_id,
         output_root=output_root,
         events=events,

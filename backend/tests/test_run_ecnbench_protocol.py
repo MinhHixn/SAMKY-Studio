@@ -244,15 +244,23 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
 
 
 def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
-    called = {"count": 0}
+    captured: dict[str, object] = {}
+    config_builder_calls: list[tuple[dict[str, object], str, list[dict[str, object]], object, str]] = []
+
+    class DummyInjectionLoader:
+        pass
 
     class FakeOrchestrator:
         def __init__(self, executor):
             self.executor = executor
 
         def run(self, **kwargs):
-            called["count"] += 1
+            captured.update(kwargs)
             run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
+            captured["run_dir_exists_before_run"] = run_dir.exists()
+            captured["manifest_exists_before_run"] = (run_dir / "run_manifest.json").exists()
+            built_config = kwargs["config_builder"]({"event_id": "E1", "question": "Q", "outcome": "A"}, "A")
+            captured["built_config"] = built_config
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
             (run_dir / "summary.json").write_text("{}", encoding="utf-8")
@@ -278,7 +286,16 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
             )()
         ),
     )
-    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: DummyInjectionLoader())
+    monkeypatch.setattr(
+        protocol_script,
+        "build_simulation_config",
+        lambda event, condition, profiles, injection_loader, llm_model: (
+            config_builder_calls.append((event, condition, profiles, injection_loader, llm_model))
+            or {"event_id": event["event_id"], "condition": condition}
+        ),
+    )
+    monkeypatch.setattr(protocol_script, "write_summary", lambda *_args, **_kwargs: {"ok": True})
     monkeypatch.setattr(
         protocol_script.sys,
         "argv",
@@ -295,7 +312,24 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    assert called["count"] == 1
+    assert captured["run_id"] == "fixed-run"
+    assert captured["output_root"] == tmp_path / "runs"
+    assert captured["events"] == [{"event_id": "E1", "question": "Q", "outcome": "A"}]
+    assert captured["repeats"] == 1
+    assert captured["build_condition_matrix"] is protocol_script.build_condition_matrix
+    assert captured["event_lookup"] == {"E1": {"event_id": "E1", "question": "Q", "outcome": "A"}}
+    assert captured["write_summary"] is protocol_script.write_summary
+    assert captured["evaluator"] is protocol_script._evaluate_row
+    assert captured["run_dir_exists_before_run"] is False
+    assert captured["manifest_exists_before_run"] is False
+    assert captured["built_config"] == {"event_id": "E1", "condition": "A"}
+    assert len(config_builder_calls) == 1
+    event, condition, profiles, injection_loader, llm_model = config_builder_calls[0]
+    assert event == {"event_id": "E1", "question": "Q", "outcome": "A"}
+    assert condition == "A"
+    assert profiles == [{"agent_id": 1}]
+    assert isinstance(injection_loader, DummyInjectionLoader)
+    assert llm_model == "m"
 
 
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):

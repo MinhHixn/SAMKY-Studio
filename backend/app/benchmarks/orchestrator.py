@@ -174,22 +174,30 @@ class BenchmarkRunOrchestrator:
         row_evaluator = evaluator or (lambda *_args, **_kwargs: ({"A": 1.0}, 0.0))
 
         for matrix_row in build_condition_matrix(events, repeats):
-            event = event_lookup[str(matrix_row["event_id"])]
-            condition = str(matrix_row["condition"])
-            repeat = int(matrix_row["repeat"])
-            with trace_path.open("a", encoding="utf-8") as trace_file:
-                trace_file.write(
-                    json.dumps(
-                        {
-                            "event_id": str(event["event_id"]),
-                            "condition": condition,
-                            "repeat": repeat,
-                            "status": "starting",
-                        }
-                    )
-                    + "\n"
-                )
+            fallback_event_id = str(matrix_row.get("event_id", "unknown_event"))
+            fallback_condition = str(matrix_row.get("condition", "unknown_condition"))
+            fallback_repeat_raw = matrix_row.get("repeat", 0)
             try:
+                fallback_repeat = int(fallback_repeat_raw)
+            except Exception:
+                fallback_repeat = 0
+
+            try:
+                event = event_lookup[str(matrix_row["event_id"])]
+                condition = str(matrix_row["condition"])
+                repeat = int(matrix_row["repeat"])
+                with trace_path.open("a", encoding="utf-8") as trace_file:
+                    trace_file.write(
+                        json.dumps(
+                            {
+                                "event_id": str(event["event_id"]),
+                                "condition": condition,
+                                "repeat": repeat,
+                                "status": "starting",
+                            }
+                        )
+                        + "\n"
+                    )
                 rows.append(
                     self._executor.execute(
                         event=event,
@@ -205,12 +213,12 @@ class BenchmarkRunOrchestrator:
             except Exception as exc:
                 rows.append(
                     {
-                        "event_id": str(event["event_id"]),
-                        "condition": condition,
-                        "repeat": repeat,
+                        "event_id": fallback_event_id,
+                        "condition": fallback_condition,
+                        "repeat": fallback_repeat,
                         "run_id": run_id,
                         "seed_file": str(unit_seed_file),
-                        "simulation_status": "unit_failed",
+                        "simulation_status": "simulation_failed",
                         "evaluation_status": "not_run",
                         "full_simulation_completed": False,
                         "probabilities": None,

@@ -129,15 +129,75 @@ def test_load_events_ignores_taxonomy_key_value_maps(tmp_path):
     assert [event["event_id"] for event in events] == ["S2"]
 
 
-def test_validate_injection_coverage_raises_for_missing_event():
+def test_validate_injection_coverage_raises_for_missing_event_id():
     class DummyInjectionLoader:
         def has_event(self, event_id):
             return event_id == "E1"
 
-    events = [{"event_id": "E1"}, {"event_id": "E2"}]
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
 
-    with pytest.raises(ValueError, match=r"Missing injection payloads for event_ids: E2"):
+    events = [{"event_id": "E1"}, {"event_id": "E2"}, {"event_id": "E3"}]
+
+    with pytest.raises(ValueError) as exc:
         protocol_script.validate_injection_coverage(events, DummyInjectionLoader())
+
+    message = str(exc.value)
+    assert "E2" in message
+    assert "E3" in message
+    assert "missing event id" in message
+
+
+def test_validate_injection_coverage_raises_for_missing_b_payload():
+    class DummyInjectionLoader:
+        def has_event(self, event_id):
+            return True
+
+        def get_payload(self, event_id, condition):
+            if condition == "B":
+                raise KeyError(f"Missing 'relevant_update' payload for event_id: {event_id}")
+            return {"event_id": event_id, "condition": condition}
+
+    with pytest.raises(ValueError) as exc:
+        protocol_script.validate_injection_coverage([{"event_id": "E1"}], DummyInjectionLoader())
+
+    message = str(exc.value)
+    assert "E1" in message
+    assert "B" in message
+    assert "relevant_update" in message
+
+
+def test_validate_injection_coverage_raises_for_missing_c_payload():
+    class DummyInjectionLoader:
+        def has_event(self, event_id):
+            return True
+
+        def get_payload(self, event_id, condition):
+            if condition == "C":
+                raise KeyError(f"Missing 'null_update' payload for event_id: {event_id}")
+            return {"event_id": event_id, "condition": condition}
+
+    with pytest.raises(ValueError) as exc:
+        protocol_script.validate_injection_coverage([{"event_id": "E1"}], DummyInjectionLoader())
+
+    message = str(exc.value)
+    assert "E1" in message
+    assert "C" in message
+    assert "null_update" in message
+
+
+def test_validate_injection_coverage_happy_path():
+    class DummyInjectionLoader:
+        def has_event(self, event_id):
+            return event_id in {"E1", "E2"}
+
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
+
+    protocol_script.validate_injection_coverage(
+        [{"event_id": "E1"}, {"event_id": "E2"}],
+        DummyInjectionLoader(),
+    )
 
 
 def test_load_events_keeps_scalar_events_with_metadata_keys(tmp_path):
@@ -292,6 +352,9 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         def has_event(self, event_id):
             return True
 
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
+
     class DummyRouter:
         api_key = "router-key"
         base_url = "https://openrouter.ai/api/v1"
@@ -329,6 +392,9 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     class DummyInjectionLoader:
         def has_event(self, event_id):
             return True
+
+        def get_payload(self, event_id, condition):
+            return {"event_id": event_id, "condition": condition}
 
     class FakeProtocolExecutor:
         def __init__(self, **kwargs):

@@ -224,7 +224,7 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - Evaluator output now includes:
   - `probabilities` (legacy output, unchanged)
   - `mcq_dimensions` (7 dimensions × 4 buckets: `very_low`, `low`, `high`, `very_high`)
-  - `validated_scales` (contains `schema_version` and normalized `scores`)
+  - `validated_scales` (includes `schema_version` (v1) and validated numeric scores)
 - Numeric aggregation remains unchanged: multiclass Brier scoring + condition lift (`A_to_B`, `A_to_C`, `B_to_C`).
 - Weighted 7-dimension aggregate scoring is intentionally deferred.
 

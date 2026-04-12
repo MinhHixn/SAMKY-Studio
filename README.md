@@ -211,6 +211,22 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - `summary.json` — mean Brier scores, lift, and success/failure counts
 - `simulation_config.json`, `twitter_profiles.csv`, `reddit_profiles.json` — per-unit simulation inputs
 
+### ECN-BENCH v0.3 parity architecture update
+
+- Benchmark run lifecycle now uses reusable orchestrator classes in `backend/app/benchmarks/orchestrator.py`:
+  - `ConditionExecutor` / `ProtocolConditionExecutor` for per-condition execution and evaluation handling
+  - `BenchmarkRunOrchestrator` for run-level lifecycle (manifest, traces, event-results, summary coordination)
+- `backend/scripts/run_ecnbench_protocol.py` remains the CLI entrypoint and delegates orchestration to these classes.
+
+### System status endpoint
+
+`GET /api/status` returns a JSON payload with:
+
+- `neo4j`: connectivity state and sanitized error details
+- `ollama`: service reachability, configured model, model availability, and sanitized error details
+- `disk`: configured simulation data path plus total/used/free bytes (or a sanitized disk-check error)
+- `timestamp_utc`: server timestamp for the status snapshot
+
 ## Architecture
 
 This fork introduces a clean abstraction layer between the application and the graph database:

@@ -567,6 +567,7 @@ def main() -> None:
         raise ValueError("--repeats must be > 0")
 
     router = BenchmarkRoleRouter.from_config()
+    benchmark_model = router.model_for("benchmark")
     events = load_events_from_raw(args.events_raw, limit=args.events)
     seed_files = load_seed_files(args.seeds_dir)
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
@@ -579,6 +580,7 @@ def main() -> None:
 
     trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
     trace_writer = _LazyTraceWriter(trace_path)
+    expected_run_units = len(events) * len(CONDITIONS) * args.repeats
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -597,6 +599,9 @@ def main() -> None:
         "trace_out": str(trace_path),
         "seed_files": [str(path) for path in seed_files],
         "event_ids": [str(event["event_id"]) for event in events],
+        "workflow_mode": "abc-per-event",
+        "benchmark_model": benchmark_model,
+        "expected_run_units": expected_run_units,
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}
@@ -631,7 +636,7 @@ def main() -> None:
             condition,
             profiles,
             injection_loader,
-            llm_model=router.model_for("benchmark"),
+            llm_model=benchmark_model,
         ),
         evaluator=_evaluate_row,
         manifest=manifest,

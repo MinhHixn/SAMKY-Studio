@@ -345,6 +345,30 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert llm_model == "m"
 
 
+def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    output_dir = tmp_path / "runs"
+    argv = [
+        "run_ecnbench_protocol.py",
+        "--seeds-dir",
+        str(tmp_path / "seeds"),
+        "--events-raw",
+        str(tmp_path / "events.json"),
+        "--output-dir",
+        str(output_dir),
+    ]
+    monkeypatch.setattr(protocol_script.sys, "argv", argv)
+
+    protocol_script.main()
+
+    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["workflow_mode"] == "abc-per-event"
+    assert manifest["benchmark_model"] == "openrouter/benchmark-model"
+    assert manifest["expected_run_units"] == 3
+
+
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=1, stdout="", stderr="boom")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)

@@ -22,6 +22,18 @@ def _install_fake_openai(monkeypatch, store):
     monkeypatch.setattr(llm_client_module, "OpenAI", FakeOpenAI)
 
 
+def _create_test_client(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    return llm_client_module.LLMClient()
+
+
 def test_config_reads_openrouter_and_benchmark_flags(monkeypatch):
     import dotenv
     import app.config as config_module
@@ -441,3 +453,62 @@ def test_invalid_benchmark_seed_raises_clear_error(monkeypatch):
 
     with pytest.raises(ValueError, match="BENCHMARK_SEED must be an integer"):
         llm_client_module.LLMClient()
+
+
+def test_chat_json_repairs_truncated_payload_when_opted_in(monkeypatch):
+    client = _create_test_client(monkeypatch)
+    monkeypatch.setattr(
+        client,
+        "chat",
+        lambda **kwargs: "```json\n{\"items\": [1, 2\n```",
+    )
+
+    parsed = client.chat_json(
+        messages=[{"role": "user", "content": "return json"}],
+        repair_truncated_json=True,
+    )
+
+    assert parsed == {"items": [1, 2]}
+
+
+def test_chat_json_repairs_unterminated_string_at_eof_when_opted_in(monkeypatch):
+    client = _create_test_client(monkeypatch)
+    monkeypatch.setattr(
+        client,
+        "chat",
+        lambda **kwargs: "```json\n{\"a\":\"abc\n```",
+    )
+
+    parsed = client.chat_json(
+        messages=[{"role": "user", "content": "return json"}],
+        repair_truncated_json=True,
+    )
+
+    assert parsed == {"a": "abc"}
+
+
+def test_chat_json_truncation_repair_is_opt_in(monkeypatch):
+    client = _create_test_client(monkeypatch)
+    monkeypatch.setattr(
+        client,
+        "chat",
+        lambda **kwargs: "```json\n{\"items\": [1, 2\n```",
+    )
+
+    with pytest.raises(ValueError, match="Invalid JSON format from LLM:"):
+        client.chat_json(messages=[{"role": "user", "content": "return json"}])
+
+
+def test_chat_json_repair_keeps_error_for_non_truncated_payload(monkeypatch):
+    client = _create_test_client(monkeypatch)
+    monkeypatch.setattr(
+        client,
+        "chat",
+        lambda **kwargs: "{\"items\": [1,, 2]}",
+    )
+
+    with pytest.raises(ValueError, match="Invalid JSON format from LLM:"):
+        client.chat_json(
+            messages=[{"role": "user", "content": "return json"}],
+            repair_truncated_json=True,
+        )

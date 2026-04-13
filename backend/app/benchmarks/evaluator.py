@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any, Dict, Mapping
 
 from .role_router import BenchmarkRoleRouter
@@ -18,6 +19,8 @@ MCQ_DIMENSION_KEYS = (
 )
 MCQ_BUCKET_KEYS = ("very_low", "low", "high", "very_high")
 VALIDATED_SCALES_SCHEMA_VERSION = "v1"
+INVALID_JSON_ERROR_PREFIX = "Invalid JSON format from LLM:"
+EVALUATOR_JSON_MAX_ATTEMPTS = 3
 
 
 def _normalize_probability_mapping(mapping: Any, context: str) -> Dict[str, float]:
@@ -71,33 +74,45 @@ class ProbabilityEvaluator:
 
     def evaluate(self, event_question: str, condition: str, evidence_text: str) -> Dict[str, Any]:
         client = self._router.client_for("evaluator")
-        response = client.chat_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an ECN-BENCH evaluator. Return a JSON object with keys: "
-                        "probabilities (mapping outcome label to numeric probability), "
-                        "mcq_dimensions (object with exactly these dimensions: "
-                        "prediction_accuracy, polarization, herd_effect, deliberation_quality, "
-                        "susceptibility, convergence, information_diversity; each dimension maps "
-                        "to buckets very_low, low, high, very_high with numeric values), and "
-                        "validated_scales (object with schema_version 'v1' and scores mapping of "
-                        "numeric scale scores)."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Question: {event_question}\n"
-                        f"Condition: {condition}\n"
-                        f"Evidence: {evidence_text}"
-                    ),
-                },
-            ],
-            temperature=0.0,
-            max_tokens=512,
-        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an ECN-BENCH evaluator. Return a JSON object with keys: "
+                    "probabilities (mapping outcome label to numeric probability), "
+                    "mcq_dimensions (object with exactly these dimensions: "
+                    "prediction_accuracy, polarization, herd_effect, deliberation_quality, "
+                    "susceptibility, convergence, information_diversity; each dimension maps "
+                    "to buckets very_low, low, high, very_high with numeric values), and "
+                    "validated_scales (object with schema_version 'v1' and scores mapping of "
+                    "numeric scale scores)."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {event_question}\n"
+                    f"Condition: {condition}\n"
+                    f"Evidence: {evidence_text}"
+                ),
+            },
+        ]
+        response = None
+        for attempt in range(EVALUATOR_JSON_MAX_ATTEMPTS):
+            try:
+                response = client.chat_json(
+                    messages,
+                    temperature=0.0,
+                    max_tokens=512,
+                    repair_truncated_json=True,
+                )
+                break
+            except ValueError as error:
+                if not str(error).startswith(INVALID_JSON_ERROR_PREFIX):
+                    raise
+                if attempt == EVALUATOR_JSON_MAX_ATTEMPTS - 1:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
 
         probabilities = response.get("probabilities") if isinstance(response, dict) else None
         mcq_dimensions = response.get("mcq_dimensions") if isinstance(response, dict) else None

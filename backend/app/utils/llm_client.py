@@ -200,6 +200,70 @@ class LLMClient:
 
         return False
 
+    @staticmethod
+    def _scan_json_structure(payload: str) -> tuple[list[str], bool, bool]:
+        stack: list[str] = []
+        in_string = False
+        is_escaped = False
+        has_mismatched_closer = False
+
+        for char in payload:
+            if in_string:
+                if is_escaped:
+                    is_escaped = False
+                    continue
+                if char == '\\':
+                    is_escaped = True
+                    continue
+                if char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char in {'{', '['}:
+                stack.append(char)
+            elif char == '}':
+                if not stack or stack[-1] != '{':
+                    has_mismatched_closer = True
+                    break
+                stack.pop()
+            elif char == ']':
+                if not stack or stack[-1] != '[':
+                    has_mismatched_closer = True
+                    break
+                stack.pop()
+
+        return stack, in_string, has_mismatched_closer
+
+    def _looks_like_truncated_json(self, payload: str, _decode_error: json.JSONDecodeError) -> bool:
+        stripped_payload = payload.rstrip()
+        if not stripped_payload:
+            return False
+
+        stack, in_string, has_mismatched_closer = self._scan_json_structure(stripped_payload)
+        if has_mismatched_closer:
+            return False
+
+        return in_string or bool(stack)
+
+    def _repair_truncated_json(self, payload: str) -> Optional[str]:
+        stripped_payload = payload.rstrip()
+        stack, in_string, has_mismatched_closer = self._scan_json_structure(stripped_payload)
+        if has_mismatched_closer:
+            return None
+
+        repair_suffix = []
+        if in_string:
+            repair_suffix.append('"')
+        for opener in reversed(stack):
+            repair_suffix.append('}' if opener == '{' else ']')
+
+        if not repair_suffix:
+            return None
+
+        return stripped_payload + ''.join(repair_suffix)
+
     def _chat_create_with_retry(self, kwargs: Dict[str, Any]):
         delay = max(0.0, self._retry_initial_delay)
         attempt = 0
@@ -281,7 +345,8 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.3,
-        max_tokens: int = 4096
+        max_tokens: int = 4096,
+        repair_truncated_json: bool = False
     ) -> Dict[str, Any]:
         """
         Send chat request and return JSON
@@ -290,6 +355,7 @@ class LLMClient:
             messages: Message list
             temperature: Temperature parameter
             max_tokens: Max token count
+            repair_truncated_json: Attempt one safe JSON truncation repair when enabled
 
         Returns:
             Parsed JSON object
@@ -308,5 +374,12 @@ class LLMClient:
 
         try:
             return json.loads(cleaned_response)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            if repair_truncated_json and self._looks_like_truncated_json(cleaned_response, error):
+                repaired_response = self._repair_truncated_json(cleaned_response)
+                if repaired_response:
+                    try:
+                        return json.loads(repaired_response)
+                    except json.JSONDecodeError:
+                        pass
             raise ValueError(f"Invalid JSON format from LLM: {cleaned_response}")

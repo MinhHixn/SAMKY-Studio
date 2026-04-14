@@ -1,0 +1,9 @@
+{
+  "prediction_accuracy": 0.30,
+  "convergence": 0.20,
+  "susceptibility": 0.15,
+  "herd_effect": 0.15,
+  "dqi": 0.10,
+  "polarization": 0.05,
+  "info_diversity": 0.05
+}

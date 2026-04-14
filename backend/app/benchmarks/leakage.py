@@ -72,6 +72,7 @@ def validate_event_leakage(
     event_index: int = 0,
 ) -> None:
     event_id = _resolve_event_id(event, event_index)
+    effective_minimum_days_before_resolution = max(7, minimum_days_before_resolution)
     seed_key, seed_value = _first_present_value(event, SEED_DATE_KEYS)
     resolution_key, resolution_value = _first_present_value(event, RESOLUTION_DATE_KEYS)
 
@@ -87,10 +88,10 @@ def validate_event_leakage(
     seed_date = _parse_iso_date(seed_value, field_name=seed_key, event_id=event_id)
     resolution_date = _parse_iso_date(resolution_value, field_name=resolution_key, event_id=event_id)
     gap_days = (resolution_date - seed_date).days
-    if gap_days < minimum_days_before_resolution:
+    if gap_days < effective_minimum_days_before_resolution:
         raise ValueError(
             f"{event_id}: leakage preflight failed; resolution date {resolution_date.isoformat()} is only "
-            f"{gap_days} day(s) after seed date {seed_date.isoformat()} (minimum {minimum_days_before_resolution})"
+            f"{gap_days} day(s) after seed date {seed_date.isoformat()} (minimum {effective_minimum_days_before_resolution})"
         )
 
     if leakage_outcome_pattern.search(seed_text):
@@ -111,6 +112,7 @@ def validate_leakage_preflight(
     minimum_days_raw = layer23_config.get("leakage_min_days_before_resolution")
     if isinstance(minimum_days_raw, bool) or not isinstance(minimum_days_raw, int):
         raise ValueError("layer23 leakage_min_days_before_resolution must be an integer")
+    minimum_days_before_resolution = max(7, minimum_days_raw)
 
     leakage_outcome_pattern = re.compile(pattern_raw, re.IGNORECASE)
     failures: list[str] = []
@@ -129,7 +131,7 @@ def validate_leakage_preflight(
                 event,
                 seed_text,
                 leakage_outcome_pattern,
-                minimum_days_raw,
+                minimum_days_before_resolution,
                 event_index=event_index,
             )
         except ValueError as exc:

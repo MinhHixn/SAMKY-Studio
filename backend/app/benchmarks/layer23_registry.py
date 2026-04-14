@@ -94,7 +94,7 @@ def load_layer23_config(path: Path | str) -> Dict[str, object]:
         payload.get("jsd_monotonic_tolerance_epsilon"),
         minimum=0.0,
     )
-    _require_integer("leakage_min_days_before_resolution", payload.get("leakage_min_days_before_resolution"), minimum=0)
+    _require_integer("leakage_min_days_before_resolution", payload.get("leakage_min_days_before_resolution"), minimum=7)
     leakage_outcome_regex = _require_non_empty_string("leakage_outcome_regex", payload.get("leakage_outcome_regex"))
     try:
         re.compile(leakage_outcome_regex)

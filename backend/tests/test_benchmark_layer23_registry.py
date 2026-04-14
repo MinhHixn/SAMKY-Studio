@@ -77,7 +77,7 @@ def test_load_layer23_contract_keys(payload, message, tmp_path):
         ("kappa_cutoff", 1.1, "kappa_cutoff"),
         ("jsd_monotonic_tolerance_epsilon", float("inf"), "jsd_monotonic_tolerance_epsilon"),
         ("jsd_monotonic_tolerance_epsilon", -0.1, "jsd_monotonic_tolerance_epsilon"),
-        ("leakage_min_days_before_resolution", -1, "leakage_min_days_before_resolution"),
+        ("leakage_min_days_before_resolution", 6, "leakage_min_days_before_resolution"),
         ("leakage_min_days_before_resolution", 1.5, "leakage_min_days_before_resolution"),
         ("leakage_outcome_regex", "", "leakage_outcome_regex"),
         ("leakage_outcome_regex", "(", "invalid leakage_outcome_regex"),

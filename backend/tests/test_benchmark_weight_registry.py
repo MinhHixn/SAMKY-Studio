@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,49 @@ def test_load_benchmark_weights_rejects_bad_sum(tmp_path):
     )
 
     with pytest.raises(ValueError, match="sum to 1.0"):
+        load_benchmark_weights(path)
+
+
+def test_load_benchmark_weights_rejects_non_object_payload(tmp_path):
+    path = tmp_path / "weights.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        load_benchmark_weights(path)
+
+
+def test_load_benchmark_weights_rejects_bool_weight_value(tmp_path):
+    path = tmp_path / "weights.json"
+    payload = {
+        "prediction_accuracy": 0.30,
+        "convergence": 0.20,
+        "susceptibility": 0.15,
+        "herd_effect": 0.15,
+        "dqi": True,
+        "polarization": 0.05,
+        "info_diversity": 0.05,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be numeric"):
+        load_benchmark_weights(path)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_load_benchmark_weights_rejects_non_finite_weight_value(tmp_path, value):
+    path = tmp_path / "weights.json"
+    payload = {
+        "prediction_accuracy": 0.30,
+        "convergence": 0.20,
+        "susceptibility": 0.15,
+        "herd_effect": 0.15,
+        "dqi": value,
+        "polarization": 0.05,
+        "info_diversity": 0.05,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be non-negative"):
         load_benchmark_weights(path)
 
 

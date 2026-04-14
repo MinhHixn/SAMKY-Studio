@@ -726,6 +726,37 @@ def test_write_summary_includes_failure_counts(tmp_path):
     assert summary["full_simulation_completed_count"] == 1
 
 
+def test_summarize_event_results_includes_convergence_block():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "round_jsd": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "convergence_monotonic": True,
+        },
+        {
+            "condition": "B",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "round_jsd": [0.2, 0.2, 0.2, 0.2, 0.2],
+            "convergence_monotonic": False,
+        },
+        {
+            "condition": "C",
+            "brier": None,
+            "simulation_status": "evaluation_failed",
+            "round_jsd": [0.9, 0.9, 0.9, 0.9, 0.9],
+            "convergence_monotonic": True,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["convergence"]["mean_round_jsd"] == pytest.approx(0.25)
+    assert summary["convergence"]["monotonic_count"] == 1
+
+
 def test_summarize_event_results_includes_composite_score_block():
     rows = [
         {
@@ -1148,6 +1179,11 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert captured["manifest"]["run_id"] == "fixed-run"
     assert captured["manifest"]["events_loaded"] == 1
     assert captured["manifest"]["trace_out"].endswith("traces\\execution.jsonl")
+    assert captured["manifest"]["phase1_config_version"] == "phase1_v1"
+    assert captured["manifest"]["telemetry_checkpoints"] == [12, 24, 36, 48, 60]
+    assert captured["manifest"]["jsd_monotonic_tolerance_epsilon"] == pytest.approx(0.002)
+    assert captured["manifest"]["baseline_agents"] == ["uniform_random", "market_prior"]
+    assert captured["manifest"]["preflight_market_prior_check"] == "pass"
     assert captured["run_dir_exists_before_run"] is False
     assert captured["manifest_exists_before_run"] is False
     assert captured["built_config"] == {"event_id": "E1", "condition": "A"}

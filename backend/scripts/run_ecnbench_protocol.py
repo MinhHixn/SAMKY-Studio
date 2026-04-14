@@ -877,6 +877,17 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             ),
         },
     }
+    round_jsd_means = [
+        sum(values) / len(values)
+        for values in (row.get("round_jsd") for row in completed_rows)
+        if isinstance(values, list) and values
+    ]
+    summary["convergence"] = {
+        "mean_round_jsd": round(sum(round_jsd_means) / len(round_jsd_means), 6) if round_jsd_means else None,
+        "monotonic_count": sum(
+            1 for row in completed_rows if row.get("convergence_monotonic") is True
+        ),
+    }
     summary["strict_contract"] = summarize_strict_contract(completed_rows)
     summary.update(
         {
@@ -962,6 +973,11 @@ def main() -> None:
         "weights_schema_version": "v1",
         "mcq_prompt_version": "v1",
         "deterministic_mode": _deterministic_mode_config(),
+        "phase1_config_version": phase1_cfg["version"],
+        "telemetry_checkpoints": list(phase1_cfg["telemetry_checkpoints"]),
+        "jsd_monotonic_tolerance_epsilon": float(phase1_cfg["jsd_monotonic_tolerance_epsilon"]),
+        "baseline_agents": list(phase1_cfg["baseline_agents"]),
+        "preflight_market_prior_check": "pass",
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}

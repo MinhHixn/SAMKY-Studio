@@ -11,9 +11,9 @@ def test_load_phase1_happy_path(tmp_path):
     payload = {
         "version": "phase1_v1",
         "telemetry_checkpoints": [12, 24, 36, 48, 60],
-        "jsd_monotonic_tolerance_epsilon": 1e-8,
+        "jsd_monotonic_tolerance_epsilon": 0.002,
         "prior_sum_tolerance": 1e-6,
-        "min_parsed_probability_ratio": 1e-5,
+        "min_parsed_probability_ratio": 0.25,
         "baseline_agents": ["uniform_random", "market_prior"],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -70,6 +70,22 @@ def test_load_phase1_rejects_extra_keys(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="unexpected keys"):
+        load_phase1_config(path)
+
+
+def test_load_phase1_rejects_invalid_version(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v2",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 0.25,
+        "baseline_agents": ["uniform_random", "market_prior"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported phase1 config version"):
         load_phase1_config(path)
 
 

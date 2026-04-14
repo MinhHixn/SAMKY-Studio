@@ -675,6 +675,94 @@ def test_summarize_event_results_includes_composite_score_block():
     assert composite["composite_score"] == pytest.approx(0.455)
 
 
+def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composite_score():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "evaluator_noisy_dimensions": ["convergence"],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.9,
+                    "polarization_score": 0.5,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.2,
+                    "convergence_score": 0.1,
+                    "information_diversity_score": 0.6,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        },
+        {
+            "condition": "B",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "evaluator_noisy_dimensions": ["herd_effect"],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.9,
+                    "polarization_score": 0.5,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.2,
+                    "convergence_score": 0.1,
+                    "information_diversity_score": 0.6,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+    composite = summary["composite_score"]
+
+    assert summary["evaluator_reliability"] == {
+        "evaluator_noisy": ["convergence", "herd_effect"],
+    }
+    assert composite["excluded_dimensions"] == ["convergence", "herd_effect"]
+    assert set(composite["included_dimensions"]) == {
+        "prediction_accuracy",
+        "susceptibility",
+        "dqi",
+        "polarization",
+        "info_diversity",
+    }
+    assert composite["composite_score"] == pytest.approx(0.607692, abs=1e-6)
+
+
+def test_summarize_event_results_propagates_unexpected_composite_value_errors(monkeypatch):
+    monkeypatch.setattr(
+        protocol_script,
+        "_summarize_composite_score",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad composite config")),
+    )
+
+    with pytest.raises(ValueError, match="bad composite config"):
+        protocol_script.summarize_event_results(
+            [
+                {
+                    "condition": "A",
+                    "brier": 0.2,
+                    "simulation_status": "completed",
+                    "validated_scales": {
+                        "scores": {
+                            "prediction_accuracy_score": 0.1,
+                            "polarization_score": 0.2,
+                            "herd_effect_score": 0.3,
+                            "deliberation_quality_score": 0.4,
+                            "susceptibility_score": 0.5,
+                            "convergence_score": 0.6,
+                            "information_diversity_score": 0.7,
+                            "weighted_rubric_score": 0.8,
+                        }
+                    },
+                }
+            ]
+        )
+
+
 def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, evaluate_side_effect=None):
     events = [{"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]}]
     seed_file = tmp_path / "seed.json"

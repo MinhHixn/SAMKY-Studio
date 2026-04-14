@@ -135,10 +135,15 @@ def compute_composite_score(
             excluded_dimensions.append(dimension_key)
             continue
 
-        score = _finite_float_or_none(dimension_scores.get(dimension_key))
         numeric_weight = _finite_float_or_none(weight)
-        if score is None or numeric_weight is None or numeric_weight < 0.0:
+        if numeric_weight is None or numeric_weight < 0.0:
             continue
+        raw_score = dimension_scores.get(dimension_key)
+        score = _finite_float_or_none(raw_score)
+        if score is None:
+            if dimension_key in dimension_scores:
+                continue
+            score = 0.0
 
         included_dimensions.append(dimension_key)
         stable_scores[dimension_key] = score

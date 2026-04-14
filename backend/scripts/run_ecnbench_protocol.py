@@ -764,6 +764,16 @@ def _summarize_composite_score(rows: List[Dict[str, Any]], noisy_dimensions: Ite
     return compute_composite_score(averaged_scores, _load_composite_weights(), noisy_dimensions=noisy_dimensions)
 
 
+def _summarize_evaluator_reliability(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    noisy_dimensions: set[str] = set()
+    for row in rows:
+        for dimension in _as_list(row.get("evaluator_noisy_dimensions")):
+            dimension_key = str(dimension).strip()
+            if dimension_key:
+                noisy_dimensions.add(dimension_key)
+    return {"evaluator_noisy": sorted(noisy_dimensions)}
+
+
 def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
@@ -772,7 +782,8 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary["rubric"] = summarize_rubric_artifacts(completed_rows)
     summary["directional_accuracy"] = summarize_directional_accuracy(completed_rows)
     summary["weighted_rubric_score"] = summarize_weighted_rubric_score(completed_rows)
-    evaluator_reliability = summary.get("evaluator_reliability", {})
+    summary["evaluator_reliability"] = _summarize_evaluator_reliability(rows)
+    evaluator_reliability = summary["evaluator_reliability"]
     noisy_dimensions: List[str] = []
     if isinstance(evaluator_reliability, Mapping):
         evaluator_noisy = evaluator_reliability.get("evaluator_noisy", [])
@@ -780,7 +791,9 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             noisy_dimensions = [str(dimension) for dimension in evaluator_noisy]
     try:
         summary["composite_score"] = _summarize_composite_score(completed_rows, noisy_dimensions)
-    except ValueError:
+    except ValueError as exc:
+        if str(exc) != "No stable dimensions remain for composite score":
+            raise
         summary["composite_score"] = {
             "composite_score": None,
             "renormalized_weights": {},

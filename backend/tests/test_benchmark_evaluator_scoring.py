@@ -65,6 +65,19 @@ def test_compute_composite_score_excludes_noisy_dimensions_and_renormalizes():
     assert result["composite_score"] == pytest.approx((0.8 * (2 / 3)) + (0.2 * (1 / 3)))
 
 
+def test_compute_composite_score_treats_missing_stable_dimensions_as_zero_contribution():
+    result = compute_composite_score(
+        {"prediction_accuracy": 0.8},
+        {"prediction_accuracy": 0.6, "convergence": 0.4},
+    )
+
+    assert result["included_dimensions"] == ["prediction_accuracy", "convergence"]
+    assert result["excluded_dimensions"] == []
+    assert result["renormalized_weights"]["prediction_accuracy"] == pytest.approx(0.6)
+    assert result["renormalized_weights"]["convergence"] == pytest.approx(0.4)
+    assert result["composite_score"] == pytest.approx(0.48)
+
+
 def test_compute_composite_score_raises_when_no_stable_dimensions_remain():
     with pytest.raises(ValueError, match="No stable dimensions remain"):
         compute_composite_score(

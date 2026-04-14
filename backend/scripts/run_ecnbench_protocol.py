@@ -549,6 +549,7 @@ def build_event_result_row(
     injection_direction: str | None = None,
     signed_delta: float | None = None,
     belief_update_failure: bool | None = None,
+    evaluator_noisy_dimensions: Any = None,
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
     ground_truth = event.get("outcome") or event.get("answer", "")
@@ -574,7 +575,9 @@ def build_event_result_row(
     if seed_file:
         try:
             seed_metadata = load_seed_metadata(Path(seed_file).parent)
-        except (FileNotFoundError, ValueError) as exc:
+        except FileNotFoundError:
+            seed_metadata = None
+        except ValueError as exc:
             metadata_error = _format_exception(exc)
             error = f"{error}; {metadata_error}" if error else metadata_error
             seed_metadata = None
@@ -622,6 +625,7 @@ def build_event_result_row(
         "injection_direction": injection_direction,
         "signed_delta": signed_delta,
         "belief_update_failure": belief_update_failure,
+        "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "error": error,

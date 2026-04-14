@@ -284,6 +284,7 @@ class ProtocolConditionExecutor:
         brier: float | None = None
         mcq_dimensions: Mapping[str, Any] | None = None
         validated_scales: Mapping[str, Any] | None = None
+        evaluator_noisy_dimensions: Any = None
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
@@ -387,6 +388,7 @@ class ProtocolConditionExecutor:
                             evaluation_payload["validated_scales"],
                             context="Evaluator mapping field",
                         )
+                        evaluator_noisy_dimensions = evaluation_payload.get("evaluator_noisy_dimensions")
                     else:
                         raise ValueError("Evaluator result must be a tuple or mapping")
                     evaluation_completed = True
@@ -445,6 +447,7 @@ class ProtocolConditionExecutor:
             brier=brier,
             mcq_dimensions=mcq_dimensions,
             validated_scales=validated_scales,
+            evaluator_noisy_dimensions=evaluator_noisy_dimensions,
             error=row_error,
             strict_contract=strict_contract,
             simulation_executed=(condition != "A"),

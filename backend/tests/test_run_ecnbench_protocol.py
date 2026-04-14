@@ -367,6 +367,24 @@ def test_build_event_result_row_includes_seed_metadata_contract_keys():
     assert row["belief_update_failure"] is None
 
 
+def test_build_event_result_row_persists_evaluator_noisy_dimensions():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+        evaluator_noisy_dimensions=["convergence"],
+    )
+
+    assert row["evaluator_noisy_dimensions"] == ["convergence"]
+
+
 def test_build_event_result_row_uses_seed_metadata_when_explicit_args_are_missing(tmp_path):
     seed_dir = tmp_path / "seed-1"
     seed_dir.mkdir()
@@ -442,7 +460,7 @@ def test_build_event_result_row_explicit_args_take_precedence_over_seed_metadata
     assert row["belief_update_failure"] is False
 
 
-def test_build_event_result_row_surfaces_missing_seed_metadata_error(tmp_path):
+def test_build_event_result_row_ignores_missing_seed_metadata_file(tmp_path):
     seed_dir = tmp_path / "seed-1"
     seed_dir.mkdir()
     seed_file = seed_dir / "seed.txt"
@@ -461,9 +479,8 @@ def test_build_event_result_row_surfaces_missing_seed_metadata_error(tmp_path):
         seed_file=str(seed_file),
     )
 
-    assert row["error"] is not None
-    assert "FileNotFoundError" in row["error"]
-    assert row["full_simulation_completed"] is False
+    assert row["error"] is None
+    assert row["full_simulation_completed"] is True
     assert row["injection_direction"] is None
     assert row["signed_delta"] is None
     assert row["belief_update_failure"] is None

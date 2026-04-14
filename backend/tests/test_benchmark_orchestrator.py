@@ -212,6 +212,53 @@ def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
     assert trace_entries[-1]["status"] == "completed"
 
 
+def test_protocol_condition_executor_execute_forwards_evaluator_noisy_dimensions(tmp_path):
+    executor, _trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+            "evaluator_noisy_dimensions": ["convergence"],
+        },
+    )
+
+    assert row["evaluator_noisy_dimensions"] == ["convergence"]
+
+
+def test_protocol_condition_executor_execute_keeps_missing_evaluator_noisy_dimensions_backward_compatible(
+    tmp_path,
+):
+    executor, _trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+    )
+
+    assert row["evaluator_noisy_dimensions"] is None
+
+
 def test_protocol_condition_executor_execute_supports_legacy_tuple_payload(tmp_path):
     executor, _trace_entries = _build_protocol_executor(tmp_path)
 

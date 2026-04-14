@@ -1,0 +1,11 @@
+{
+  "version": "layer23_v1",
+  "kappa_cutoff": 0.7,
+  "jsd_monotonic_tolerance_epsilon": 0.002,
+  "leakage_min_days_before_resolution": 14,
+  "leakage_outcome_regex": "(?i)resolved|closed",
+  "power_target_delta_brier": 0.05,
+  "power_assumed_sigma": 0.12,
+  "power_target": 0.8,
+  "calibration_brackets": [[0.0, 0.25], [0.25, 0.5], [0.5, 0.75], [0.75, 1.0]]
+}

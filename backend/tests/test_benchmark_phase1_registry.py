@@ -56,6 +56,23 @@ def test_load_phase1_invalid_telemetry_checkpoints(tmp_path):
         load_phase1_config(path)
 
 
+def test_load_phase1_rejects_extra_keys(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v1",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 0.25,
+        "baseline_agents": ["uniform_random", "market_prior"],
+        "unexpected": True,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unexpected keys"):
+        load_phase1_config(path)
+
+
 def test_load_phase1_non_object_payload(tmp_path):
     path = tmp_path / "phase1.json"
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")

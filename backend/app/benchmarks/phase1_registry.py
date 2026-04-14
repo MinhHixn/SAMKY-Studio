@@ -35,4 +35,7 @@ def load_phase1_config(path: Path | str) -> Dict[str, object]:
     if tc != expected_checkpoints:
         raise ValueError(f"telemetry_checkpoints must be exactly {expected_checkpoints}")
 
+    if payload.get("version") != "phase1_v1":
+        raise ValueError('unsupported phase1 config version: expected "phase1_v1"')
+
     return payload

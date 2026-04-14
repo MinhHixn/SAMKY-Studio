@@ -939,6 +939,16 @@ def main() -> None:
             event,
             prior_sum_tolerance=float(phase1_cfg["prior_sum_tolerance"]),
         )
+    baseline_agent_ids = list(phase1_cfg["baseline_agents"])
+
+    def baseline_scores_with_contract(event: Mapping[str, Any]) -> Dict[str, Any]:
+        scores = build_baseline_scores(event)
+        if list(scores.keys()) != baseline_agent_ids:
+            raise ValueError(
+                "baseline_scores_builder keys must match phase1 baseline_agents: "
+                f"expected {baseline_agent_ids}, got {list(scores.keys())}"
+            )
+        return scores
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()
@@ -976,7 +986,7 @@ def main() -> None:
         "phase1_config_version": phase1_cfg["version"],
         "telemetry_checkpoints": list(phase1_cfg["telemetry_checkpoints"]),
         "jsd_monotonic_tolerance_epsilon": float(phase1_cfg["jsd_monotonic_tolerance_epsilon"]),
-        "baseline_agents": list(phase1_cfg["baseline_agents"]),
+        "baseline_agents": list(baseline_agent_ids),
         "preflight_market_prior_check": "pass",
     }
 
@@ -1001,7 +1011,7 @@ def main() -> None:
             phase1_cfg,
             resolved_label=_resolve_event_label(event),
         ),
-        baseline_scores_builder=build_baseline_scores,
+        baseline_scores_builder=baseline_scores_with_contract,
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)

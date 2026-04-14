@@ -296,7 +296,10 @@ def test_protocol_condition_executor_telemetry_failure_appends_error(tmp_path):
         },
     )
 
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluation_completed"] is False
     assert row["probabilities"] == {"YES": 0.7, "NO": 0.3}
+    assert row["brier"] == 0.09
     assert row["round_jsd"] is None
     assert row["convergence_monotonic"] is None
     assert row["error"] == "Telemetry error: ValueError: telemetry failed"

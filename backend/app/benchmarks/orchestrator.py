@@ -462,6 +462,9 @@ class ProtocolConditionExecutor:
                 telemetry_error = self._exception_formatter(exc)
                 round_jsd = None
                 convergence_monotonic = None
+                if simulation_status == "completed":
+                    simulation_status = "evaluation_failed"
+                    evaluation_completed = False
                 if row_error:
                     row_error = f"{row_error}; Telemetry error: {telemetry_error}"
                 else:

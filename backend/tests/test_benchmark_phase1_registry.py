@@ -102,3 +102,67 @@ def test_load_phase1_non_object_payload(tmp_path):
 
     with pytest.raises(ValueError, match="phase1 config must be a JSON object"):
         load_phase1_config(path)
+
+
+def test_load_phase1_rejects_negative_jsd_tolerance(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v1",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": -0.1,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 0.25,
+        "baseline_agents": ["uniform_random", "market_prior"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="jsd_monotonic_tolerance_epsilon"):
+        load_phase1_config(path)
+
+
+def test_load_phase1_rejects_non_finite_prior_sum_tolerance(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v1",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "prior_sum_tolerance": float("inf"),
+        "min_parsed_probability_ratio": 0.25,
+        "baseline_agents": ["uniform_random", "market_prior"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="prior_sum_tolerance"):
+        load_phase1_config(path)
+
+
+def test_load_phase1_rejects_ratio_out_of_range(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v1",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 1.5,
+        "baseline_agents": ["uniform_random", "market_prior"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="min_parsed_probability_ratio"):
+        load_phase1_config(path)
+
+
+def test_load_phase1_rejects_invalid_baseline_agents(tmp_path):
+    path = tmp_path / "phase1.json"
+    payload = {
+        "version": "phase1_v1",
+        "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 0.25,
+        "baseline_agents": ["market_prior", "uniform_random"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="baseline_agents"):
+        load_phase1_config(path)

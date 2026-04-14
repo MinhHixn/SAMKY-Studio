@@ -7,6 +7,8 @@ import math
 
 from .scoring import brier_score
 
+BASELINE_AGENT_IDS = ["uniform_random", "market_prior"]
+
 
 def validate_polymarket_opening_prior(
     event: Mapping[str, Any], *, prior_sum_tolerance: float
@@ -57,6 +59,6 @@ def build_baseline_scores(event: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]
     uniform = {label: 1.0 / n for label in options}
     market_prior = validate_polymarket_opening_prior(event, prior_sum_tolerance=1e-6)
     return {
-        "uniform_random": {"probabilities": uniform, "brier": brier_score(uniform, outcome)},
-        "market_prior": {"probabilities": market_prior, "brier": brier_score(market_prior, outcome)},
+        BASELINE_AGENT_IDS[0]: {"probabilities": uniform, "brier": brier_score(uniform, outcome)},
+        BASELINE_AGENT_IDS[1]: {"probabilities": market_prior, "brier": brier_score(market_prior, outcome)},
     }

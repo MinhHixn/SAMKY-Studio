@@ -1199,6 +1199,53 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert llm_model == "m"
 
 
+def test_main_baseline_scores_builder_enforces_phase1_contract(monkeypatch, tmp_path):
+    executor_ctor_calls: dict[str, object] = {}
+
+    class FakeProtocolExecutor:
+        def __init__(self, **kwargs):
+            executor_ctor_calls.update(kwargs)
+
+    class FakeOrchestrator:
+        def __init__(self, executor):
+            self.executor = executor
+
+        def run(self, **kwargs):
+            run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
+            (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+            return run_dir
+
+    _patch_minimal_main_inputs(
+        monkeypatch,
+        tmp_path,
+        simulation_result=subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
+    monkeypatch.setattr(protocol_script, "BenchmarkRunOrchestrator", FakeOrchestrator, raising=False)
+    monkeypatch.setattr(protocol_script, "build_baseline_scores", lambda *_args, **_kwargs: {"market_prior": {}})
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+
+    protocol_script.main()
+
+    baseline_scores_builder = executor_ctor_calls["baseline_scores_builder"]
+    with pytest.raises(ValueError, match="baseline_scores_builder keys must match phase1 baseline_agents"):
+        baseline_scores_builder({"event_id": "E1", "options": ["A", "B"], "outcome": "A"})
+
+
 def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)

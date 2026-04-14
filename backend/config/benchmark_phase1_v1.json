@@ -1,0 +1,6 @@
+{
+  "version": "v1",
+  "seed_mapping": "seeds_mapping.txt",
+  "rounds": 4,
+  "agents": 100
+}

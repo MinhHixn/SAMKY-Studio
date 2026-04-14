@@ -1,6 +1,7 @@
 import pytest
 
-from app.benchmarks.evaluator import ProbabilityEvaluator
+from app.benchmarks.evaluator import ProbabilityEvaluator, get_evaluator_system_prompt
+from app.benchmarks.prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 from app.benchmarks.scoring import (
     brier_score,
     summarize_condition_scores,
@@ -8,6 +9,10 @@ from app.benchmarks.scoring import (
     summarize_weighted_rubric_score,
     summarize_rubric_artifacts,
 )
+from pathlib import Path
+
+
+REAL_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "ecnbench_mcq_v1.yaml"
 
 
 def test_brier_score_is_zero_for_correct_certainty():
@@ -162,6 +167,26 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
         assert key in system_prompt
     for bucket_key in ("very_low", "low", "high", "very_high"):
         assert bucket_key in system_prompt
+
+
+def test_evaluator_system_prompt_uses_shipped_prompt_contract():
+    spec = load_mcq_prompt_spec(REAL_PROMPT_PATH)
+    expected_prompt = build_evaluator_system_prompt(spec)
+    actual_prompt = get_evaluator_system_prompt()
+
+    assert actual_prompt == expected_prompt
+    assert "probabilities" in actual_prompt
+    assert "mcq_dimensions" in actual_prompt
+    assert "validated_scales" in actual_prompt
+    assert "schema_version" in actual_prompt
+    assert "scores" in actual_prompt
+    assert "prediction_accuracy" in actual_prompt
+    assert "polarization" in actual_prompt
+    assert "herd_effect" in actual_prompt
+    assert "deliberation_quality" in actual_prompt
+    assert "susceptibility" in actual_prompt
+    assert "convergence" in actual_prompt
+    assert "information_diversity" in actual_prompt
 
 
 @pytest.mark.parametrize(

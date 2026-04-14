@@ -1,36 +1,13 @@
-from textwrap import dedent
+from pathlib import Path
 
 from app.benchmarks.prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 
 
-def test_load_mcq_prompt_spec_loads_version_and_dimensions(tmp_path):
-    path = tmp_path / "ecnbench_mcq_v1.yaml"
-    path.write_text(
-        dedent(
-            """
-            version: v1
-            preamble: "You are an ECN-BENCH evaluator."
-            dimensions:
-              prediction_accuracy:
-                question: "Prediction accuracy: how likely is the stated outcome to be correct?"
-              polarization:
-                question: "Polarization: do responses cluster into competing camps with limited middle ground?"
-              herd_effect:
-                question: "Herd effect: are agents echoing the crowd instead of evidence?"
-              deliberation_quality:
-                question: "Deliberation quality: is the discussion reasoned, evidence-based, and responsive to counterarguments?"
-              susceptibility:
-                question: "Susceptibility: how easily do agents shift after new information or peer pressure?"
-              convergence:
-                question: "Convergence: do beliefs move toward the same outcome over time?"
-              information_diversity:
-                question: "Information diversity: are agents drawing from varied, nonredundant evidence and viewpoints?"
-            """
-        ).strip(),
-        encoding="utf-8",
-    )
+REAL_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "ecnbench_mcq_v1.yaml"
 
-    spec = load_mcq_prompt_spec(path)
+
+def test_load_mcq_prompt_spec_loads_version_and_dimensions():
+    spec = load_mcq_prompt_spec(REAL_PROMPT_PATH)
 
     assert spec["version"] == "v1"
     assert set(spec["dimensions"]) == {
@@ -42,41 +19,29 @@ def test_load_mcq_prompt_spec_loads_version_and_dimensions(tmp_path):
         "convergence",
         "information_diversity",
     }
-
-
-def test_build_evaluator_system_prompt_includes_yaml_question_lines(tmp_path):
-    path = tmp_path / "ecnbench_mcq_v1.yaml"
-    herd_effect_question = "Herd effect: are agents echoing the crowd instead of evidence?"
-    deliberation_quality_question = (
-        "Deliberation quality: is the discussion reasoned, evidence-based, and responsive to counterarguments?"
+    assert spec["dimensions"]["herd_effect"]["question"] == (
+        "By round 4, what fraction of agents had adopted the plurality view?"
     )
-    path.write_text(
-        dedent(
-            f'''
-            version: v1
-            preamble: "You are an ECN-BENCH evaluator."
-            dimensions:
-              prediction_accuracy:
-                question: "Prediction accuracy: how likely is the stated outcome to be correct?"
-              polarization:
-                question: "Polarization: do responses cluster into competing camps with limited middle ground?"
-              herd_effect:
-                question: "{herd_effect_question}"
-              deliberation_quality:
-                question: "{deliberation_quality_question}"
-              susceptibility:
-                question: "Susceptibility: how easily do agents shift after new information or peer pressure?"
-              convergence:
-                question: "Convergence: do beliefs move toward the same outcome over time?"
-              information_diversity:
-                question: "Information diversity: are agents drawing from varied, nonredundant evidence and viewpoints?"
-            '''
-        ).strip(),
-        encoding="utf-8",
+    assert spec["dimensions"]["deliberation_quality"]["question"] == (
+        "How much novel reasoning (not present in the seed document) appeared in agent exchanges?"
     )
 
-    spec = load_mcq_prompt_spec(path)
+
+def test_build_evaluator_system_prompt_includes_yaml_question_lines():
+    spec = load_mcq_prompt_spec(REAL_PROMPT_PATH)
     prompt = build_evaluator_system_prompt(spec)
 
-    assert f"- herd_effect: {herd_effect_question}" in prompt
-    assert f"- deliberation_quality: {deliberation_quality_question}" in prompt
+    assert "Dimension questions:" in prompt
+    assert "- prediction_accuracy:" in prompt
+    assert "- polarization:" in prompt
+    assert (
+        "- herd_effect: By round 4, what fraction of agents had adopted the plurality view?"
+        in prompt
+    )
+    assert (
+        "- deliberation_quality: How much novel reasoning (not present in the seed document) appeared in agent exchanges?"
+        in prompt
+    )
+    assert "- susceptibility:" in prompt
+    assert "- convergence:" in prompt
+    assert "- information_diversity:" in prompt

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
@@ -52,7 +53,16 @@ VALIDATED_SCALES_SCHEMA_VERSION = "v1"
 INVALID_JSON_ERROR_PREFIX = "Invalid JSON format from LLM:"
 EVALUATOR_JSON_MAX_ATTEMPTS = 3
 _EVALUATOR_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "ecnbench_mcq_v1.yaml"
-EVALUATOR_SYSTEM_PROMPT = build_evaluator_system_prompt(load_mcq_prompt_spec(_EVALUATOR_PROMPT_PATH))
+
+
+@lru_cache(maxsize=1)
+def get_evaluator_system_prompt() -> str:
+    try:
+        return build_evaluator_system_prompt(load_mcq_prompt_spec(_EVALUATOR_PROMPT_PATH))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load evaluator prompt contract from {_EVALUATOR_PROMPT_PATH}"
+        ) from exc
 
 
 def _normalize_probability_mapping(mapping: Any, context: str) -> Dict[str, float]:
@@ -131,7 +141,7 @@ class ProbabilityEvaluator:
         messages = [
             {
                 "role": "system",
-                "content": EVALUATOR_SYSTEM_PROMPT,
+                "content": get_evaluator_system_prompt(),
             },
             {
                 "role": "user",

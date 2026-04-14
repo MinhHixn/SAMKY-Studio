@@ -6,9 +6,9 @@ dimensions:
   polarization:
     question: "Polarization: do responses cluster into competing camps with limited middle ground?"
   herd_effect:
-    question: "Herd effect: are agents echoing the crowd instead of evidence?"
+    question: "By round 4, what fraction of agents had adopted the plurality view?"
   deliberation_quality:
-    question: "Deliberation quality: is the discussion reasoned, evidence-based, and responsive to counterarguments?"
+    question: "How much novel reasoning (not present in the seed document) appeared in agent exchanges?"
   susceptibility:
     question: "Susceptibility: how easily do agents shift after new information or peer pressure?"
   convergence:

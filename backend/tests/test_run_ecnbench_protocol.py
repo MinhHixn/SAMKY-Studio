@@ -7,6 +7,12 @@ import pytest
 from scripts import run_ecnbench_protocol as protocol_script
 
 
+@pytest.fixture(autouse=True)
+def _disable_leakage_preflight_for_non_leakage_tests(monkeypatch, request):
+    if "leakage" not in request.node.name:
+        monkeypatch.setattr(protocol_script, "validate_leakage_preflight", lambda *_args, **_kwargs: None)
+
+
 def test_build_condition_matrix_counts_and_contents():
     events = [{"event_id": "E1"}, {"event_id": "E2"}]
 
@@ -270,6 +276,73 @@ def test_main_fails_on_invalid_polymarket_prior_before_condition_matrix(monkeypa
     )
 
     with pytest.raises(ValueError, match="polymarket_opening_prior"):
+        protocol_script.main()
+
+
+def test_main_fails_on_leakage_before_condition_matrix(monkeypatch, tmp_path):
+    seed_file = tmp_path / "seed.txt"
+    seed_file.write_text("The outcome was resolved in advance.", encoding="utf-8")
+    events = [
+        {
+            "event_id": "E1",
+            "question": "Q1",
+            "outcome": "YES",
+            "options": ["YES", "NO"],
+            "seed_date": "2024-01-01",
+            "resolution_date": "2024-01-10",
+        }
+    ]
+
+    class DummyRouter:
+        @staticmethod
+        def from_config():
+            return DummyRouter()
+
+        def model_for(self, _name):
+            return "dummy-model"
+
+    def fail_build_condition_matrix(*_args, **_kwargs):
+        pytest.fail("build_condition_matrix should not run before leakage preflight")
+
+    monkeypatch.setattr(protocol_script, "BenchmarkRoleRouter", DummyRouter)
+    monkeypatch.setattr(protocol_script, "BASELINE_AGENT_IDS", [])
+    monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *_args, **_kwargs: events)
+    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *_args, **_kwargs: [seed_file])
+    monkeypatch.setattr(protocol_script, "build_profiles", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(protocol_script, "validate_injection_coverage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        protocol_script,
+        "load_phase1_config",
+        lambda *_args, **_kwargs: {
+            "prior_sum_tolerance": 1e-6,
+            "baseline_agents": [],
+            "version": "v1",
+            "jsd_monotonic_tolerance_epsilon": 0.0,
+            "telemetry_checkpoints": [],
+        },
+    )
+    monkeypatch.setattr(protocol_script, "load_layer23_config", lambda *_args, **_kwargs: {"leakage_min_days_before_resolution": 7, "leakage_outcome_regex": r"resolved|closed"})
+    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", fail_build_condition_matrix)
+    monkeypatch.setattr(protocol_script, "validate_polymarket_opening_prior", lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--injection-bank",
+            str(tmp_path / "injection.json"),
+            "--output-dir",
+            str(tmp_path / "output"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Leakage preflight failed"):
         protocol_script.main()
 
 
@@ -1199,32 +1272,28 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert llm_model == "m"
 
 
-def test_main_baseline_scores_builder_enforces_phase1_contract(monkeypatch, tmp_path):
-    executor_ctor_calls: dict[str, object] = {}
-
-    class FakeProtocolExecutor:
-        def __init__(self, **kwargs):
-            executor_ctor_calls.update(kwargs)
-
-    class FakeOrchestrator:
-        def __init__(self, executor):
-            self.executor = executor
-
-        def run(self, **kwargs):
-            run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
-            run_dir.mkdir(parents=True, exist_ok=True)
-            (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
-            (run_dir / "summary.json").write_text("{}", encoding="utf-8")
-            return run_dir
+def test_main_fails_fast_when_phase1_baseline_agents_do_not_match_implementation(monkeypatch, tmp_path):
+    def fail_build_condition_matrix(*_args, **_kwargs):
+        pytest.fail("build_condition_matrix should not run before baseline agent contract check")
 
     _patch_minimal_main_inputs(
         monkeypatch,
         tmp_path,
         simulation_result=subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr=""),
     )
-    monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
-    monkeypatch.setattr(protocol_script, "BenchmarkRunOrchestrator", FakeOrchestrator, raising=False)
-    monkeypatch.setattr(protocol_script, "build_baseline_scores", lambda *_args, **_kwargs: {"market_prior": {}})
+    monkeypatch.setattr(
+        protocol_script,
+        "load_phase1_config",
+        lambda *_args, **_kwargs: {
+            "version": "phase1_v1",
+            "telemetry_checkpoints": [12, 24, 36, 48, 60],
+            "jsd_monotonic_tolerance_epsilon": 0.002,
+            "prior_sum_tolerance": 1e-6,
+            "min_parsed_probability_ratio": 0.25,
+            "baseline_agents": ["market_prior", "uniform_random"],
+        },
+    )
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", fail_build_condition_matrix)
     monkeypatch.setattr(
         protocol_script.sys,
         "argv",
@@ -1239,11 +1308,8 @@ def test_main_baseline_scores_builder_enforces_phase1_contract(monkeypatch, tmp_
         ],
     )
 
-    protocol_script.main()
-
-    baseline_scores_builder = executor_ctor_calls["baseline_scores_builder"]
-    with pytest.raises(ValueError, match="baseline_scores_builder keys must match phase1 baseline_agents"):
-        baseline_scores_builder({"event_id": "E1", "options": ["A", "B"], "outcome": "A"})
+    with pytest.raises(ValueError, match="phase1 baseline_agents must match implemented baseline scoring agents"):
+        protocol_script.main()
 
 
 def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):

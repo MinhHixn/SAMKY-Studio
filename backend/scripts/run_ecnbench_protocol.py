@@ -18,8 +18,10 @@ if str(_BACKEND_DIR) not in sys.path:
 
 from app.benchmarks.evaluator import ProbabilityEvaluator
 from app.benchmarks.injection_loader import Step30InjectionLoader
+from app.benchmarks.leakage import validate_leakage_preflight
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
+from app.benchmarks.layer23_registry import load_layer23_config
 from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
 from app.config import Config
@@ -35,7 +37,11 @@ from app.benchmarks.scoring import (
     summarize_weighted_rubric_score,
     summarize_rubric_artifacts,
 )
-from app.benchmarks.phase1_baselines import build_baseline_scores, validate_polymarket_opening_prior
+from app.benchmarks.phase1_baselines import (
+    BASELINE_AGENT_IDS,
+    build_baseline_scores,
+    validate_polymarket_opening_prior,
+)
 from app.benchmarks.phase1_registry import load_phase1_config
 from app.benchmarks.phase1_telemetry import (
     compute_round_jsd_trace,
@@ -69,6 +75,7 @@ DEFAULT_INJECTION_BANK = _resolve_default_injection_bank()
 DEFAULT_OUTPUT_DIR = _BACKEND_DIR / "logs" / "benchmark_runs"
 DEFAULT_BENCHMARK_WEIGHTS_PATH = _BACKEND_DIR / "config" / "benchmark_weights_v1.json"
 DEFAULT_PHASE1_CONFIG_PATH = _BACKEND_DIR / "config" / "benchmark_phase1_v1.json"
+DEFAULT_LAYER23_CONFIG_PATH = _BACKEND_DIR / "config" / "benchmark_layer23_v1.json"
 CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
@@ -933,6 +940,7 @@ def main() -> None:
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
     injection_loader = Step30InjectionLoader(args.injection_bank)
     validate_injection_coverage(events, injection_loader)
+    layer23_cfg = load_layer23_config(DEFAULT_LAYER23_CONFIG_PATH)
     phase1_cfg = load_phase1_config(DEFAULT_PHASE1_CONFIG_PATH)
     for event in events:
         validate_polymarket_opening_prior(
@@ -940,15 +948,14 @@ def main() -> None:
             prior_sum_tolerance=float(phase1_cfg["prior_sum_tolerance"]),
         )
     baseline_agent_ids = list(phase1_cfg["baseline_agents"])
+    implemented_baseline_agent_ids = list(BASELINE_AGENT_IDS)
+    if baseline_agent_ids != implemented_baseline_agent_ids:
+        raise ValueError(
+            "phase1 baseline_agents must match implemented baseline scoring agents: "
+            f"expected {implemented_baseline_agent_ids}, got {baseline_agent_ids}"
+        )
 
-    def baseline_scores_with_contract(event: Mapping[str, Any]) -> Dict[str, Any]:
-        scores = build_baseline_scores(event)
-        if list(scores.keys()) != baseline_agent_ids:
-            raise ValueError(
-                "baseline_scores_builder keys must match phase1 baseline_agents: "
-                f"expected {baseline_agent_ids}, got {list(scores.keys())}"
-            )
-        return scores
+    validate_leakage_preflight(events, seed_files, layer23_cfg)
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()
@@ -988,6 +995,7 @@ def main() -> None:
         "jsd_monotonic_tolerance_epsilon": float(phase1_cfg["jsd_monotonic_tolerance_epsilon"]),
         "baseline_agents": list(baseline_agent_ids),
         "preflight_market_prior_check": "pass",
+        "leakage_check": "pass",
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}
@@ -1011,7 +1019,7 @@ def main() -> None:
             phase1_cfg,
             resolved_label=_resolve_event_label(event),
         ),
-        baseline_scores_builder=baseline_scores_with_contract,
+        baseline_scores_builder=build_baseline_scores,
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)

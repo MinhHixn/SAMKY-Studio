@@ -25,6 +25,16 @@ def test_validate_polymarket_opening_prior_rejects_missing_label():
         validate_polymarket_opening_prior(event, prior_sum_tolerance=1e-6)
 
 
+def test_validate_polymarket_opening_prior_rejects_extra_label():
+    event = {
+        "event_id": "E1",
+        "options": ["YES", "NO"],
+        "polymarket_opening_prior": {"YES": 0.5, "NO": 0.4, "MAYBE": 0.1},
+    }
+    with pytest.raises(ValueError, match="unexpected outcome labels"):
+        validate_polymarket_opening_prior(event, prior_sum_tolerance=1e-6)
+
+
 def test_build_baseline_scores_returns_uniform_and_market_prior():
     event = {
         "event_id": "E1",

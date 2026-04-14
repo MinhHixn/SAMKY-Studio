@@ -17,6 +17,20 @@ def validate_polymarket_opening_prior(
     if not isinstance(prior, Mapping):
         raise ValueError(f"{event_id}: polymarket_opening_prior missing or invalid")
 
+    option_labels = set(options)
+    prior_labels = {str(label) for label in prior.keys()}
+    if prior_labels != option_labels:
+        missing = sorted(option_labels - prior_labels)
+        extra = sorted(prior_labels - option_labels)
+        if missing and not extra:
+            raise ValueError(f"{event_id}: missing required outcome labels in polymarket_opening_prior")
+        if extra and not missing:
+            raise ValueError(f"{event_id}: polymarket_opening_prior has unexpected outcome labels")
+        raise ValueError(
+            f"{event_id}: polymarket_opening_prior labels must match options "
+            f"(missing={missing}, extra={extra})"
+        )
+
     normalized: Dict[str, float] = {}
     for label in options:
         if label not in prior:

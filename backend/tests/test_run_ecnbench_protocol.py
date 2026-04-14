@@ -222,6 +222,57 @@ def test_load_events_keeps_scalar_events_with_metadata_keys(tmp_path):
     assert events[0]["category"] == "geopolitics"
 
 
+def test_main_fails_on_invalid_polymarket_prior_before_condition_matrix(monkeypatch, tmp_path):
+    events = [
+        {
+            "event_id": "E1",
+            "question": "Q1",
+            "outcome": "YES",
+            "options": ["YES", "NO"],
+            "polymarket_opening_prior": {"YES": 0.5, "NO": 0.4, "MAYBE": 0.1},
+        }
+    ]
+
+    class DummyRouter:
+        @staticmethod
+        def from_config():
+            return DummyRouter()
+
+        def model_for(self, _name):
+            return "dummy-model"
+
+    def fail_build_condition_matrix(*_args, **_kwargs):
+        pytest.fail("build_condition_matrix should not run before polymarket prior validation")
+
+    monkeypatch.setattr(protocol_script, "BenchmarkRoleRouter", DummyRouter)
+    monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *_args, **_kwargs: events)
+    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(protocol_script, "build_profiles", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(protocol_script, "validate_injection_coverage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(protocol_script, "load_phase1_config", lambda *_args, **_kwargs: {"prior_sum_tolerance": 1e-6})
+    monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", fail_build_condition_matrix)
+
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--injection-bank",
+            str(tmp_path / "injection.json"),
+            "--output-dir",
+            str(tmp_path / "output"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="polymarket_opening_prior"):
+        protocol_script.main()
+
+
 def test_build_event_result_row_full_simulation_completed_logic():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 

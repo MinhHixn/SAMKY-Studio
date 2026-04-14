@@ -3,66 +3,62 @@ from pathlib import Path
 
 import pytest
 
-from app.benchmarks.phase1_registry import REQUIRED_PHASE1_KEYS, load_benchmark_phase1_config
+from app.benchmarks.phase1_registry import REQUIRED_PHASE1_KEYS, load_phase1_config
 
 
-def test_load_benchmark_phase1_happy_path(tmp_path):
+def test_load_phase1_happy_path(tmp_path):
     path = tmp_path / "phase1.json"
     payload = {
-        "version": "v1",
-        "seed_mapping": "seeds_mapping.txt",
-        "rounds": 4,
-        "agents": 100,
+        "version": "phase1_v1",
         "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        "jsd_monotonic_tolerance_epsilon": 1e-8,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 1e-5,
+        "baseline_agents": ["uniform_random", "market_prior"],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    spec = load_benchmark_phase1_config(path)
+    spec = load_phase1_config(path)
 
-    assert spec["version"] == "v1"
+    assert spec["version"] == "phase1_v1"
     assert set(spec.keys()) == REQUIRED_PHASE1_KEYS
 
 
-def test_load_benchmark_phase1_missing_required_key(tmp_path):
+def test_load_phase1_missing_required_key(tmp_path):
     path = tmp_path / "phase1.json"
     payload = {
-        "version": "v1",
-        "seed_mapping": "seeds_mapping.txt",
-        "rounds": 4,
-        # "agents" missing
+        "version": "phase1_v1",
         "telemetry_checkpoints": [12, 24, 36, 48, 60],
+        # missing jsd_monotonic_tolerance_epsilon
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 1e-5,
+        "baseline_agents": ["uniform_random", "market_prior"],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="missing required keys"):
-        load_benchmark_phase1_config(path)
+    with pytest.raises(ValueError, match="missing required phase1 config keys"):
+        load_phase1_config(path)
 
 
-def test_load_benchmark_phase1_missing_telemetry_checkpoints(tmp_path):
+def test_load_phase1_invalid_telemetry_checkpoints(tmp_path):
     path = tmp_path / "phase1.json"
     payload = {
-        "version": "v1",
-        "seed_mapping": "seeds_mapping.txt",
-        "rounds": 4,
-        "agents": 100,
-        # telemetry_checkpoints missing
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="missing required keys"):
-        load_benchmark_phase1_config(path)
-
-
-def test_load_benchmark_phase1_invalid_telemetry_checkpoints(tmp_path):
-    path = tmp_path / "phase1.json"
-    payload = {
-        "version": "v1",
-        "seed_mapping": "seeds_mapping.txt",
-        "rounds": 4,
-        "agents": 100,
+        "version": "phase1_v1",
         "telemetry_checkpoints": [1, 2, 3],
+        "jsd_monotonic_tolerance_epsilon": 1e-8,
+        "prior_sum_tolerance": 1e-6,
+        "min_parsed_probability_ratio": 1e-5,
+        "baseline_agents": ["uniform_random", "market_prior"],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="telemetry_checkpoints must be exactly"):
-        load_benchmark_phase1_config(path)
+        load_phase1_config(path)
+
+
+def test_load_phase1_non_object_payload(tmp_path):
+    path = tmp_path / "phase1.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="phase1 config must be a JSON object"):
+        load_phase1_config(path)

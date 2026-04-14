@@ -23,6 +23,13 @@ def test_load_phase1_happy_path(tmp_path):
     assert spec["version"] == "phase1_v1"
     assert set(spec.keys()) == REQUIRED_PHASE1_KEYS
 
+    # concrete value assertions
+    assert spec["telemetry_checkpoints"] == [12, 24, 36, 48, 60]
+    assert spec["jsd_monotonic_tolerance_epsilon"] == 0.002
+    assert spec["prior_sum_tolerance"] == 1e-6
+    assert spec["min_parsed_probability_ratio"] == 0.25
+    assert spec["baseline_agents"] == ["uniform_random", "market_prior"]
+
 
 def test_load_phase1_missing_required_key(tmp_path):
     path = tmp_path / "phase1.json"

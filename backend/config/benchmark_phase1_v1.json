@@ -2,5 +2,6 @@
   "version": "v1",
   "seed_mapping": "seeds_mapping.txt",
   "rounds": 4,
-  "agents": 100
+  "agents": 100,
+  "telemetry_checkpoints": [12, 24, 36, 48, 60]
 }

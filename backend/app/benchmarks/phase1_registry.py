@@ -11,6 +11,7 @@ REQUIRED_PHASE1_KEYS: set[str] = {
     "seed_mapping",
     "rounds",
     "agents",
+    "telemetry_checkpoints",
 }
 
 
@@ -27,5 +28,11 @@ def load_benchmark_phase1_config(path: Path | str) -> Dict[str, object]:
         raise ValueError(f"missing required keys: {sorted(missing)}")
     if extra:
         raise ValueError(f"unexpected keys: {sorted(extra)}")
+
+    # enforce exact telemetry checkpoints list
+    expected_checkpoints = [12, 24, 36, 48, 60]
+    tc = payload.get("telemetry_checkpoints")
+    if tc != expected_checkpoints:
+        raise ValueError(f"telemetry_checkpoints must be exactly {expected_checkpoints}")
 
     return payload

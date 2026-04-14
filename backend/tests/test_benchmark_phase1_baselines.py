@@ -36,3 +36,24 @@ def test_build_baseline_scores_returns_uniform_and_market_prior():
     assert set(baseline_scores.keys()) == {"uniform_random", "market_prior"}
     assert "brier" in baseline_scores["uniform_random"]
     assert "brier" in baseline_scores["market_prior"]
+
+
+def test_validate_polymarket_opening_prior_rejects_non_finite_values_nan():
+    event = {
+        "event_id": "E1",
+        "options": ["YES", "NO"],
+        "polymarket_opening_prior": {"YES": float("nan"), "NO": 1.0},
+    }
+    with pytest.raises(ValueError, match="must be finite"):
+        validate_polymarket_opening_prior(event, prior_sum_tolerance=1e-6)
+
+
+def test_validate_polymarket_opening_prior_rejects_non_finite_values_inf():
+    event = {
+        "event_id": "E1",
+        "options": ["YES", "NO"],
+        "polymarket_opening_prior": {"YES": float("inf"), "NO": -float("inf")},
+    }
+    with pytest.raises(ValueError, match="must be finite"):
+        validate_polymarket_opening_prior(event, prior_sum_tolerance=1e-6)
+

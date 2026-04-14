@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping
+import math
 
 from .scoring import brier_score
 
@@ -24,6 +25,8 @@ def validate_polymarket_opening_prior(
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise ValueError(f"{event_id}: prior {label!r} must be numeric")
         value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError(f"{event_id}: prior {label!r} must be finite")
         if value < 0.0 or value > 1.0:
             raise ValueError(f"{event_id}: prior {label!r} out of range [0,1]")
         normalized[label] = value

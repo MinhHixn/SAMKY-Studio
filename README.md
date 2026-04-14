@@ -237,7 +237,7 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - `run_manifest.json` — run inputs, selected events, and generated file list
 - `traces\execution.jsonl` — per-unit benchmark trace events
 - `event_results.json` — one row per event × condition × repeat
-- `summary.json` — mean Brier scores, lift, and success/failure counts
+- `summary.json` — mean Brier scores, reliability-gated renormalized `composite_score`, lift, and success/failure counts
 - `simulation_config.json`, `twitter_profiles.csv`, `reddit_profiles.json` — per-unit simulation inputs
 
 #### ECN-BENCH continuation invariants
@@ -246,7 +246,14 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 - `run_manifest.json` includes:
   - `benchmark_model`
   - `expected_run_units` (derived from generated condition matrix size; in current A/B/C mode this equals `events_loaded * 3 * repeats`)
+  - `weights_schema_version`
+  - `mcq_prompt_version`
+  - `deterministic_mode` snapshot
 - `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
+- `event_results.json` rows include:
+  - `injection_direction`
+  - `signed_delta`
+  - `belief_update_failure`
 
 #### ECN-BENCH rubric evaluator contract (additive)
 
@@ -254,6 +261,8 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
   - `probabilities` (legacy output, unchanged)
   - `mcq_dimensions` (7 dimensions × 4 buckets: `very_low`, `low`, `high`, `very_high`)
   - `validated_scales` (includes `schema_version` (v1) and validated numeric scores)
+- Summary output now includes:
+  - `composite_score` (reliability-gated, renormalized)
 - Event result rows include:
   - `yes_probability` (resolved from `probabilities["YES"]` when present)
   - `strict_contract` (`true` for mapping payloads, `false` for legacy tuple payloads)

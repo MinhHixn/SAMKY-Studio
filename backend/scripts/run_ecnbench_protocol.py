@@ -508,12 +508,26 @@ def _extract_yes_probability(probabilities: Mapping[str, Any] | None) -> float |
     return None
 
 
-def _compute_convergence_telemetry(unit_dir: Path, phase1_cfg: Mapping[str, Any]) -> tuple[list[float], bool]:
+def _resolve_event_label(event: Mapping[str, Any]) -> str | None:
+    for key in ("outcome", "answer", "label"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _compute_convergence_telemetry(
+    unit_dir: Path,
+    phase1_cfg: Mapping[str, Any],
+    *,
+    resolved_label: str | None,
+) -> tuple[list[float], bool]:
     checkpoints = [int(checkpoint) for checkpoint in phase1_cfg["telemetry_checkpoints"]]
     trace = compute_round_jsd_trace(
         unit_dir,
         checkpoints=checkpoints,
         min_parsed_probability_ratio=float(phase1_cfg["min_parsed_probability_ratio"]),
+        resolved_label=resolved_label,
     )
     epsilon = float(phase1_cfg["jsd_monotonic_tolerance_epsilon"])
     return trace, is_monotonic_nonincreasing_with_epsilon(trace, epsilon)
@@ -956,7 +970,11 @@ def main() -> None:
         profile_writer=write_profiles,
         evidence_builder=build_evidence_text,
         row_builder=build_event_result_row,
-        telemetry_builder=lambda unit_dir: _compute_convergence_telemetry(unit_dir, phase1_cfg),
+        telemetry_builder=lambda unit_dir, event: _compute_convergence_telemetry(
+            unit_dir,
+            phase1_cfg,
+            resolved_label=_resolve_event_label(event),
+        ),
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)

@@ -319,6 +319,24 @@ def test_build_event_result_row_includes_simulation_executed_flag():
     assert "simulation_executed" in row
     assert row["simulation_executed"] is False
 
+
+def test_build_event_result_row_includes_telemetry_fields():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 1.0},
+        brier=0.0,
+        round_jsd=[0.1, 0.2],
+        convergence_monotonic=True,
+    )
+    assert row["round_jsd"] == [0.1, 0.2]
+    assert row["convergence_monotonic"] is True
+
 def test_build_event_result_row_includes_rubric_artifacts():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 

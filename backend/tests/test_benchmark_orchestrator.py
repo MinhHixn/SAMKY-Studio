@@ -177,7 +177,7 @@ def test_protocol_condition_executor_clears_noisy_dimensions_when_completion_tra
     assert row["error"] == "RuntimeError: trace write failed"
 
 
-def _build_protocol_executor(tmp_path):
+def _build_protocol_executor(tmp_path, *, telemetry_builder=None):
     trace_entries: list[dict[str, object]] = []
 
     class FakeRouter:
@@ -226,10 +226,67 @@ def _build_protocol_executor(tmp_path):
         profile_writer=profile_writer,
         evidence_builder=lambda *_args, **_kwargs: "evidence text",
         row_builder=row_builder,
+        telemetry_builder=telemetry_builder,
         exception_formatter=lambda exc: f"{type(exc).__name__}: {exc}",
     )
 
     return executor, trace_entries
+
+
+def test_protocol_condition_executor_populates_telemetry_fields(tmp_path):
+    def telemetry_builder(unit_dir, event):
+        del unit_dir, event
+        return [0.1, 0.2], True
+
+    executor, _trace_entries = _build_protocol_executor(tmp_path, telemetry_builder=telemetry_builder)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_B_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"YES": 0.7, "NO": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+    )
+
+    assert row["round_jsd"] == [0.1, 0.2]
+    assert row["convergence_monotonic"] is True
+
+
+def test_protocol_condition_executor_telemetry_failure_appends_error(tmp_path):
+    def telemetry_builder(unit_dir, event):
+        del unit_dir, event
+        raise ValueError("telemetry failed")
+
+    executor, _trace_entries = _build_protocol_executor(tmp_path, telemetry_builder=telemetry_builder)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_B_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"YES": 0.7, "NO": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+        },
+    )
+
+    assert row["probabilities"] == {"YES": 0.7, "NO": 0.3}
+    assert row["round_jsd"] is None
+    assert row["convergence_monotonic"] is None
+    assert row["error"] == "Telemetry error: ValueError: telemetry failed"
 
 
 def _valid_mcq_dimensions():

@@ -231,7 +231,7 @@ class ProtocolConditionExecutor:
         profile_writer: Callable[[Path, list[Dict[str, Any]]], Any],
         evidence_builder: Callable[[Path, Path], str],
         row_builder: Callable[..., Dict[str, Any]],
-        telemetry_builder: Callable[[Path], tuple[list[float], bool]] | None = None,
+        telemetry_builder: Callable[[Path, Mapping[str, Any]], tuple[list[float], bool]] | None = None,
         exception_formatter: Callable[[BaseException], str],
     ):
         self._router = router
@@ -442,7 +442,16 @@ class ProtocolConditionExecutor:
             )
 
         if self._telemetry_builder and simulation_completed and condition != "A":
-            round_jsd, convergence_monotonic = self._telemetry_builder(unit_dir)
+            try:
+                round_jsd, convergence_monotonic = self._telemetry_builder(unit_dir, event)
+            except Exception as exc:
+                telemetry_error = self._exception_formatter(exc)
+                round_jsd = None
+                convergence_monotonic = None
+                if row_error:
+                    row_error = f"{row_error}; Telemetry error: {telemetry_error}"
+                else:
+                    row_error = f"Telemetry error: {telemetry_error}"
 
         return self._row_builder(
             event,

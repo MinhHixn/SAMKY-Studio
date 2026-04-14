@@ -63,6 +63,7 @@ def test_compute_round_jsd_trace_parses_both_platforms(tmp_path):
         unit_dir,
         checkpoints=CHECKPOINTS,
         min_parsed_probability_ratio=0.5,
+        resolved_label="YES",
     )
 
     assert trace[0] == pytest.approx(0.0)
@@ -92,7 +93,31 @@ def test_compute_round_jsd_trace_raises_on_low_coverage(tmp_path):
             unit_dir,
             checkpoints=CHECKPOINTS,
             min_parsed_probability_ratio=0.5,
+            resolved_label="YES",
         )
+
+
+def test_compute_round_jsd_trace_parses_probability_text_for_resolved_label(tmp_path):
+    unit_dir = tmp_path / "unit"
+    twitter_path = unit_dir / "twitter" / "actions.jsonl"
+
+    entries = [
+        {"round": 12, "action_type": "INTERVIEW", "action_args": {"prediction": "P(NO)=0.10"}},
+        {"round": 12, "action_type": "INTERVIEW", "action_args": {"prediction": "P(NO)=0.30"}},
+        {"round": 12, "action_type": "INTERVIEW", "action_args": {"prediction": "P(NO)=0.60"}},
+        {"round": 12, "action_type": "INTERVIEW", "action_args": {"prediction": "P(NO)=0.90"}},
+    ]
+
+    _write_actions(twitter_path, entries)
+
+    trace = compute_round_jsd_trace(
+        unit_dir,
+        checkpoints=[12],
+        min_parsed_probability_ratio=1.0,
+        resolved_label="NO",
+    )
+
+    assert trace == pytest.approx([0.0])
 
 
 def test_is_monotonic_nonincreasing_with_epsilon_allows_small_increase():

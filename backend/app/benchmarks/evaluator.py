@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 import time
+from pathlib import Path
 from typing import Any, Dict, Mapping
 
+from .prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 from .role_router import BenchmarkRoleRouter
 
 MCQ_DIMENSION_KEYS = (
@@ -49,6 +51,8 @@ CANONICAL_VALIDATED_SCALE_KEYS = (
 VALIDATED_SCALES_SCHEMA_VERSION = "v1"
 INVALID_JSON_ERROR_PREFIX = "Invalid JSON format from LLM:"
 EVALUATOR_JSON_MAX_ATTEMPTS = 3
+_EVALUATOR_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "ecnbench_mcq_v1.yaml"
+EVALUATOR_SYSTEM_PROMPT = build_evaluator_system_prompt(load_mcq_prompt_spec(_EVALUATOR_PROMPT_PATH))
 
 
 def _normalize_probability_mapping(mapping: Any, context: str) -> Dict[str, float]:
@@ -127,16 +131,7 @@ class ProbabilityEvaluator:
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are an ECN-BENCH evaluator. Return a JSON object with keys: "
-                    "probabilities (mapping outcome label to numeric probability), "
-                    "mcq_dimensions (object with exactly these dimensions: "
-                    "prediction_accuracy, polarization, herd_effect, deliberation_quality, "
-                    "susceptibility, convergence, information_diversity; each dimension maps "
-                    "to buckets very_low, low, high, very_high with numeric values), and "
-                    "validated_scales (object with schema_version 'v1' and scores mapping of "
-                    "numeric scale scores)."
-                ),
+                "content": EVALUATOR_SYSTEM_PROMPT,
             },
             {
                 "role": "user",

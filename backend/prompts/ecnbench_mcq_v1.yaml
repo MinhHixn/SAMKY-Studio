@@ -1,0 +1,17 @@
+version: v1
+preamble: "You are an ECN-BENCH evaluator. Return a JSON object with keys: probabilities (mapping outcome label to numeric probability), mcq_dimensions (object with exactly these dimensions: prediction_accuracy, polarization, herd_effect, deliberation_quality, susceptibility, convergence, information_diversity; each dimension maps to buckets very_low, low, high, very_high with numeric values), and validated_scales (object with schema_version 'v1' and scores mapping of numeric scale scores)."
+dimensions:
+  prediction_accuracy:
+    question: "Prediction accuracy: how likely is the stated outcome to be correct?"
+  polarization:
+    question: "Polarization: do responses cluster into competing camps with limited middle ground?"
+  herd_effect:
+    question: "Herd effect: are agents echoing the crowd instead of evidence?"
+  deliberation_quality:
+    question: "Deliberation quality: is the discussion reasoned, evidence-based, and responsive to counterarguments?"
+  susceptibility:
+    question: "Susceptibility: how easily do agents shift after new information or peer pressure?"
+  convergence:
+    question: "Convergence: do beliefs move toward the same outcome over time?"
+  information_diversity:
+    question: "Information diversity: are agents drawing from varied, nonredundant evidence and viewpoints?"

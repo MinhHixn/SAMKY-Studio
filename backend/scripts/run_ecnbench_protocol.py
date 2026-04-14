@@ -530,7 +530,6 @@ def build_event_result_row(
     signed_delta: float | None = None,
     belief_update_failure: bool | None = None,
 ) -> Dict[str, Any]:
-    full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     event_id = str(event["event_id"])
     ground_truth = event.get("outcome") or event.get("answer", "")
     directional_correct: int | None = None
@@ -563,11 +562,24 @@ def build_event_result_row(
             if injection_direction is None:
                 injection_direction = seed_metadata.get("injection_direction")
             if signed_delta is None:
-                signed_delta = seed_metadata.get("signed_delta")
+                metadata_signed_delta = seed_metadata.get("signed_delta")
+                if metadata_signed_delta is not None:
+                    if (
+                        isinstance(metadata_signed_delta, bool)
+                        or not isinstance(metadata_signed_delta, (int, float))
+                    ):
+                        metadata_error = "metadata.json signed_delta must be a number"
+                        error = f"{error}; {metadata_error}" if error else metadata_error
+                    else:
+                        signed_delta = float(metadata_signed_delta)
             if belief_update_failure is None:
                 metadata_belief_update_failure = seed_metadata.get("belief_update_failure")
-                if isinstance(metadata_belief_update_failure, bool):
+                if metadata_belief_update_failure is None or isinstance(metadata_belief_update_failure, bool):
                     belief_update_failure = metadata_belief_update_failure
+                else:
+                    metadata_error = "metadata.json belief_update_failure must be a boolean"
+                    error = f"{error}; {metadata_error}" if error else metadata_error
+    full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     return {
         "event_id": event_id,
         "unit_id": f"{event_id}_{condition}_r{repeat}",

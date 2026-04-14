@@ -463,7 +463,57 @@ def test_build_event_result_row_surfaces_missing_seed_metadata_error(tmp_path):
 
     assert row["error"] is not None
     assert "FileNotFoundError" in row["error"]
+    assert row["full_simulation_completed"] is False
     assert row["injection_direction"] is None
+    assert row["signed_delta"] is None
+    assert row["belief_update_failure"] is None
+
+
+@pytest.mark.parametrize(
+    ("metadata_field", "metadata_value", "expected_message"),
+    [
+        ("signed_delta", "bad-value", "metadata.json signed_delta must be a number"),
+        (
+            "belief_update_failure",
+            "not-a-bool",
+            "metadata.json belief_update_failure must be a boolean",
+        ),
+    ],
+)
+def test_build_event_result_row_rejects_invalid_seed_metadata_types(
+    tmp_path, metadata_field, metadata_value, expected_message
+):
+    seed_dir = tmp_path / "seed-1"
+    seed_dir.mkdir()
+    (seed_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "event_id": "E1",
+                "injection_direction": "pro_YES",
+                metadata_field: metadata_value,
+            }
+        ),
+        encoding="utf-8",
+    )
+    seed_file = seed_dir / "seed.txt"
+    seed_file.write_text("seed payload", encoding="utf-8")
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+        seed_file=str(seed_file),
+    )
+
+    assert row["error"] is not None
+    assert expected_message in row["error"]
+    assert row["full_simulation_completed"] is False
     assert row["signed_delta"] is None
     assert row["belief_update_failure"] is None
 

@@ -749,6 +749,52 @@ def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composi
     assert composite["composite_score"] == pytest.approx(0.607692, abs=1e-6)
 
 
+def test_summarize_event_results_ignores_failed_rows_when_aggregating_evaluator_reliability():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "evaluator_noisy_dimensions": ["convergence"],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.9,
+                    "polarization_score": 0.5,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.2,
+                    "convergence_score": 0.1,
+                    "information_diversity_score": 0.6,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        },
+        {
+            "condition": "B",
+            "brier": None,
+            "simulation_status": "evaluation_failed",
+            "evaluator_noisy_dimensions": ["herd_effect"],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.3,
+                    "polarization_score": 0.4,
+                    "herd_effect_score": 0.5,
+                    "deliberation_quality_score": 0.6,
+                    "susceptibility_score": 0.7,
+                    "convergence_score": 0.8,
+                    "information_diversity_score": 0.9,
+                    "weighted_rubric_score": 0.9,
+                }
+            },
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["evaluator_reliability"] == {"evaluator_noisy": ["convergence"]}
+    assert summary["composite_score"]["excluded_dimensions"] == ["convergence"]
+
+
 def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_them(monkeypatch):
     mcq_dimensions = {
         key: {"very_low": 1.0, "low": 1.0, "high": 1.0, "very_high": 1.0}
@@ -802,9 +848,17 @@ def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_th
 
     assert row["evaluator_noisy_dimensions"] == ["convergence", "123"]
 
-    summary = protocol_script.summarize_event_results([row])
+    row["condition"] = "A"
+    row["simulation_status"] = "completed"
+    failed_row = dict(row)
+    failed_row["condition"] = "B"
+    failed_row["simulation_status"] = "evaluation_failed"
+    failed_row["evaluator_noisy_dimensions"] = ["herd_effect"]
+
+    summary = protocol_script.summarize_event_results([row, failed_row])
     composite = summary["composite_score"]
 
+    assert summary["evaluator_reliability"] == {"evaluator_noisy": ["123", "convergence"]}
     assert composite["excluded_dimensions"] == ["convergence"]
     assert "convergence" not in composite["included_dimensions"]
 

@@ -412,6 +412,7 @@ class ProtocolConditionExecutor:
                     brier = None
                     mcq_dimensions = None
                     validated_scales = None
+                    evaluator_noisy_dimensions = None
                     row_error = self._exception_formatter(exc)
                     self._trace_writer.write(
                         {

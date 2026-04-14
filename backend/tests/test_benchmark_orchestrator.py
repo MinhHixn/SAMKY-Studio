@@ -100,6 +100,83 @@ def test_condition_executor_returns_evaluation_failed_row(monkeypatch, tmp_path)
     assert (tmp_path / "E1_A_r1" / "simulation.log").read_text(encoding="utf-8") == "simulation ok"
 
 
+def test_protocol_condition_executor_clears_noisy_dimensions_when_completion_trace_write_fails(tmp_path):
+    class FakeRouter:
+        def model_for(self, role):
+            return "openrouter/benchmark-model"
+
+    class TraceWriter:
+        def __init__(self):
+            self.calls = []
+
+        def write(self, payload):
+            self.calls.append(payload)
+            if payload.get("status") == "completed":
+                raise RuntimeError("trace write failed")
+
+    trace_writer = TraceWriter()
+
+    def simulation_runner(python_exe, config_path, router, *, log_path):
+        del python_exe, config_path, router, log_path
+        return subprocess.CompletedProcess(args=["python"], returncode=0)
+
+    def config_writer(unit_dir, config):
+        path = Path(unit_dir) / "simulation_config.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(config), encoding="utf-8")
+        return path
+
+    def profile_writer(unit_dir, profiles):
+        del profiles
+        Path(unit_dir).mkdir(parents=True, exist_ok=True)
+
+    def row_builder(event, condition, repeat, **kwargs):
+        return {
+            "event_id": str(event["event_id"]),
+            "condition": condition,
+            "repeat": repeat,
+            **kwargs,
+        }
+
+    executor = ProtocolConditionExecutor(
+        router=FakeRouter(),
+        python_exe="python",
+        profiles=[],
+        seed_files=[tmp_path / "seed.md"],
+        event_index_lookup={"E1": 0},
+        trace_writer=trace_writer,
+        simulation_timeout_seconds=30,
+        simulation_runner=simulation_runner,
+        simulation_failure_error_builder=lambda *_args, **_kwargs: "simulation failed",
+        config_writer=config_writer,
+        profile_writer=profile_writer,
+        evidence_builder=lambda *_args, **_kwargs: "evidence text",
+        row_builder=row_builder,
+        exception_formatter=lambda exc: f"{type(exc).__name__}: {exc}",
+    )
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_B_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "mcq_dimensions": _valid_mcq_dimensions(),
+            "validated_scales": _valid_validated_scales(),
+            "evaluator_noisy_dimensions": ["convergence"],
+        },
+    )
+
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["evaluator_noisy_dimensions"] is None
+    assert row["error"] == "RuntimeError: trace write failed"
+
+
 def _build_protocol_executor(tmp_path):
     trace_entries: list[dict[str, object]] = []
 

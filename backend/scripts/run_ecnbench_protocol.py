@@ -800,7 +800,7 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary["rubric"] = summarize_rubric_artifacts(completed_rows)
     summary["directional_accuracy"] = summarize_directional_accuracy(completed_rows)
     summary["weighted_rubric_score"] = summarize_weighted_rubric_score(completed_rows)
-    summary["evaluator_reliability"] = _summarize_evaluator_reliability(rows)
+    summary["evaluator_reliability"] = _summarize_evaluator_reliability(completed_rows)
     evaluator_reliability = summary["evaluator_reliability"]
     noisy_dimensions: List[str] = []
     if isinstance(evaluator_reliability, Mapping):

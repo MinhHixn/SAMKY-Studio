@@ -157,6 +157,35 @@ For reproducible benchmark runs, enable deterministic mode:
 - `BENCHMARK_SEED` is sent on each chat request
 - Retries are transient-only (429/5xx + transport errors), configurable via `LLM_RETRY_*`
 
+#### Phase 0 prototype profile (OpenRouter free-tier)
+
+Phase 0 prototyping uses OpenRouter free-tier models to validate pipeline feasibility and reduce iteration latency while HPC queues are unavailable:
+
+- Graph construction model: `google/gemma-4-31b-it:free`
+- MCQ evaluator model: `google/gemma-4-31b-it:free`
+- Benchmark simulation model: `minimax/minimax-m2.5:free`
+
+Methodological limitations (documented for transparency):
+
+1. The evaluator is not independent from graph-building in Phase 0 (shared model family/path).
+2. Free-tier rate limits can increase retry pressure and occasionally increase output schema-drift risk.
+3. Public evaluation coverage for `minimax/minimax-m2.5` remains limited.
+
+Safe local shell setup (do not commit secrets):
+
+```powershell
+$env:LLM_BASE_URL='https://openrouter.ai/api/v1'
+$env:LLM_API_KEY='<set-your-openrouter-key-in-local-shell-only>'
+$env:OPENROUTER_GRAPH_MODEL='google/gemma-4-31b-it:free'
+$env:OPENROUTER_EVALUATOR_MODEL='google/gemma-4-31b-it:free'
+$env:OPENROUTER_BENCHMARK_MODEL='minimax/minimax-m2.5:free'
+$env:BENCHMARK_MODE='true'
+$env:BENCHMARK_TEMPERATURE='0.0'
+$env:BENCHMARK_SEED='42'
+```
+
+Phase 1 transitions to the full KB v3.0 offline stack with an isolated evaluator (`GPT-4o-mini`) plus self-hosted open-weight models for methodological rigor and reproducibility.
+
 Run the ECN-BENCH OpenRouter prototype from `backend`:
 
 ```powershell
@@ -225,8 +254,12 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
   - `probabilities` (legacy output, unchanged)
   - `mcq_dimensions` (7 dimensions × 4 buckets: `very_low`, `low`, `high`, `very_high`)
   - `validated_scales` (includes `schema_version` (v1) and validated numeric scores)
+- Event result rows include:
+  - `yes_probability` (resolved from `probabilities["YES"]` when present)
+  - `strict_contract` (`true` for mapping payloads, `false` for legacy tuple payloads)
 - Numeric aggregation remains unchanged: multiclass Brier scoring + condition lift (`A_to_B`, `A_to_C`, `B_to_C`).
-- Weighted 7-dimension aggregate scoring is intentionally deferred.
+- Summary includes `content_susceptibility.delta.B_minus_C = mean_yes_probability(B) - mean_yes_probability(C)`.
+- Phase 1 MVP uses placeholder weights (prediction_accuracy=0.25, others=0.125) for pipeline validation. Empirical weight optimization will be applied to pilot data prior to Phase 2 per KB §2.9.
 
 ### ECN-BENCH v0.3 parity architecture update
 

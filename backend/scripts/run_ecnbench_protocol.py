@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import subprocess
 import sys
@@ -19,7 +20,16 @@ from app.benchmarks.injection_loader import Step30InjectionLoader
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.role_router import BenchmarkRoleRouter
-from app.benchmarks.scoring import brier_score, summarize_condition_scores, summarize_rubric_artifacts
+from app.benchmarks.scoring import (
+    brier_score,
+    compute_weighted_rubric_score,
+    summarize_condition_scores,
+    summarize_yes_probability,
+    summarize_directional_accuracy,
+    summarize_strict_contract,
+    summarize_weighted_rubric_score,
+    summarize_rubric_artifacts,
+)
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
@@ -54,7 +64,7 @@ SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
 
 EventRecord = Mapping[str, Any]
 SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
-ConditionEvaluator = Callable[[EventRecord, str, str, BenchmarkRoleRouter], tuple[Dict[str, float], float]]
+ConditionEvaluator = Callable[[EventRecord, str, str, BenchmarkRoleRouter], Dict[str, Any]]
 
 
 class TraceWriterAdapter(Protocol):
@@ -324,6 +334,7 @@ def build_profiles(seeds_dir: Path | str, target_count: int = TARGET_AGENT_COUNT
 
 
 def write_profiles(profile_dir: Path, profiles: List[Dict[str, Any]]) -> tuple[Path, Path]:
+    profile_dir.mkdir(parents=True, exist_ok=True)
     twitter_path = profile_dir / "twitter_profiles.csv"
     reddit_path = profile_dir / "reddit_profiles.json"
 
@@ -424,6 +435,7 @@ def build_simulation_config(
 
 
 def write_simulation_config(run_dir: Path, config: Dict[str, Any]) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
     config_path = run_dir / "simulation_config.json"
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     return config_path
@@ -434,6 +446,38 @@ def _extract_tail_text(path: Path, max_chars: int = 6000) -> str:
         return ""
     text = path.read_text(encoding="utf-8", errors="replace")
     return text[-max_chars:]
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _extract_weighted_rubric_score(validated_scales: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(validated_scales, Mapping):
+        return None
+
+    top_level = _finite_float_or_none(validated_scales.get("weighted_rubric_score"))
+    if top_level is not None:
+        return top_level
+
+    scores = validated_scales.get("scores")
+    if isinstance(scores, Mapping):
+        return _finite_float_or_none(scores.get("weighted_rubric_score"))
+    return None
+
+
+def _extract_yes_probability(probabilities: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(probabilities, Mapping):
+        return None
+    for label, raw_value in probabilities.items():
+        if isinstance(label, str) and label.strip().casefold() == "yes":
+            return _finite_float_or_none(raw_value)
+    return None
 
 
 def _simulation_failure_error(unit_dir: Path, *, timeout_seconds: int | None = None, returncode: int | None = None) -> str:
@@ -473,12 +517,37 @@ def build_event_result_row(
     brier: float | None,
     mcq_dimensions: Mapping[str, Any] | None = None,
     validated_scales: Mapping[str, Any] | None = None,
+    directional_accuracy: float | None = None,
+    weighted_rubric_score: float | None = None,
+    yes_probability: float | None = None,
+    strict_contract: bool | None = True,
     error: str | None = None,
     seed_file: str | None = None,
     evidence_text: str | None = None,
+    simulation_executed: bool = True,
 ) -> Dict[str, Any]:
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     event_id = str(event["event_id"])
+    ground_truth = event.get("outcome") or event.get("answer", "")
+    directional_correct: int | None = None
+    if probabilities and isinstance(ground_truth, str) and ground_truth.strip():
+        predicted_label = max(
+            ((str(label), float(value)) for label, value in probabilities.items()),
+            key=lambda item: (item[1], item[0]),
+        )[0]
+        directional_correct = int(predicted_label == ground_truth.strip())
+    resolved_directional_accuracy = _finite_float_or_none(directional_accuracy)
+    if resolved_directional_accuracy is None and directional_correct is not None:
+        resolved_directional_accuracy = float(directional_correct)
+    if resolved_directional_accuracy is None:
+        resolved_directional_accuracy = 0.0
+
+    resolved_weighted_rubric_score = _finite_float_or_none(weighted_rubric_score)
+    if resolved_weighted_rubric_score is None:
+        resolved_weighted_rubric_score = _extract_weighted_rubric_score(validated_scales)
+    resolved_yes_probability = _finite_float_or_none(yes_probability)
+    if resolved_yes_probability is None:
+        resolved_yes_probability = _extract_yes_probability(probabilities)
     return {
         "event_id": event_id,
         "unit_id": f"{event_id}_{condition}_r{repeat}",
@@ -490,8 +559,14 @@ def build_event_result_row(
         "seed_file": seed_file,
         "simulation_status": simulation_status,
         "full_simulation_completed": full_simulation_completed,
+        "simulation_executed": simulation_executed,
         "probabilities": dict(probabilities) if isinstance(probabilities, Mapping) else None,
         "brier": brier,
+        "directional_accuracy": resolved_directional_accuracy,
+        "directional_correct": directional_correct,
+        "weighted_rubric_score": resolved_weighted_rubric_score,
+        "yes_probability": resolved_yes_probability,
+        "strict_contract": strict_contract,
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "error": error,
@@ -581,20 +656,62 @@ def _evaluate_row(
         raise ValueError("Event is missing a ground-truth outcome")
 
     normalized_probabilities = {str(label): float(value) for label, value in probabilities.items()}
+    directional_accuracy = _finite_float_or_none(evaluation.get("directional_accuracy"))
+    if directional_accuracy is None:
+        predicted_label = max(
+            ((str(label), float(value)) for label, value in normalized_probabilities.items()),
+            key=lambda item: (item[1], item[0]),
+        )[0]
+        directional_accuracy = float(predicted_label == ground_truth)
+
+    normalized_validated_scales = dict(validated_scales)
+    raw_scores = normalized_validated_scales.get("scores")
+    if isinstance(raw_scores, Mapping):
+        normalized_scores = {str(label): float(value) for label, value in raw_scores.items()}
+    else:
+        normalized_scores = {}
+
+    weighted_rubric_score = _finite_float_or_none(evaluation.get("weighted_rubric_score"))
+    if weighted_rubric_score is None:
+        weighted_rubric_score = _finite_float_or_none(normalized_scores.get("weighted_rubric_score"))
+    if weighted_rubric_score is None:
+        weighted_rubric_score = compute_weighted_rubric_score(mcq_dimensions)
+    if weighted_rubric_score is not None:
+        normalized_scores["weighted_rubric_score"] = weighted_rubric_score
+    normalized_validated_scales["scores"] = normalized_scores
+
     return {
         "probabilities": normalized_probabilities,
         "brier": brier_score(normalized_probabilities, ground_truth),
         "mcq_dimensions": dict(mcq_dimensions),
-        "validated_scales": dict(validated_scales),
+        "validated_scales": normalized_validated_scales,
+        "directional_accuracy": directional_accuracy,
+        "weighted_rubric_score": weighted_rubric_score,
     }
 
 
 def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    completed_rows = [row for row in rows if row.get("full_simulation_completed")]
+    completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
     evaluation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "evaluation_failed")
     summary = summarize_condition_scores([row for row in completed_rows if row.get("brier") is not None])
-    summary["rubric"] = summarize_rubric_artifacts(rows)
+    summary["rubric"] = summarize_rubric_artifacts(completed_rows)
+    summary["directional_accuracy"] = summarize_directional_accuracy(completed_rows)
+    summary["weighted_rubric_score"] = summarize_weighted_rubric_score(completed_rows)
+    yes_probability_summary = summarize_yes_probability(completed_rows)
+    summary["content_susceptibility"] = {
+        "mean_yes_probability": {
+            "overall": yes_probability_summary["overall"],
+            "by_condition": yes_probability_summary["by_condition"],
+        },
+        "delta": {
+            "B_minus_C": round(
+                yes_probability_summary["by_condition"]["B"] - yes_probability_summary["by_condition"]["C"],
+                6,
+            ),
+        },
+    }
+    summary["strict_contract"] = summarize_strict_contract(completed_rows)
     summary.update(
         {
             "total_rows": len(rows),

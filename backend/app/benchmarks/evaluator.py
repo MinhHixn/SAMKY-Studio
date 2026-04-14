@@ -18,6 +18,34 @@ MCQ_DIMENSION_KEYS = (
     "information_diversity",
 )
 MCQ_BUCKET_KEYS = ("very_low", "low", "high", "very_high")
+MCQ_BUCKET_SCORE_ANCHORS = {
+    "very_low": 0.0,
+    "low": 1.0 / 3.0,
+    "high": 2.0 / 3.0,
+    "very_high": 1.0,
+}
+MCQ_DIMENSION_WEIGHTS = {
+    "prediction_accuracy": 0.25,
+    "polarization": 0.125,
+    "herd_effect": 0.125,
+    "deliberation_quality": 0.125,
+    "susceptibility": 0.125,
+    "convergence": 0.125,
+    "information_diversity": 0.125,
+}
+CANONICAL_VALIDATED_SCALE_KEYS = (
+    "prediction_accuracy_score",
+    "polarization_score",
+    "herd_effect_score",
+    "deliberation_quality_score",
+    "susceptibility_score",
+    "convergence_score",
+    "information_diversity_score",
+    "weighted_rubric_score",
+)
+# Phase 1 MVP uses placeholder weights (prediction_accuracy=0.25, others=0.125)
+# for pipeline validation. Empirical weight optimization will be applied to pilot
+# data prior to Phase 2 per KB §2.9.
 VALIDATED_SCALES_SCHEMA_VERSION = "v1"
 INVALID_JSON_ERROR_PREFIX = "Invalid JSON format from LLM:"
 EVALUATOR_JSON_MAX_ATTEMPTS = 3
@@ -64,6 +92,28 @@ def _validate_numeric_scores_mapping(mapping: Any, context: str) -> Dict[str, fl
         validated[label] = numeric
 
     return validated
+
+
+def _compute_canonical_validated_scales(mcq_dimensions: Mapping[str, Mapping[str, float]]) -> Dict[str, float]:
+    scores: Dict[str, float] = {}
+    for dimension in MCQ_DIMENSION_KEYS:
+        buckets = mcq_dimensions[dimension]
+        value = sum(
+            float(buckets[bucket]) * float(MCQ_BUCKET_SCORE_ANCHORS[bucket])
+            for bucket in MCQ_BUCKET_KEYS
+        )
+        if not math.isfinite(value) or value < 0.0 or value > 1.0:
+            raise ValueError(f"Computed canonical scale out of range for {dimension!r}")
+        scores[f"{dimension}_score"] = round(value, 6)
+
+    weighted = sum(
+        scores[f"{dimension}_score"] * float(MCQ_DIMENSION_WEIGHTS[dimension])
+        for dimension in MCQ_DIMENSION_KEYS
+    )
+    if not math.isfinite(weighted) or weighted < 0.0 or weighted > 1.0:
+        raise ValueError("Computed canonical weighted_rubric_score out of range")
+    scores["weighted_rubric_score"] = round(weighted, 6)
+    return scores
 
 
 class ProbabilityEvaluator:
@@ -119,7 +169,7 @@ class ProbabilityEvaluator:
         validated_scales = response.get("validated_scales") if isinstance(response, dict) else None
         normalized = self._normalize_probabilities(probabilities)
         normalized_dimensions = self._normalize_mcq_dimensions(mcq_dimensions)
-        normalized_scales = self._normalize_validated_scales(validated_scales)
+        normalized_scales = self._normalize_validated_scales(validated_scales, normalized_dimensions)
 
         result = dict(response) if isinstance(response, dict) else {}
         result["probabilities"] = normalized
@@ -176,7 +226,11 @@ class ProbabilityEvaluator:
 
         return normalized
 
-    def _normalize_validated_scales(self, validated_scales: Any) -> Dict[str, Any]:
+    def _normalize_validated_scales(
+        self,
+        validated_scales: Any,
+        mcq_dimensions: Mapping[str, Mapping[str, float]],
+    ) -> Dict[str, Any]:
         if not isinstance(validated_scales, Mapping):
             raise ValueError("Evaluator response must include validated_scales mapping")
 
@@ -192,5 +246,8 @@ class ProbabilityEvaluator:
             validated_scales.get("scores"),
             "validated_scales.scores",
         )
-
-        return {"schema_version": schema_version, "scores": scores}
+        del scores
+        canonical_scores = _compute_canonical_validated_scales(mcq_dimensions)
+        if set(canonical_scores.keys()) != set(CANONICAL_VALIDATED_SCALE_KEYS):
+            raise ValueError("Canonical validated_scales key set mismatch")
+        return {"schema_version": schema_version, "scores": canonical_scores}

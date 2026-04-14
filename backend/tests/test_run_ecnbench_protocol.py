@@ -252,6 +252,22 @@ def test_build_event_result_row_full_simulation_completed_logic():
     assert complete["unit_id"] == "E1_A_r1"
 
 
+def test_build_event_result_row_includes_simulation_executed_flag():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 1.0},
+        brier=0.0,
+        simulation_executed=False,
+    )
+    assert "simulation_executed" in row
+    assert row["simulation_executed"] is False
+
 def test_build_event_result_row_includes_rubric_artifacts():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 
@@ -270,6 +286,63 @@ def test_build_event_result_row_includes_rubric_artifacts():
 
     assert row["mcq_dimensions"] == {"accuracy": 4, "calibration": 3}
     assert row["validated_scales"] == {"likelihood": {"value": 4, "max": 5}}
+
+
+def test_build_event_result_row_extracts_directional_and_weighted_metrics():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.9, "B": 0.1},
+        brier=0.02,
+        validated_scales={"schema_version": "v1", "scores": {"weighted_rubric_score": 0.625}},
+    )
+
+    assert row["directional_accuracy"] == pytest.approx(1.0)
+    assert row["weighted_rubric_score"] == pytest.approx(0.625)
+
+
+def test_build_event_result_row_defaults_missing_directional_and_weighted_metrics():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities=None,
+        brier=None,
+        validated_scales=None,
+    )
+
+    assert row["directional_accuracy"] == pytest.approx(0.0)
+    assert row["weighted_rubric_score"] is None
+
+
+def test_build_event_result_row_extracts_yes_probability_and_strict_contract_flag():
+    event = {"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"YES": 0.8, "NO": 0.2},
+        brier=0.08,
+        strict_contract=False,
+    )
+
+    assert row["yes_probability"] == pytest.approx(0.8)
+    assert row["strict_contract"] is False
 
 
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
@@ -307,6 +380,34 @@ def test_build_simulation_config_seeds_initial_post_from_question(monkeypatch):
     assert config["event_config"]["initial_posts"] == [
         {"poster_agent_id": 0, "content": "What happened?"}
     ]
+
+
+def test_write_simulation_config_creates_parent_directory(tmp_path):
+    run_dir = tmp_path / "nested" / "unit-dir"
+    config_path = protocol_script.write_simulation_config(run_dir, {"event_id": "E1"})
+    assert config_path.exists()
+    assert config_path.parent == run_dir
+
+
+def test_write_profiles_creates_parent_directory(tmp_path):
+    profile_dir = tmp_path / "nested" / "profiles-dir"
+    twitter_path, reddit_path = protocol_script.write_profiles(
+        profile_dir,
+        [
+            {
+                "user_id": 1,
+                "name": "Agent One",
+                "username": "agent1",
+                "realname": "Agent One",
+                "bio": "bio",
+                "persona": "persona",
+            }
+        ],
+    )
+    assert twitter_path.exists()
+    assert reddit_path.exists()
+    assert twitter_path.parent == profile_dir
+    assert reddit_path.parent == profile_dir
 
 
 def test_write_summary_includes_failure_counts(tmp_path):
@@ -535,6 +636,10 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=1, stdout="", stderr="boom")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    # Patch condition matrix to use B instead of A for simulation failure
+    def matrix_with_B(*args, **kwargs):
+        return [{"event_id": "E1", "condition": "B", "repeat": 1}]
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", matrix_with_B)
 
     output_dir = tmp_path / "runs"
     argv = [
@@ -555,7 +660,7 @@ def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert rows[0]["simulation_status"] == "simulation_failed"
-    assert rows[0]["unit_id"] == "E1_A_r1"
+    assert rows[0]["unit_id"] == "E1_B_r1"
     assert summary["simulation_failure_count"] == 1
 
 
@@ -650,6 +755,10 @@ def test_main_writes_traces_to_custom_path(monkeypatch, tmp_path):
 
 def test_main_records_timeout_failure_with_log_tail(monkeypatch, tmp_path):
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=None)
+    # Patch condition matrix to use B instead of A for timeout failure
+    def matrix_with_B(*args, **kwargs):
+        return [{"event_id": "E1", "condition": "B", "repeat": 1}]
+    monkeypatch.setattr(protocol_script, "build_condition_matrix", matrix_with_B)
 
     def raise_timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=["python"], timeout=protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS)
@@ -658,7 +767,7 @@ def test_main_records_timeout_failure_with_log_tail(monkeypatch, tmp_path):
 
     output_dir = tmp_path / "runs"
     run_dir = output_dir / "fixed-run"
-    unit_dir = run_dir / "E1_A_r1"
+    unit_dir = run_dir / "E1_B_r1"
     unit_dir.mkdir(parents=True, exist_ok=True)
     (unit_dir / "simulation.log").write_text("line 1\nline 2\n", encoding="utf-8")
 
@@ -713,3 +822,156 @@ def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_pa
     assert captured["kwargs"]["timeout"] == protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS
     assert captured["kwargs"]["stdout"] == subprocess.DEVNULL
     assert captured["kwargs"]["stderr"] == subprocess.DEVNULL
+
+
+def test_summarize_event_results_includes_directional_accuracy_block():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.3,
+            "full_simulation_completed": True,
+            "directional_correct": 0,
+            "simulation_status": "completed",
+        },
+        {
+            "condition": "B",
+            "brier": 0.2,
+            "full_simulation_completed": True,
+            "directional_correct": 1,
+            "simulation_status": "completed",
+        },
+        {
+            "condition": "C",
+            "brier": 0.4,
+            "full_simulation_completed": True,
+            "directional_correct": 1,
+            "simulation_status": "completed",
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert "directional_accuracy" in summary
+    assert summary["directional_accuracy"]["overall"] == pytest.approx(2 / 3)
+    assert summary["directional_accuracy"]["by_condition"]["A"] == pytest.approx(0.0)
+    assert summary["directional_accuracy"]["by_condition"]["B"] == pytest.approx(1.0)
+    assert summary["directional_accuracy"]["by_condition"]["C"] == pytest.approx(1.0)
+    assert summary["directional_accuracy"]["delta"]["A_to_B"] == pytest.approx(1.0)
+
+
+def test_summarize_event_results_includes_weighted_rubric_score_block():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.3,
+            "full_simulation_completed": True,
+            "simulation_status": "completed",
+            "weighted_rubric_score": 0.4,
+            "directional_accuracy": 0.0,
+        },
+        {
+            "condition": "B",
+            "brier": 0.2,
+            "full_simulation_completed": True,
+            "simulation_status": "completed",
+            "weighted_rubric_score": 0.6,
+            "directional_accuracy": 1.0,
+        },
+        {
+            "condition": "C",
+            "brier": 0.4,
+            "full_simulation_completed": True,
+            "simulation_status": "completed",
+            "weighted_rubric_score": 0.7,
+            "directional_accuracy": 1.0,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert "weighted_rubric_score" in summary
+    assert summary["weighted_rubric_score"]["by_condition"]["A"] == pytest.approx(0.4)
+    assert summary["weighted_rubric_score"]["by_condition"]["B"] == pytest.approx(0.6)
+    assert summary["weighted_rubric_score"]["by_condition"]["C"] == pytest.approx(0.7)
+    assert summary["weighted_rubric_score"]["delta"]["A_to_B"] == pytest.approx(0.2)
+
+
+def test_summarize_event_results_excludes_non_completed_rows_from_metric_aggregates():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 0.6,
+        },
+        {
+            "condition": "B",
+            "brier": 0.1,
+            "simulation_status": "evaluation_failed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 1.0,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["condition_mean_brier"] == {"A": pytest.approx(0.2)}
+    assert summary["directional_accuracy"]["overall"] == pytest.approx(1.0)
+    assert summary["weighted_rubric_score"]["overall"] == pytest.approx(0.6)
+
+
+def test_summarize_event_results_includes_content_susceptibility_and_strict_contract():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 0.4,
+            "yes_probability": 0.4,
+            "strict_contract": True,
+        },
+        {
+            "condition": "B",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 0.6,
+            "yes_probability": 0.7,
+            "strict_contract": False,
+        },
+        {
+            "condition": "C",
+            "brier": 0.4,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 0.0,
+            "weighted_rubric_score": 0.5,
+            "yes_probability": 0.2,
+            "strict_contract": True,
+        },
+        {
+            "condition": "B",
+            "brier": 0.1,
+            "simulation_status": "evaluation_failed",
+            "full_simulation_completed": False,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 0.9,
+            "yes_probability": 1.0,
+            "strict_contract": False,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["content_susceptibility"]["mean_yes_probability"]["by_condition"]["A"] == pytest.approx(0.4)
+    assert summary["content_susceptibility"]["mean_yes_probability"]["by_condition"]["B"] == pytest.approx(0.7)
+    assert summary["content_susceptibility"]["mean_yes_probability"]["by_condition"]["C"] == pytest.approx(0.2)
+    assert summary["content_susceptibility"]["delta"]["B_minus_C"] == pytest.approx(0.5)
+    assert summary["strict_contract"]["strict_contract_completed_count"] == 2
+    assert summary["strict_contract"]["legacy_contract_completed_count"] == 1

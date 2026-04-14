@@ -1,7 +1,13 @@
 import pytest
 
 from app.benchmarks.evaluator import ProbabilityEvaluator
-from app.benchmarks.scoring import brier_score, summarize_condition_scores, summarize_rubric_artifacts
+from app.benchmarks.scoring import (
+    brier_score,
+    summarize_condition_scores,
+    summarize_directional_accuracy,
+    summarize_weighted_rubric_score,
+    summarize_rubric_artifacts,
+)
 
 
 def test_brier_score_is_zero_for_correct_certainty():
@@ -242,7 +248,18 @@ def test_probability_evaluator_returns_normalized_rubric_and_validated_scales():
         assert sum(buckets.values()) == pytest.approx(1.0)
 
     assert result["validated_scales"]["schema_version"] == "v1"
-    assert result["validated_scales"]["scores"]["evidence_alignment"] == pytest.approx(0.8)
+    expected_keys = {
+        "prediction_accuracy_score",
+        "polarization_score",
+        "herd_effect_score",
+        "deliberation_quality_score",
+        "susceptibility_score",
+        "convergence_score",
+        "information_diversity_score",
+        "weighted_rubric_score",
+    }
+    assert set(result["validated_scales"]["scores"].keys()) == expected_keys
+    assert 0.0 <= result["validated_scales"]["scores"]["weighted_rubric_score"] <= 1.0
 
 
 def test_probability_evaluator_rejects_missing_rubric_dimension():
@@ -427,6 +444,7 @@ def test_probability_evaluator_retries_invalid_json_then_succeeds(monkeypatch):
     ]
     mcq_dimensions = {
         key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1} for key in dimension_keys
+        for key in dimension_keys
     }
 
     class FakeClient:
@@ -535,3 +553,79 @@ def test_probability_evaluator_does_not_retry_non_json_valueerror_from_client():
         evaluator.evaluate("Q", "A", "E")
 
     assert attempts == 1
+
+
+def test_probability_evaluator_uses_deterministic_scales_not_free_form_scores():
+    dimension_keys = [
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    ]
+    mcq_dimensions = {
+        key: {"very_low": 1, "low": 2, "high": 3, "very_high": 4}
+        for key in dimension_keys
+    }
+
+    class FakeClient:
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+            return {
+                "probabilities": {"A": 2, "B": 3, "C": 5},
+                "mcq_dimensions": mcq_dimensions,
+                "validated_scales": {
+                    "schema_version": "v1",
+                    "scores": {"free_form": 123.0},
+                },
+            }
+
+    class FakeRouter:
+        def client_for(self, role):
+            return FakeClient()
+
+    evaluator = ProbabilityEvaluator(FakeRouter())
+    result = evaluator.evaluate("Q", "A", "E")
+
+    assert "free_form" not in result["validated_scales"]["scores"]
+    assert "weighted_rubric_score" in result["validated_scales"]["scores"]
+
+
+def test_summarize_directional_accuracy_by_condition_and_delta():
+    rows = [
+        {"full_simulation_completed": True, "condition": "A", "directional_correct": 1},
+        {"full_simulation_completed": True, "condition": "A", "directional_correct": 0},
+        {"full_simulation_completed": True, "condition": "B", "directional_correct": 1},
+        {"full_simulation_completed": True, "condition": "C", "directional_correct": 1},
+    ]
+
+    summary = summarize_directional_accuracy(rows)
+
+    assert summary["overall"] == pytest.approx(0.75)
+    assert summary["by_condition"]["A"] == pytest.approx(0.5)
+    assert summary["by_condition"]["B"] == pytest.approx(1.0)
+    assert summary["by_condition"]["C"] == pytest.approx(1.0)
+    assert summary["delta"]["A_to_B"] == pytest.approx(0.5)
+    assert summary["delta"]["A_to_C"] == pytest.approx(0.5)
+    assert summary["delta"]["B_to_C"] == pytest.approx(0.0)
+
+
+def test_summarize_weighted_rubric_score_by_condition_and_delta():
+    rows = [
+        {"full_simulation_completed": True, "condition": "A", "weighted_rubric_score": 0.25},
+        {"full_simulation_completed": True, "condition": "A", "weighted_rubric_score": 0.5},
+        {"full_simulation_completed": True, "condition": "B", "weighted_rubric_score": 0.75},
+        {"full_simulation_completed": True, "condition": "C", "weighted_rubric_score": 0.5},
+        {"full_simulation_completed": True, "condition": "C", "weighted_rubric_score": None},
+    ]
+
+    summary = summarize_weighted_rubric_score(rows)
+
+    assert summary["overall"] == pytest.approx(0.5)
+    assert summary["by_condition"]["A"] == pytest.approx(0.375)
+    assert summary["by_condition"]["B"] == pytest.approx(0.75)
+    assert summary["by_condition"]["C"] == pytest.approx(0.5)
+    assert summary["delta"]["A_to_B"] == pytest.approx(0.375)
+    assert summary["delta"]["A_to_C"] == pytest.approx(0.125)
+    assert summary["delta"]["B_to_C"] == pytest.approx(-0.25)

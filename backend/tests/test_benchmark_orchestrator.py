@@ -198,6 +198,7 @@ def test_protocol_condition_executor_execute_supports_mapping_payload(tmp_path):
     assert row["evaluation_completed"] is True
     assert row["probabilities"] == {"A": 0.7, "B": 0.3}
     assert row["brier"] == 0.09
+    assert row["strict_contract"] is True
     assert set(row["mcq_dimensions"]) == {
         "prediction_accuracy",
         "polarization",
@@ -230,6 +231,7 @@ def test_protocol_condition_executor_execute_supports_legacy_tuple_payload(tmp_p
     assert row["evaluation_completed"] is True
     assert row["probabilities"] == {"A": 1.0}
     assert row["brier"] == 0.0
+    assert row["strict_contract"] is False
     assert row["mcq_dimensions"] is None
     assert row["validated_scales"] is None
 
@@ -413,6 +415,38 @@ def test_protocol_condition_executor_execute_invalid_probability_mass_falls_back
     assert row["brier"] is None
     assert trace_entries[-1]["status"] == "evaluation_failed"
 
+
+def test_protocol_executor_condition_a_skips_simulation_subprocess(tmp_path):
+    # Fake simulation runner increments call counter and raises
+    call_counter = {"count": 0}
+    def fake_runner(*args, **kwargs):
+        call_counter["count"] += 1
+        raise RuntimeError("Simulation should not be called for condition A")
+
+    executor, trace_entries = _build_protocol_executor(tmp_path)
+    executor._simulation_runner = fake_runner
+    payload = {
+        "probabilities": {"A": 1.0, "B": 0.0},
+        "brier": 0.0,
+        "mcq_dimensions": _valid_mcq_dimensions(),
+        "validated_scales": _valid_validated_scales(),
+    }
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: payload,
+    )
+    assert call_counter["count"] == 0
+    assert row["simulation_executed"] is False
+    assert row["simulation_status"] == "completed"
+    assert row["simulation_completed"] is True
+    assert row["evaluation_completed"] is True
+    assert row["evidence_text"] == "evidence text"
 
 @pytest.mark.parametrize(
     "payload",

@@ -287,6 +287,7 @@ class ProtocolConditionExecutor:
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
+        strict_contract: bool | None = None
         evidence_text = ""
 
         try:
@@ -300,38 +301,24 @@ class ProtocolConditionExecutor:
             self._profile_writer(unit_dir, self._profiles)
 
             simulation_log_path = unit_dir / "simulation.log"
-            try:
-                completed = self._simulation_runner(
-                    self._python_exe,
-                    config_path,
-                    self._router,
-                    log_path=simulation_log_path,
-                )
-            except subprocess.TimeoutExpired:
-                simulation_status = "simulation_failed"
-                row_error = self._simulation_failure_error_builder(
-                    unit_dir,
-                    timeout_seconds=self._simulation_timeout_seconds,
-                )
-                self._trace_writer.write(
-                    {
-                        "event_id": event_id,
-                        "condition": condition,
-                        "repeat": repeat,
-                        "unit_id": unit_id,
-                        "status": simulation_status,
-                        "timeout_seconds": self._simulation_timeout_seconds,
-                        "error": row_error,
-                    }
-                )
+            if condition == "A":
+                simulation_status = "completed"
+                simulation_completed = True
+                evidence_text = self._evidence_builder(simulation_log_path, seed_path)
             else:
-                simulation_completed = completed.returncode == 0
-                if not simulation_completed:
+                try:
+                    completed = self._simulation_runner(
+                        self._python_exe,
+                        config_path,
+                        self._router,
+                        log_path=simulation_log_path,
+                    )
+                except subprocess.TimeoutExpired:
+                    simulation_status = "simulation_failed"
                     row_error = self._simulation_failure_error_builder(
                         unit_dir,
-                        returncode=completed.returncode,
+                        timeout_seconds=self._simulation_timeout_seconds,
                     )
-                    simulation_status = "simulation_failed"
                     self._trace_writer.write(
                         {
                             "event_id": event_id,
@@ -339,70 +326,18 @@ class ProtocolConditionExecutor:
                             "repeat": repeat,
                             "unit_id": unit_id,
                             "status": simulation_status,
-                            "returncode": completed.returncode,
+                            "timeout_seconds": self._simulation_timeout_seconds,
                             "error": row_error,
                         }
                     )
                 else:
-                    simulation_status = "completed"
-                    evidence_text = self._evidence_builder(simulation_log_path, seed_path)
-                    try:
-                        evaluation_payload = evaluator(event, condition, evidence_text, self._router)
-                        if isinstance(evaluation_payload, tuple):
-                            # Intentional compatibility path for legacy tuple-based evaluators.
-                            probabilities, brier = evaluation_payload
-                            probabilities = _validate_probability_payload(
-                                probabilities,
-                                context="Evaluator tuple field",
-                            )
-                            brier = _validate_brier_payload(brier, context="Evaluator tuple field")
-                            mcq_dimensions = None
-                            validated_scales = None
-                        elif isinstance(evaluation_payload, Mapping):
-                            required_keys = ("probabilities", "brier", "mcq_dimensions", "validated_scales")
-                            missing_keys = [key for key in required_keys if key not in evaluation_payload]
-                            if missing_keys:
-                                raise ValueError(f"Evaluator mapping missing required keys: {', '.join(missing_keys)}")
-
-                            probabilities = _validate_probability_payload(
-                                evaluation_payload["probabilities"],
-                                context="Evaluator mapping field",
-                            )
-                            brier = _validate_brier_payload(
-                                evaluation_payload["brier"],
-                                context="Evaluator mapping field",
-                            )
-                            mcq_dimensions = _validate_mcq_dimensions_payload(
-                                evaluation_payload["mcq_dimensions"],
-                                context="Evaluator mapping field",
-                            )
-                            validated_scales = _validate_validated_scales_payload(
-                                evaluation_payload["validated_scales"],
-                                context="Evaluator mapping field",
-                            )
-                        else:
-                            raise ValueError("Evaluator result must be a tuple or mapping")
-                        evaluation_completed = True
-                        self._trace_writer.write(
-                            {
-                                "event_id": event_id,
-                                "condition": condition,
-                                "repeat": repeat,
-                                "unit_id": unit_id,
-                                "status": "completed",
-                                "probabilities": probabilities,
-                                "brier": brier,
-                                "mcq_dimensions": mcq_dimensions,
-                                "validated_scales": validated_scales,
-                            }
+                    simulation_completed = completed.returncode == 0
+                    if not simulation_completed:
+                        row_error = self._simulation_failure_error_builder(
+                            unit_dir,
+                            returncode=completed.returncode,
                         )
-                    except Exception as exc:
-                        simulation_status = "evaluation_failed"
-                        probabilities = None
-                        brier = None
-                        mcq_dimensions = None
-                        validated_scales = None
-                        row_error = self._exception_formatter(exc)
+                        simulation_status = "simulation_failed"
                         self._trace_writer.write(
                             {
                                 "event_id": event_id,
@@ -410,9 +345,82 @@ class ProtocolConditionExecutor:
                                 "repeat": repeat,
                                 "unit_id": unit_id,
                                 "status": simulation_status,
+                                "returncode": completed.returncode,
                                 "error": row_error,
                             }
                         )
+                    else:
+                        simulation_status = "completed"
+                        evidence_text = self._evidence_builder(simulation_log_path, seed_path)
+            if simulation_status == "completed":
+                try:
+                    evaluation_payload = evaluator(event, condition, evidence_text, self._router)
+                    if isinstance(evaluation_payload, tuple):
+                        strict_contract = False
+                        probabilities, brier = evaluation_payload
+                        probabilities = _validate_probability_payload(
+                            probabilities,
+                            context="Evaluator tuple field",
+                        )
+                        brier = _validate_brier_payload(brier, context="Evaluator tuple field")
+                        mcq_dimensions = None
+                        validated_scales = None
+                    elif isinstance(evaluation_payload, Mapping):
+                        strict_contract = True
+                        required_keys = ("probabilities", "brier", "mcq_dimensions", "validated_scales")
+                        missing_keys = [key for key in required_keys if key not in evaluation_payload]
+                        if missing_keys:
+                            raise ValueError(f"Evaluator mapping missing required keys: {', '.join(missing_keys)}")
+                        probabilities = _validate_probability_payload(
+                            evaluation_payload["probabilities"],
+                            context="Evaluator mapping field",
+                        )
+                        brier = _validate_brier_payload(
+                            evaluation_payload["brier"],
+                            context="Evaluator mapping field",
+                        )
+                        mcq_dimensions = _validate_mcq_dimensions_payload(
+                            evaluation_payload["mcq_dimensions"],
+                            context="Evaluator mapping field",
+                        )
+                        validated_scales = _validate_validated_scales_payload(
+                            evaluation_payload["validated_scales"],
+                            context="Evaluator mapping field",
+                        )
+                    else:
+                        raise ValueError("Evaluator result must be a tuple or mapping")
+                    evaluation_completed = True
+                    self._trace_writer.write(
+                        {
+                            "event_id": event_id,
+                            "condition": condition,
+                            "repeat": repeat,
+                            "unit_id": unit_id,
+                            "status": "completed",
+                            "probabilities": probabilities,
+                            "brier": brier,
+                            "mcq_dimensions": mcq_dimensions,
+                            "validated_scales": validated_scales,
+                            "strict_contract": strict_contract,
+                        }
+                    )
+                except Exception as exc:
+                    simulation_status = "evaluation_failed"
+                    probabilities = None
+                    brier = None
+                    mcq_dimensions = None
+                    validated_scales = None
+                    row_error = self._exception_formatter(exc)
+                    self._trace_writer.write(
+                        {
+                            "event_id": event_id,
+                            "condition": condition,
+                            "repeat": repeat,
+                            "unit_id": unit_id,
+                            "status": simulation_status,
+                            "error": row_error,
+                        }
+                    )
         except Exception as exc:
             row_error = self._exception_formatter(exc)
             self._trace_writer.write(
@@ -438,6 +446,8 @@ class ProtocolConditionExecutor:
             mcq_dimensions=mcq_dimensions,
             validated_scales=validated_scales,
             error=row_error,
+            strict_contract=strict_contract,
+            simulation_executed=(condition != "A"),
             seed_file=str(seed_path),
             evidence_text=evidence_text or None,
         )

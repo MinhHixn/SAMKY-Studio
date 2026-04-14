@@ -4,6 +4,6 @@ from .injection_loader import Condition, Step30InjectionLoader
 from .evaluator import ProbabilityEvaluator
 from .protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from .role_router import BenchmarkRoleRouter, BENCHMARK_ROLES
-from .scoring import brier_score, summarize_condition_scores
+from .scoring import brier_score, summarize_condition_scores, summarize_directional_accuracy
 from .orchestrator import BenchmarkRunOrchestrator, ConditionExecutor, ProtocolConditionExecutor
 

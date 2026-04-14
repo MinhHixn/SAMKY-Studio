@@ -37,6 +37,10 @@ from app.benchmarks.scoring import (
 )
 from app.benchmarks.phase1_baselines import validate_polymarket_opening_prior
 from app.benchmarks.phase1_registry import load_phase1_config
+from app.benchmarks.phase1_telemetry import (
+    compute_round_jsd_trace,
+    is_monotonic_nonincreasing_with_epsilon,
+)
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
@@ -504,6 +508,17 @@ def _extract_yes_probability(probabilities: Mapping[str, Any] | None) -> float |
     return None
 
 
+def _compute_convergence_telemetry(unit_dir: Path, phase1_cfg: Mapping[str, Any]) -> tuple[list[float], bool]:
+    checkpoints = [int(checkpoint) for checkpoint in phase1_cfg["telemetry_checkpoints"]]
+    trace = compute_round_jsd_trace(
+        unit_dir,
+        checkpoints=checkpoints,
+        min_parsed_probability_ratio=float(phase1_cfg["min_parsed_probability_ratio"]),
+    )
+    epsilon = float(phase1_cfg["jsd_monotonic_tolerance_epsilon"])
+    return trace, is_monotonic_nonincreasing_with_epsilon(trace, epsilon)
+
+
 def _simulation_failure_error(unit_dir: Path, *, timeout_seconds: int | None = None, returncode: int | None = None) -> str:
     parts: List[str] = []
     if timeout_seconds is not None:
@@ -553,6 +568,8 @@ def build_event_result_row(
     signed_delta: float | None = None,
     belief_update_failure: bool | None = None,
     evaluator_noisy_dimensions: Any = None,
+    round_jsd: list[float] | None = None,
+    convergence_monotonic: bool | None = None,
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
     ground_truth = event.get("outcome") or event.get("answer", "")
@@ -631,6 +648,8 @@ def build_event_result_row(
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
+        "round_jsd": list(round_jsd) if isinstance(round_jsd, list) else round_jsd,
+        "convergence_monotonic": convergence_monotonic,
         "error": error,
         "evidence_text": evidence_text,
     }
@@ -937,6 +956,7 @@ def main() -> None:
         profile_writer=write_profiles,
         evidence_builder=build_evidence_text,
         row_builder=build_event_result_row,
+        telemetry_builder=lambda unit_dir: _compute_convergence_telemetry(unit_dir, phase1_cfg),
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)

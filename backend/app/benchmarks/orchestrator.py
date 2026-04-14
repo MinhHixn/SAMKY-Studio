@@ -231,6 +231,7 @@ class ProtocolConditionExecutor:
         profile_writer: Callable[[Path, list[Dict[str, Any]]], Any],
         evidence_builder: Callable[[Path, Path], str],
         row_builder: Callable[..., Dict[str, Any]],
+        telemetry_builder: Callable[[Path], tuple[list[float], bool]] | None = None,
         exception_formatter: Callable[[BaseException], str],
     ):
         self._router = router
@@ -246,6 +247,7 @@ class ProtocolConditionExecutor:
         self._profile_writer = profile_writer
         self._evidence_builder = evidence_builder
         self._row_builder = row_builder
+        self._telemetry_builder = telemetry_builder
         self._exception_formatter = exception_formatter
 
     def _seed_path_for_event(self, event_id: str) -> Path:
@@ -288,6 +290,8 @@ class ProtocolConditionExecutor:
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
+        round_jsd: list[float] | None = None
+        convergence_monotonic: bool | None = None
         strict_contract: bool | None = None
         evidence_text = ""
 
@@ -437,6 +441,9 @@ class ProtocolConditionExecutor:
                 }
             )
 
+        if self._telemetry_builder and simulation_completed and condition != "A":
+            round_jsd, convergence_monotonic = self._telemetry_builder(unit_dir)
+
         return self._row_builder(
             event,
             condition,
@@ -454,6 +461,8 @@ class ProtocolConditionExecutor:
             simulation_executed=(condition != "A"),
             seed_file=str(seed_path),
             evidence_text=evidence_text or None,
+            round_jsd=round_jsd,
+            convergence_monotonic=convergence_monotonic,
         )
 
 

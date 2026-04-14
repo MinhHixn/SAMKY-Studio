@@ -614,6 +614,67 @@ def test_write_summary_includes_failure_counts(tmp_path):
     assert summary["full_simulation_completed_count"] == 1
 
 
+def test_summarize_event_results_includes_composite_score_block():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.1,
+                    "polarization_score": 0.2,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.5,
+                    "convergence_score": 0.6,
+                    "information_diversity_score": 0.7,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        },
+        {
+            "condition": "B",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.3,
+                    "polarization_score": 0.4,
+                    "herd_effect_score": 0.5,
+                    "deliberation_quality_score": 0.6,
+                    "susceptibility_score": 0.7,
+                    "convergence_score": 0.8,
+                    "information_diversity_score": 0.9,
+                    "weighted_rubric_score": 0.9,
+                }
+            },
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+    composite = summary["composite_score"]
+
+    assert set(composite) == {
+        "composite_score",
+        "renormalized_weights",
+        "excluded_dimensions",
+        "included_dimensions",
+    }
+    assert composite["excluded_dimensions"] == []
+    assert composite["included_dimensions"] == [
+        "convergence",
+        "dqi",
+        "herd_effect",
+        "info_diversity",
+        "polarization",
+        "prediction_accuracy",
+        "susceptibility",
+    ]
+    assert set(composite["renormalized_weights"]) == set(composite["included_dimensions"])
+    assert composite["composite_score"] == pytest.approx(0.455)
+
+
 def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, evaluate_side_effect=None):
     events = [{"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]}]
     seed_file = tmp_path / "seed.json"

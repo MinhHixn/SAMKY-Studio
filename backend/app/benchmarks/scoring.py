@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping
 
 from .evaluator import (
     MCQ_BUCKET_KEYS,
@@ -115,6 +115,55 @@ def summarize_directional_accuracy(rows: List[Dict]) -> Dict:
 
 def summarize_weighted_rubric_score(rows: List[Dict]) -> Dict:
     return _aggregate_metric(rows, lambda row: row.get("weighted_rubric_score"))
+
+
+def compute_composite_score(
+    dimension_scores: Mapping[str, Any],
+    weights: Mapping[str, Any],
+    noisy_dimensions: Iterable[str] | None = None,
+) -> Dict[str, Any]:
+    noisy_set = {str(dimension) for dimension in (noisy_dimensions or []) if str(dimension)}
+
+    included_dimensions: List[str] = []
+    excluded_dimensions: List[str] = []
+    stable_scores: Dict[str, float] = {}
+    stable_weights: Dict[str, float] = {}
+
+    for dimension, weight in weights.items():
+        dimension_key = str(dimension)
+        if dimension_key in noisy_set:
+            excluded_dimensions.append(dimension_key)
+            continue
+
+        score = _finite_float_or_none(dimension_scores.get(dimension_key))
+        numeric_weight = _finite_float_or_none(weight)
+        if score is None or numeric_weight is None or numeric_weight < 0.0:
+            continue
+
+        included_dimensions.append(dimension_key)
+        stable_scores[dimension_key] = score
+        stable_weights[dimension_key] = numeric_weight
+
+    if not included_dimensions:
+        raise ValueError("No stable dimensions remain for composite score")
+
+    total_weight = sum(stable_weights.values())
+    if total_weight <= 0.0:
+        raise ValueError("No stable dimensions remain for composite score")
+
+    renormalized_weights = {
+        dimension: stable_weights[dimension] / total_weight for dimension in included_dimensions
+    }
+    composite_score = sum(
+        stable_scores[dimension] * renormalized_weights[dimension] for dimension in included_dimensions
+    )
+
+    return {
+        "composite_score": round(composite_score, 6),
+        "renormalized_weights": renormalized_weights,
+        "excluded_dimensions": excluded_dimensions,
+        "included_dimensions": included_dimensions,
+    }
 
 
 def summarize_yes_probability(rows: List[Dict]) -> Dict:

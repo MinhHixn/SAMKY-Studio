@@ -4,6 +4,7 @@ from app.benchmarks.evaluator import ProbabilityEvaluator, get_evaluator_system_
 from app.benchmarks.prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 from app.benchmarks.scoring import (
     brier_score,
+    compute_composite_score,
     summarize_condition_scores,
     summarize_directional_accuracy,
     summarize_weighted_rubric_score,
@@ -41,6 +42,36 @@ def test_summarize_condition_scores_computes_means_and_lift():
 
     assert summary["condition_mean_brier"] == {"A": 0.3, "B": 0.1, "C": 0.25}
     assert summary["lift"] == {"A_to_B": 0.2, "A_to_C": 0.05, "B_to_C": -0.15}
+
+
+def test_compute_composite_score_excludes_noisy_dimensions_and_renormalizes():
+    dimension_scores = {
+        "prediction_accuracy": 0.8,
+        "convergence": 0.5,
+        "susceptibility": 0.2,
+    }
+    weights = {
+        "prediction_accuracy": 0.5,
+        "convergence": 0.25,
+        "susceptibility": 0.25,
+    }
+
+    result = compute_composite_score(dimension_scores, weights, noisy_dimensions=["convergence"])
+
+    assert result["included_dimensions"] == ["prediction_accuracy", "susceptibility"]
+    assert result["excluded_dimensions"] == ["convergence"]
+    assert result["renormalized_weights"]["prediction_accuracy"] == pytest.approx(2 / 3)
+    assert result["renormalized_weights"]["susceptibility"] == pytest.approx(1 / 3)
+    assert result["composite_score"] == pytest.approx((0.8 * (2 / 3)) + (0.2 * (1 / 3)))
+
+
+def test_compute_composite_score_raises_when_no_stable_dimensions_remain():
+    with pytest.raises(ValueError, match="No stable dimensions remain"):
+        compute_composite_score(
+            {"prediction_accuracy": 0.8},
+            {"prediction_accuracy": 0.5},
+            noisy_dimensions=["prediction_accuracy"],
+        )
 
 
 def test_summarize_rubric_artifacts_counts_presence_and_scale_keys():

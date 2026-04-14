@@ -5,6 +5,7 @@ import math
 import os
 import subprocess
 import sys
+from functools import lru_cache
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
@@ -21,8 +22,10 @@ from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolCondit
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
+from app.benchmarks.weight_registry import load_benchmark_weights
 from app.benchmarks.scoring import (
     brier_score,
+    compute_composite_score,
     compute_weighted_rubric_score,
     summarize_condition_scores,
     summarize_yes_probability,
@@ -57,11 +60,22 @@ def _resolve_default_injection_bank() -> str:
 
 DEFAULT_INJECTION_BANK = _resolve_default_injection_bank()
 DEFAULT_OUTPUT_DIR = _BACKEND_DIR / "logs" / "benchmark_runs"
+DEFAULT_BENCHMARK_WEIGHTS_PATH = _BACKEND_DIR / "config" / "benchmark_weights_v1.json"
 CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
 MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
+
+COMPOSITE_SCORE_KEY_MAP = {
+    "prediction_accuracy": "prediction_accuracy_score",
+    "convergence": "convergence_score",
+    "susceptibility": "susceptibility_score",
+    "herd_effect": "herd_effect_score",
+    "dqi": "deliberation_quality_score",
+    "polarization": "polarization_score",
+    "info_diversity": "information_diversity_score",
+}
 
 EventRecord = Mapping[str, Any]
 SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
@@ -89,6 +103,11 @@ def _utc_run_id() -> str:
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def _load_composite_weights() -> Dict[str, float]:
+    return load_benchmark_weights(DEFAULT_BENCHMARK_WEIGHTS_PATH)
 
 
 def _first_text(mapping: Mapping[str, Any], keys: Iterable[str]) -> str:
@@ -725,6 +744,26 @@ def _evaluate_row(
     }
 
 
+def _summarize_composite_score(rows: List[Dict[str, Any]], noisy_dimensions: Iterable[str] | None) -> Dict[str, Any]:
+    dimension_values: Dict[str, List[float]] = {dimension: [] for dimension in COMPOSITE_SCORE_KEY_MAP}
+    for row in rows:
+        validated_scales = row.get("validated_scales")
+        scores = validated_scales.get("scores") if isinstance(validated_scales, Mapping) else None
+        if not isinstance(scores, Mapping):
+            continue
+        for dimension, score_key in COMPOSITE_SCORE_KEY_MAP.items():
+            numeric = _finite_float_or_none(scores.get(score_key))
+            if numeric is not None:
+                dimension_values[dimension].append(numeric)
+
+    averaged_scores = {
+        dimension: round(sum(values) / len(values), 6)
+        for dimension, values in dimension_values.items()
+        if values
+    }
+    return compute_composite_score(averaged_scores, _load_composite_weights(), noisy_dimensions=noisy_dimensions)
+
+
 def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
@@ -733,6 +772,21 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary["rubric"] = summarize_rubric_artifacts(completed_rows)
     summary["directional_accuracy"] = summarize_directional_accuracy(completed_rows)
     summary["weighted_rubric_score"] = summarize_weighted_rubric_score(completed_rows)
+    evaluator_reliability = summary.get("evaluator_reliability", {})
+    noisy_dimensions: List[str] = []
+    if isinstance(evaluator_reliability, Mapping):
+        evaluator_noisy = evaluator_reliability.get("evaluator_noisy", [])
+        if isinstance(evaluator_noisy, list):
+            noisy_dimensions = [str(dimension) for dimension in evaluator_noisy]
+    try:
+        summary["composite_score"] = _summarize_composite_score(completed_rows, noisy_dimensions)
+    except ValueError:
+        summary["composite_score"] = {
+            "composite_score": None,
+            "renormalized_weights": {},
+            "excluded_dimensions": noisy_dimensions,
+            "included_dimensions": [],
+        }
     yes_probability_summary = summarize_yes_probability(completed_rows)
     summary["content_susceptibility"] = {
         "mean_yes_probability": {

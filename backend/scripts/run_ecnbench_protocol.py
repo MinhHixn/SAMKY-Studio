@@ -637,6 +637,14 @@ def build_event_result_row(
                 else:
                     metadata_error = "metadata.json belief_update_failure must be a boolean"
                     error = f"{error}; {metadata_error}" if error else metadata_error
+    resolved_round_jsd = round_jsd
+    if round_jsd is not None:
+        if not isinstance(round_jsd, list) or len(round_jsd) != 5:
+            length_detail = len(round_jsd) if isinstance(round_jsd, list) else "non-list"
+            telemetry_error = f"round_jsd must have length 5 (got {length_detail})"
+            error = f"{error}; Telemetry error: {telemetry_error}" if error else f"Telemetry error: {telemetry_error}"
+            resolved_round_jsd = None
+            convergence_monotonic = None
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     return {
         "event_id": event_id,
@@ -663,7 +671,7 @@ def build_event_result_row(
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
-        "round_jsd": list(round_jsd) if isinstance(round_jsd, list) else round_jsd,
+        "round_jsd": list(resolved_round_jsd) if isinstance(resolved_round_jsd, list) else resolved_round_jsd,
         "convergence_monotonic": convergence_monotonic,
         "baseline_scores": dict(baseline_scores) if isinstance(baseline_scores, Mapping) else None,
         "error": error,

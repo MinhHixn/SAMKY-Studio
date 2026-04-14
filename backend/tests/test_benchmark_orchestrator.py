@@ -302,6 +302,44 @@ def test_protocol_condition_executor_telemetry_failure_appends_error(tmp_path):
     assert row["error"] == "Telemetry error: ValueError: telemetry failed"
 
 
+def test_protocol_condition_executor_baseline_failure_appends_error_and_keeps_keys(tmp_path):
+    def telemetry_builder(unit_dir, event):
+        del unit_dir, event
+        return [0.1, 0.2, 0.3, 0.4, 0.5], True
+
+    def baseline_scores_builder(event):
+        del event
+        raise ValueError("baseline failed")
+
+    def evaluator(*_args, **_kwargs):
+        raise ValueError("evaluation failed")
+
+    executor, _trace_entries = _build_protocol_executor(
+        tmp_path,
+        telemetry_builder=telemetry_builder,
+        baseline_scores_builder=baseline_scores_builder,
+    )
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_B_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=evaluator,
+    )
+
+    assert row["unit_id"] == "E1_B_r1"
+    assert row["simulation_status"] == "evaluation_failed"
+    assert row["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
+    assert row["convergence_monotonic"] is True
+    assert row["baseline_scores"] is None
+    assert "ValueError: evaluation failed" in row["error"]
+    assert "Baseline error: ValueError: baseline failed" in row["error"]
+
+
 def _valid_mcq_dimensions():
     dimension_keys = (
         "prediction_accuracy",

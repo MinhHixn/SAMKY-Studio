@@ -152,6 +152,7 @@ def _extract_probability_from_mapping(mapping: Mapping[str, Any], resolved_label
             key_probability = _parse_probability_text(str(key), resolved_label)
             if key_probability is not None:
                 return key_probability
+        return None
     else:
         for key, value in mapping.items():
             label = _extract_label_from_key(key)

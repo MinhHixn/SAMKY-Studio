@@ -120,6 +120,29 @@ def test_compute_round_jsd_trace_parses_probability_text_for_resolved_label(tmp_
     assert trace == pytest.approx([0.0])
 
 
+def test_compute_round_jsd_trace_skips_unmatched_resolved_label(tmp_path):
+    unit_dir = tmp_path / "unit"
+    twitter_path = unit_dir / "twitter" / "actions.jsonl"
+
+    entries = [
+        {
+            "round": 12,
+            "action_type": "INTERVIEW",
+            "action_args": {"probabilities": {"NO": 0.9}},
+        }
+    ]
+
+    _write_actions(twitter_path, entries)
+
+    with pytest.raises(ValueError, match="coverage"):
+        compute_round_jsd_trace(
+            unit_dir,
+            checkpoints=[12],
+            min_parsed_probability_ratio=1.0,
+            resolved_label="YES",
+        )
+
+
 def test_is_monotonic_nonincreasing_with_epsilon_allows_small_increase():
     assert is_monotonic_nonincreasing_with_epsilon([0.5, 0.48, 0.49], epsilon=0.02)
     assert not is_monotonic_nonincreasing_with_epsilon([0.5, 0.48, 0.53], epsilon=0.02)

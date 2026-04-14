@@ -35,6 +35,8 @@ from app.benchmarks.scoring import (
     summarize_weighted_rubric_score,
     summarize_rubric_artifacts,
 )
+from app.benchmarks.phase1_baselines import validate_polymarket_opening_prior
+from app.benchmarks.phase1_registry import load_phase1_config
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
@@ -62,6 +64,7 @@ def _resolve_default_injection_bank() -> str:
 DEFAULT_INJECTION_BANK = _resolve_default_injection_bank()
 DEFAULT_OUTPUT_DIR = _BACKEND_DIR / "logs" / "benchmark_runs"
 DEFAULT_BENCHMARK_WEIGHTS_PATH = _BACKEND_DIR / "config" / "benchmark_weights_v1.json"
+DEFAULT_PHASE1_CONFIG_PATH = _BACKEND_DIR / "config" / "benchmark_phase1_v1.json"
 CONDITIONS = ("A", "B", "C")
 TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
@@ -876,6 +879,12 @@ def main() -> None:
     profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
     injection_loader = Step30InjectionLoader(args.injection_bank)
     validate_injection_coverage(events, injection_loader)
+    phase1_cfg = load_phase1_config(DEFAULT_PHASE1_CONFIG_PATH)
+    for event in events:
+        validate_polymarket_opening_prior(
+            event,
+            prior_sum_tolerance=float(phase1_cfg["prior_sum_tolerance"]),
+        )
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()

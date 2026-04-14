@@ -895,7 +895,15 @@ def test_summarize_event_results_propagates_unexpected_composite_value_errors(mo
 
 
 def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, evaluate_side_effect=None):
-    events = [{"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]}]
+    events = [
+        {
+            "event_id": "E1",
+            "question": "Q1",
+            "outcome": "A",
+            "options": ["A", "B"],
+            "polymarket_opening_prior": {"A": 0.5, "B": 0.5},
+        }
+    ]
     seed_file = tmp_path / "seed.json"
     seed_file.write_text("{}", encoding="utf-8")
 
@@ -976,7 +984,15 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     monkeypatch.setattr(
         protocol_script,
         "load_events_from_raw",
-        lambda *args, **kwargs: [{"event_id": "E1", "question": "Q", "outcome": "A"}],
+        lambda *args, **kwargs: [
+            {
+                "event_id": "E1",
+                "question": "Q",
+                "outcome": "A",
+                "options": ["A", "B"],
+                "polymarket_opening_prior": {"A": 0.5, "B": 0.5},
+            }
+        ],
     )
     monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [tmp_path / "seed.md"])
     monkeypatch.setattr(protocol_script, "build_profiles", lambda *args, **kwargs: [{"agent_id": 1}])
@@ -1020,11 +1036,18 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
 
     assert captured["run_id"] == "fixed-run"
     assert captured["output_root"] == tmp_path / "runs"
-    assert captured["events"] == [{"event_id": "E1", "question": "Q", "outcome": "A"}]
+    expected_event = {
+        "event_id": "E1",
+        "question": "Q",
+        "outcome": "A",
+        "options": ["A", "B"],
+        "polymarket_opening_prior": {"A": 0.5, "B": 0.5},
+    }
+    assert captured["events"] == [expected_event]
     assert captured["repeats"] == 1
     assert callable(captured["build_condition_matrix"])
     assert captured["build_condition_matrix"]([], 99) == protocol_script.build_condition_matrix(captured["events"], captured["repeats"])
-    assert captured["event_lookup"] == {"E1": {"event_id": "E1", "question": "Q", "outcome": "A"}}
+    assert captured["event_lookup"] == {"E1": expected_event}
     assert captured["write_summary"] is protocol_script.write_summary
     assert captured["evaluator"] is protocol_script._evaluate_row
     assert captured["manifest"]["run_id"] == "fixed-run"
@@ -1052,8 +1075,20 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     monkeypatch.setattr(protocol_script.Config, "BENCHMARK_TEMPERATURE", 0.125, raising=False)
     monkeypatch.setattr(protocol_script.Config, "BENCHMARK_SEED", 9876, raising=False)
     custom_events = [
-        {"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]},
-        {"event_id": "E2", "question": "Q2", "outcome": "B", "options": ["A", "B"]},
+        {
+            "event_id": "E1",
+            "question": "Q1",
+            "outcome": "A",
+            "options": ["A", "B"],
+            "polymarket_opening_prior": {"A": 0.6, "B": 0.4},
+        },
+        {
+            "event_id": "E2",
+            "question": "Q2",
+            "outcome": "B",
+            "options": ["A", "B"],
+            "polymarket_opening_prior": {"A": 0.2, "B": 0.8},
+        },
     ]
     custom_matrix = [
         {"event_id": "E1", "condition": "A", "repeat": 1},

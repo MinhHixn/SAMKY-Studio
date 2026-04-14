@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -58,4 +59,32 @@ def test_load_benchmark_weights_rejects_bad_sum(tmp_path):
     )
 
     with pytest.raises(ValueError, match="sum to 1.0"):
+        load_benchmark_weights(path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("dqi", '"high"', "must be numeric"),
+        ("polarization", -0.01, "must be non-negative"),
+    ],
+)
+def test_load_benchmark_weights_rejects_invalid_values(tmp_path, key, value, message):
+    path = tmp_path / "weights.json"
+    payload = {
+        "prediction_accuracy": 0.30,
+        "convergence": 0.20,
+        "susceptibility": 0.15,
+        "herd_effect": 0.15,
+        "dqi": 0.10,
+        "polarization": 0.05,
+        "info_diversity": 0.05,
+    }
+    payload[key] = value
+    path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
         load_benchmark_weights(path)

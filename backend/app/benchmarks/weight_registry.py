@@ -33,7 +33,7 @@ def load_benchmark_weights(path: Path | str) -> Dict[str, float]:
         raise ValueError(f"unexpected benchmark weight keys: {sorted(extra_keys)}")
 
     weights: Dict[str, float] = {}
-    for key in REQUIRED_WEIGHT_KEYS:
+    for key in sorted(REQUIRED_WEIGHT_KEYS):
         value = payload[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"benchmark weight {key!r} must be numeric")

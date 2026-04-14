@@ -720,6 +720,7 @@ def _evaluate_row(
         raise ValueError("Evaluator did not return mcq_dimensions")
     if not isinstance(validated_scales, Mapping):
         raise ValueError("Evaluator did not return validated_scales")
+    evaluator_noisy_dimensions = [str(dimension) for dimension in _as_list(evaluation.get("evaluator_noisy_dimensions"))]
 
     ground_truth = event.get("outcome") or event.get("answer", "")
     if not isinstance(ground_truth, str) or not ground_truth.strip():
@@ -757,6 +758,7 @@ def _evaluate_row(
         "validated_scales": normalized_validated_scales,
         "directional_accuracy": directional_accuracy,
         "weighted_rubric_score": weighted_rubric_score,
+        "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
     }
 
 

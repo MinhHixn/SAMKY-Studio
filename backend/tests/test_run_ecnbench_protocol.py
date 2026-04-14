@@ -749,6 +749,66 @@ def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composi
     assert composite["composite_score"] == pytest.approx(0.607692, abs=1e-6)
 
 
+def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_them(monkeypatch):
+    mcq_dimensions = {
+        key: {"very_low": 1.0, "low": 1.0, "high": 1.0, "very_high": 1.0}
+        for key in (
+            "prediction_accuracy",
+            "polarization",
+            "herd_effect",
+            "deliberation_quality",
+            "susceptibility",
+            "convergence",
+            "information_diversity",
+        )
+    }
+
+    class FakeRouter:
+        def model_for(self, role):
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        def __init__(self, router):
+            self.router = router
+
+        def evaluate(self, question, condition, evidence_text):
+            return {
+                "probabilities": {"A": 0.7, "B": 0.3},
+                "mcq_dimensions": mcq_dimensions,
+                "validated_scales": {
+                    "schema_version": "v1",
+                    "scores": {
+                        "prediction_accuracy_score": 0.9,
+                        "polarization_score": 0.5,
+                        "herd_effect_score": 0.3,
+                        "deliberation_quality_score": 0.4,
+                        "susceptibility_score": 0.2,
+                        "convergence_score": 0.1,
+                        "information_diversity_score": 0.6,
+                        "weighted_rubric_score": 0.8,
+                    },
+                },
+                "evaluator_noisy_dimensions": ("convergence", 123),
+            }
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    row = protocol_script._evaluate_row(
+        {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        "A",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert row["evaluator_noisy_dimensions"] == ["convergence", "123"]
+
+    summary = protocol_script.summarize_event_results([row])
+    composite = summary["composite_score"]
+
+    assert composite["excluded_dimensions"] == ["convergence"]
+    assert "convergence" not in composite["included_dimensions"]
+
+
 def test_summarize_event_results_propagates_unexpected_composite_value_errors(monkeypatch):
     monkeypatch.setattr(
         protocol_script,

@@ -309,7 +309,7 @@ python scripts\run_ecnbench_protocol.py --seeds-dir ..\..\data\seeds --events-ra
 
 ##### Verification evidence (this branch)
 
-- Benchmark regression command: `python -m pytest tests\test_benchmark_protocol.py tests\test_benchmark_evaluator_scoring.py tests\test_benchmark_role_router.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py tests\test_api_status.py -q`
+- Benchmark regression command: `python -m pytest tests\test_benchmark_phase1_registry.py tests\test_benchmark_phase1_baselines.py tests\test_benchmark_phase1_telemetry.py tests\test_benchmark_orchestrator.py tests\test_run_ecnbench_protocol.py -q`
 - Observed in this branch (focused benchmark suite): `112 passed`.
 - Full test suite: `python -m pytest tests -q` — `234 passed`. 
 

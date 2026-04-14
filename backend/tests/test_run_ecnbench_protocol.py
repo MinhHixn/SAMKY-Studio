@@ -953,6 +953,13 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     assert manifest["workflow_mode"] == "abc-per-event"
     assert manifest["benchmark_model"] == "openrouter/benchmark-model"
     assert manifest["expected_run_units"] == len(custom_matrix)
+    assert manifest["weights_schema_version"] == "v1"
+    assert manifest["mcq_prompt_version"] == "v1"
+    assert manifest["deterministic_mode"] == {
+        "benchmark_mode": True,
+        "temperature": 0.0,
+        "seed": 42,
+    }
 
 
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):

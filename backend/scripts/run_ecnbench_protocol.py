@@ -889,6 +889,13 @@ def main() -> None:
         "workflow_mode": "abc-per-event",
         "benchmark_model": benchmark_model,
         "expected_run_units": expected_run_units,
+        "weights_schema_version": "v1",
+        "mcq_prompt_version": "v1",
+        "deterministic_mode": {
+            "benchmark_mode": True,
+            "temperature": 0.0,
+            "seed": 42,
+        },
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}

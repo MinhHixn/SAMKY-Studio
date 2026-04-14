@@ -80,6 +80,7 @@ def test_load_layer23_contract_keys(payload, message, tmp_path):
         ("leakage_min_days_before_resolution", -1, "leakage_min_days_before_resolution"),
         ("leakage_min_days_before_resolution", 1.5, "leakage_min_days_before_resolution"),
         ("leakage_outcome_regex", "", "leakage_outcome_regex"),
+        ("leakage_outcome_regex", "(", "invalid leakage_outcome_regex"),
         ("power_target_delta_brier", 0.0, "power_target_delta_brier"),
         ("power_target_delta_brier", float("nan"), "power_target_delta_brier"),
         ("power_assumed_sigma", 0.0, "power_assumed_sigma"),

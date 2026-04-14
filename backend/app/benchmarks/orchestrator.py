@@ -232,6 +232,7 @@ class ProtocolConditionExecutor:
         evidence_builder: Callable[[Path, Path], str],
         row_builder: Callable[..., Dict[str, Any]],
         telemetry_builder: Callable[[Path, Mapping[str, Any]], tuple[list[float], bool]] | None = None,
+        baseline_scores_builder: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
         exception_formatter: Callable[[BaseException], str],
     ):
         self._router = router
@@ -248,6 +249,7 @@ class ProtocolConditionExecutor:
         self._evidence_builder = evidence_builder
         self._row_builder = row_builder
         self._telemetry_builder = telemetry_builder
+        self._baseline_scores_builder = baseline_scores_builder
         self._exception_formatter = exception_formatter
 
     def _seed_path_for_event(self, event_id: str) -> Path:
@@ -292,6 +294,7 @@ class ProtocolConditionExecutor:
         evaluation_completed = False
         round_jsd: list[float] | None = None
         convergence_monotonic: bool | None = None
+        baseline_scores: Mapping[str, Any] | None = None
         strict_contract: bool | None = None
         evidence_text = ""
 
@@ -441,6 +444,17 @@ class ProtocolConditionExecutor:
                 }
             )
 
+        if self._baseline_scores_builder is not None:
+            try:
+                baseline_scores = self._baseline_scores_builder(event)
+            except Exception as exc:
+                baseline_error = self._exception_formatter(exc)
+                baseline_scores = None
+                if row_error:
+                    row_error = f"{row_error}; Baseline error: {baseline_error}"
+                else:
+                    row_error = f"Baseline error: {baseline_error}"
+
         if self._telemetry_builder and simulation_completed and condition != "A":
             try:
                 round_jsd, convergence_monotonic = self._telemetry_builder(unit_dir, event)
@@ -472,6 +486,7 @@ class ProtocolConditionExecutor:
             evidence_text=evidence_text or None,
             round_jsd=round_jsd,
             convergence_monotonic=convergence_monotonic,
+            baseline_scores=baseline_scores,
         )
 
 
@@ -564,6 +579,9 @@ class BenchmarkRunOrchestrator:
                         "brier": None,
                         "mcq_dimensions": None,
                         "validated_scales": None,
+                        "round_jsd": None,
+                        "convergence_monotonic": None,
+                        "baseline_scores": None,
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )

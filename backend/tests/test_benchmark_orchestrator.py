@@ -177,7 +177,7 @@ def test_protocol_condition_executor_clears_noisy_dimensions_when_completion_tra
     assert row["error"] == "RuntimeError: trace write failed"
 
 
-def _build_protocol_executor(tmp_path, *, telemetry_builder=None):
+def _build_protocol_executor(tmp_path, *, telemetry_builder=None, baseline_scores_builder=None):
     trace_entries: list[dict[str, object]] = []
 
     class FakeRouter:
@@ -227,6 +227,7 @@ def _build_protocol_executor(tmp_path, *, telemetry_builder=None):
         evidence_builder=lambda *_args, **_kwargs: "evidence text",
         row_builder=row_builder,
         telemetry_builder=telemetry_builder,
+        baseline_scores_builder=baseline_scores_builder,
         exception_formatter=lambda exc: f"{type(exc).__name__}: {exc}",
     )
 
@@ -236,9 +237,20 @@ def _build_protocol_executor(tmp_path, *, telemetry_builder=None):
 def test_protocol_condition_executor_populates_telemetry_fields(tmp_path):
     def telemetry_builder(unit_dir, event):
         del unit_dir, event
-        return [0.1, 0.2], True
+        return [0.1, 0.2, 0.3, 0.4, 0.5], True
 
-    executor, _trace_entries = _build_protocol_executor(tmp_path, telemetry_builder=telemetry_builder)
+    def baseline_scores_builder(event):
+        del event
+        return {
+            "uniform_random": {"probabilities": {"YES": 0.5, "NO": 0.5}, "brier": 0.5},
+            "market_prior": {"probabilities": {"YES": 0.6, "NO": 0.4}, "brier": 0.4},
+        }
+
+    executor, _trace_entries = _build_protocol_executor(
+        tmp_path,
+        telemetry_builder=telemetry_builder,
+        baseline_scores_builder=baseline_scores_builder,
+    )
 
     row = executor.execute(
         event={"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]},
@@ -256,8 +268,9 @@ def test_protocol_condition_executor_populates_telemetry_fields(tmp_path):
         },
     )
 
-    assert row["round_jsd"] == [0.1, 0.2]
+    assert row["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
     assert row["convergence_monotonic"] is True
+    assert set(row["baseline_scores"]) == {"uniform_random", "market_prior"}
 
 
 def test_protocol_condition_executor_telemetry_failure_appends_error(tmp_path):
@@ -749,6 +762,12 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
                 "simulation_status": "completed",
                 "full_simulation_completed": True,
                 "brier": 0.2,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "round_jsd": [0.1, 0.2, 0.3, 0.4, 0.5],
+                "convergence_monotonic": True,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -775,6 +794,9 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
         "events_loaded": 1,
         "repeats": 1,
     }
+    rows = json.loads((run_dir / "event_results.json").read_text(encoding="utf-8"))
+    assert set(rows[0]["baseline_scores"]) == {"uniform_random", "market_prior"}
+    assert rows[0]["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
 
 
 def test_orchestrator_writes_provided_manifest_payload(tmp_path):

@@ -322,6 +322,10 @@ def test_build_event_result_row_includes_simulation_executed_flag():
 
 def test_build_event_result_row_includes_telemetry_fields():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+    baseline_scores = {
+        "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+        "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+    }
     row = protocol_script.build_event_result_row(
         event,
         "B",
@@ -331,11 +335,13 @@ def test_build_event_result_row_includes_telemetry_fields():
         evaluation_completed=True,
         probabilities={"A": 1.0},
         brier=0.0,
-        round_jsd=[0.1, 0.2],
+        round_jsd=[0.1, 0.2, 0.3, 0.4, 0.5],
         convergence_monotonic=True,
+        baseline_scores=baseline_scores,
     )
-    assert row["round_jsd"] == [0.1, 0.2]
+    assert row["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
     assert row["convergence_monotonic"] is True
+    assert set(row["baseline_scores"]) == {"uniform_random", "market_prior"}
 
 def test_build_event_result_row_includes_rubric_artifacts():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}

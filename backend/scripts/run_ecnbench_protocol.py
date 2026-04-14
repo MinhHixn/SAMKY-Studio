@@ -35,7 +35,7 @@ from app.benchmarks.scoring import (
     summarize_weighted_rubric_score,
     summarize_rubric_artifacts,
 )
-from app.benchmarks.phase1_baselines import validate_polymarket_opening_prior
+from app.benchmarks.phase1_baselines import build_baseline_scores, validate_polymarket_opening_prior
 from app.benchmarks.phase1_registry import load_phase1_config
 from app.benchmarks.phase1_telemetry import (
     compute_round_jsd_trace,
@@ -584,6 +584,7 @@ def build_event_result_row(
     evaluator_noisy_dimensions: Any = None,
     round_jsd: list[float] | None = None,
     convergence_monotonic: bool | None = None,
+    baseline_scores: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
     ground_truth = event.get("outcome") or event.get("answer", "")
@@ -664,6 +665,7 @@ def build_event_result_row(
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "round_jsd": list(round_jsd) if isinstance(round_jsd, list) else round_jsd,
         "convergence_monotonic": convergence_monotonic,
+        "baseline_scores": dict(baseline_scores) if isinstance(baseline_scores, Mapping) else None,
         "error": error,
         "evidence_text": evidence_text,
     }
@@ -975,6 +977,7 @@ def main() -> None:
             phase1_cfg,
             resolved_label=_resolve_event_label(event),
         ),
+        baseline_scores_builder=build_baseline_scores,
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)

@@ -917,6 +917,9 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
 def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_MODE", False, raising=False)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_TEMPERATURE", 0.125, raising=False)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_SEED", 9876, raising=False)
     custom_events = [
         {"event_id": "E1", "question": "Q1", "outcome": "A", "options": ["A", "B"]},
         {"event_id": "E2", "question": "Q2", "outcome": "B", "options": ["A", "B"]},
@@ -956,9 +959,9 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     assert manifest["weights_schema_version"] == "v1"
     assert manifest["mcq_prompt_version"] == "v1"
     assert manifest["deterministic_mode"] == {
-        "benchmark_mode": True,
-        "temperature": 0.0,
-        "seed": 42,
+        "benchmark_mode": False,
+        "temperature": 0.125,
+        "seed": 9876,
     }
 
 
@@ -1131,6 +1134,9 @@ def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_pa
     monkeypatch.setenv("LLM_API_KEY", "ambient-key")
     monkeypatch.setenv("LLM_BASE_URL", "https://ambient.example/v1")
     monkeypatch.setenv("LLM_MODEL_NAME", "ambient-model")
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_TEMPERATURE", 0.25, raising=False)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_SEED", 31415, raising=False)
     monkeypatch.setattr(protocol_script.subprocess, "run", fake_run)
 
     router = protocol_script.BenchmarkRoleRouter(
@@ -1148,6 +1154,9 @@ def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_pa
     assert env["LLM_API_KEY"] == "router-key"
     assert env["LLM_BASE_URL"] == "https://openrouter.ai/api/v1"
     assert env["LLM_MODEL_NAME"] == "openrouter/benchmark-model"
+    assert env["BENCHMARK_MODE"] == "true"
+    assert env["BENCHMARK_TEMPERATURE"] == "0.25"
+    assert env["BENCHMARK_SEED"] == "31415"
     assert captured["kwargs"]["timeout"] == protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS
     assert captured["kwargs"]["stdout"] == subprocess.DEVNULL
     assert captured["kwargs"]["stderr"] == subprocess.DEVNULL

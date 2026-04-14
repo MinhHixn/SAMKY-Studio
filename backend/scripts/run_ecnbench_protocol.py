@@ -22,6 +22,7 @@ from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolCondit
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
+from app.config import Config
 from app.benchmarks.weight_registry import load_benchmark_weights
 from app.benchmarks.scoring import (
     brier_score,
@@ -632,11 +633,22 @@ def _format_exception(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
+def _deterministic_mode_config() -> Dict[str, Any]:
+    return {
+        "benchmark_mode": Config.BENCHMARK_MODE,
+        "temperature": Config.BENCHMARK_TEMPERATURE,
+        "seed": Config.BENCHMARK_SEED,
+    }
+
+
 def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
     env = os.environ.copy()
     env["LLM_API_KEY"] = router.api_key
     env["LLM_BASE_URL"] = router.base_url
     env["LLM_MODEL_NAME"] = router.model_for("benchmark")
+    env["BENCHMARK_MODE"] = "true" if Config.BENCHMARK_MODE else "false"
+    env["BENCHMARK_TEMPERATURE"] = str(Config.BENCHMARK_TEMPERATURE)
+    env["BENCHMARK_SEED"] = str(Config.BENCHMARK_SEED)
     return env
 
 
@@ -891,11 +903,7 @@ def main() -> None:
         "expected_run_units": expected_run_units,
         "weights_schema_version": "v1",
         "mcq_prompt_version": "v1",
-        "deterministic_mode": {
-            "benchmark_mode": True,
-            "temperature": 0.0,
-            "seed": 42,
-        },
+        "deterministic_mode": _deterministic_mode_config(),
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}

@@ -528,7 +528,7 @@ def build_event_result_row(
     simulation_executed: bool = True,
     injection_direction: str | None = None,
     signed_delta: float | None = None,
-    belief_update_failure: bool = False,
+    belief_update_failure: bool | None = None,
 ) -> Dict[str, Any]:
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     event_id = str(event["event_id"])
@@ -552,14 +552,22 @@ def build_event_result_row(
     resolved_yes_probability = _finite_float_or_none(yes_probability)
     if resolved_yes_probability is None:
         resolved_yes_probability = _extract_yes_probability(probabilities)
-    if seed_file and injection_direction is None:
+    if seed_file:
         try:
             seed_metadata = load_seed_metadata(Path(seed_file).parent)
-        except FileNotFoundError:
-            seed_metadata = {}
-        injection_direction = seed_metadata.get("injection_direction")
-        signed_delta = seed_metadata.get("signed_delta", signed_delta)
-        belief_update_failure = bool(seed_metadata.get("belief_update_failure", belief_update_failure))
+        except (FileNotFoundError, ValueError) as exc:
+            metadata_error = _format_exception(exc)
+            error = f"{error}; {metadata_error}" if error else metadata_error
+            seed_metadata = None
+        if isinstance(seed_metadata, Mapping):
+            if injection_direction is None:
+                injection_direction = seed_metadata.get("injection_direction")
+            if signed_delta is None:
+                signed_delta = seed_metadata.get("signed_delta")
+            if belief_update_failure is None:
+                metadata_belief_update_failure = seed_metadata.get("belief_update_failure")
+                if isinstance(metadata_belief_update_failure, bool):
+                    belief_update_failure = metadata_belief_update_failure
     return {
         "event_id": event_id,
         "unit_id": f"{event_id}_{condition}_r{repeat}",

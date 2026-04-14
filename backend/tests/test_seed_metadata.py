@@ -31,3 +31,13 @@ def test_load_seed_metadata_rejects_invalid_injection_direction(tmp_path):
         load_seed_metadata(seed_dir)
 
     assert "injection_direction" in str(exc.value)
+
+
+def test_load_seed_metadata_raises_when_metadata_file_is_missing(tmp_path):
+    seed_dir = tmp_path / "seed-1"
+    seed_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError) as exc:
+        load_seed_metadata(seed_dir)
+
+    assert "metadata.json" in str(exc.value)

@@ -364,7 +364,108 @@ def test_build_event_result_row_includes_seed_metadata_contract_keys():
     assert "belief_update_failure" in row
     assert row["injection_direction"] is None
     assert row["signed_delta"] is None
+    assert row["belief_update_failure"] is None
+
+
+def test_build_event_result_row_uses_seed_metadata_when_explicit_args_are_missing(tmp_path):
+    seed_dir = tmp_path / "seed-1"
+    seed_dir.mkdir()
+    (seed_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "event_id": "E1",
+                "injection_direction": "anti_YES",
+                "signed_delta": -0.25,
+                "belief_update_failure": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    seed_file = seed_dir / "seed.txt"
+    seed_file.write_text("seed payload", encoding="utf-8")
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+        seed_file=str(seed_file),
+    )
+
+    assert row["error"] is None
+    assert row["injection_direction"] == "anti_YES"
+    assert row["signed_delta"] == pytest.approx(-0.25)
+    assert row["belief_update_failure"] is True
+
+
+def test_build_event_result_row_explicit_args_take_precedence_over_seed_metadata(tmp_path):
+    seed_dir = tmp_path / "seed-1"
+    seed_dir.mkdir()
+    (seed_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "event_id": "E1",
+                "injection_direction": "anti_YES",
+                "signed_delta": -0.25,
+                "belief_update_failure": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    seed_file = seed_dir / "seed.txt"
+    seed_file.write_text("seed payload", encoding="utf-8")
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+        seed_file=str(seed_file),
+        injection_direction="pro_YES",
+        signed_delta=0.5,
+        belief_update_failure=False,
+    )
+
+    assert row["error"] is None
+    assert row["injection_direction"] == "pro_YES"
+    assert row["signed_delta"] == pytest.approx(0.5)
     assert row["belief_update_failure"] is False
+
+
+def test_build_event_result_row_surfaces_missing_seed_metadata_error(tmp_path):
+    seed_dir = tmp_path / "seed-1"
+    seed_dir.mkdir()
+    seed_file = seed_dir / "seed.txt"
+    seed_file.write_text("seed payload", encoding="utf-8")
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+        seed_file=str(seed_file),
+    )
+
+    assert row["error"] is not None
+    assert "FileNotFoundError" in row["error"]
+    assert row["injection_direction"] is None
+    assert row["signed_delta"] is None
+    assert row["belief_update_failure"] is None
 
 
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):

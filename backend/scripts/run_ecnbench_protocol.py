@@ -19,6 +19,7 @@ from app.benchmarks.evaluator import ProbabilityEvaluator
 from app.benchmarks.injection_loader import Step30InjectionLoader
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
+from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
 from app.benchmarks.scoring import (
     brier_score,
@@ -259,7 +260,7 @@ def load_seed_files(seeds_dir: Path | str) -> List[Path]:
     directory = Path(seeds_dir)
     if not directory.exists():
         raise FileNotFoundError(f"seeds-dir does not exist: {directory}")
-    files = sorted(path for path in directory.rglob("*") if path.is_file())
+    files = sorted(path for path in directory.rglob("*") if path.is_file() and path.name != "metadata.json")
     if not files:
         raise ValueError(f"No seed files found in {directory}")
     return files
@@ -525,6 +526,9 @@ def build_event_result_row(
     seed_file: str | None = None,
     evidence_text: str | None = None,
     simulation_executed: bool = True,
+    injection_direction: str | None = None,
+    signed_delta: float | None = None,
+    belief_update_failure: bool = False,
 ) -> Dict[str, Any]:
     full_simulation_completed = bool(simulation_completed and evaluation_completed and not error)
     event_id = str(event["event_id"])
@@ -548,6 +552,14 @@ def build_event_result_row(
     resolved_yes_probability = _finite_float_or_none(yes_probability)
     if resolved_yes_probability is None:
         resolved_yes_probability = _extract_yes_probability(probabilities)
+    if seed_file and injection_direction is None:
+        try:
+            seed_metadata = load_seed_metadata(Path(seed_file).parent)
+        except FileNotFoundError:
+            seed_metadata = {}
+        injection_direction = seed_metadata.get("injection_direction")
+        signed_delta = seed_metadata.get("signed_delta", signed_delta)
+        belief_update_failure = bool(seed_metadata.get("belief_update_failure", belief_update_failure))
     return {
         "event_id": event_id,
         "unit_id": f"{event_id}_{condition}_r{repeat}",
@@ -567,6 +579,9 @@ def build_event_result_row(
         "weighted_rubric_score": resolved_weighted_rubric_score,
         "yes_probability": resolved_yes_probability,
         "strict_contract": strict_contract,
+        "injection_direction": injection_direction,
+        "signed_delta": signed_delta,
+        "belief_update_failure": belief_update_failure,
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "error": error,

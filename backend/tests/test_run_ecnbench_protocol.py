@@ -345,6 +345,28 @@ def test_build_event_result_row_extracts_yes_probability_and_strict_contract_fla
     assert row["strict_contract"] is False
 
 
+def test_build_event_result_row_includes_seed_metadata_contract_keys():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.8, "B": 0.2},
+        brier=0.2,
+    )
+
+    assert "injection_direction" in row
+    assert "signed_delta" in row
+    assert "belief_update_failure" in row
+    assert row["injection_direction"] is None
+    assert row["signed_delta"] is None
+    assert row["belief_update_failure"] is False
+
+
 def test_build_simulation_config_carries_benchmark_llm_model(monkeypatch):
     monkeypatch.setattr(protocol_script, "enforce_protocol_constraints", lambda config: None)
 

@@ -513,6 +513,26 @@ def test_build_event_result_row_extracts_yes_probability_and_strict_contract_fla
     assert row["strict_contract"] is False
 
 
+def test_build_event_result_row_includes_rps_and_calibration_fields():
+    event = {"event_id": "E1", "question": "Q", "outcome": "B", "options": ["A", "B", "C"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.2, "B": 0.5, "C": 0.3},
+        brier=0.2,
+    )
+
+    assert row["rps"] == pytest.approx(0.13)
+    assert row["calibration_bracket"] == "0.5-0.75"
+    assert row["calibration_predicted_probability"] == pytest.approx(0.5)
+    assert row["calibration_hit"] == 1
+
+
 def test_build_event_result_row_includes_seed_metadata_contract_keys():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 
@@ -799,6 +819,30 @@ def test_write_summary_includes_failure_counts(tmp_path):
     assert summary["full_simulation_completed_count"] == 1
 
 
+def test_write_summary_includes_calibration_plot_artifact(tmp_path):
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "calibration_predicted_probability": 0.2,
+            "calibration_hit": 1,
+        },
+        {
+            "condition": "B",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "calibration_predicted_probability": 0.7,
+            "calibration_hit": 0,
+        },
+    ]
+
+    summary = protocol_script.write_summary(tmp_path, rows)
+
+    assert summary["calibration"]["plot_path"] == str(tmp_path / "calibration_curve.png")
+    assert (tmp_path / "calibration_curve.png").exists()
+
+
 def test_summarize_event_results_includes_convergence_block():
     rows = [
         {
@@ -828,6 +872,57 @@ def test_summarize_event_results_includes_convergence_block():
 
     assert summary["convergence"]["mean_round_jsd"] == pytest.approx(0.25)
     assert summary["convergence"]["monotonic_count"] == 1
+
+
+def test_summarize_event_results_includes_statistical_blocks():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "rps": 0.1,
+            "calibration_bracket": "0-0.25",
+            "calibration_predicted_probability": 0.2,
+            "calibration_hit": 1,
+        },
+        {
+            "condition": "A",
+            "brier": 0.22,
+            "simulation_status": "completed",
+            "rps": 0.12,
+            "calibration_bracket": "0-0.25",
+            "calibration_predicted_probability": 0.22,
+            "calibration_hit": 0,
+        },
+        {
+            "condition": "B",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "rps": 0.2,
+            "calibration_bracket": "0.25-0.5",
+            "calibration_predicted_probability": 0.4,
+            "calibration_hit": 1,
+        },
+        {
+            "condition": "B",
+            "brier": 0.32,
+            "simulation_status": "completed",
+            "rps": 0.18,
+            "calibration_bracket": "0.5-0.75",
+            "calibration_predicted_probability": 0.6,
+            "calibration_hit": 0,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["rps"]["overall"] == pytest.approx(0.15)
+    assert summary["rps"]["by_condition"]["A"] == pytest.approx(0.11)
+    assert summary["rps"]["by_condition"]["B"] == pytest.approx(0.19)
+    assert summary["effect_size"]["cohens_d"] is not None
+    assert summary["power_analysis"]["actual_n"] == 2
+    assert summary["calibration"]["overall"]["0-0.25"]["count"] == 2
+    assert summary["calibration"]["overall"]["0-0.25"]["hits"] == 1
 
 
 def test_summarize_event_results_includes_composite_score_block():

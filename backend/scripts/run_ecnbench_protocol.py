@@ -37,6 +37,14 @@ from app.benchmarks.scoring import (
     summarize_weighted_rubric_score,
     summarize_rubric_artifacts,
 )
+from app.benchmarks.statistics import (
+    aggregate_calibration_counts,
+    assign_probability_bracket,
+    compute_cohens_d_with_ci,
+    compute_power_analysis,
+    ranked_probability_score,
+    write_calibration_plot,
+)
 from app.benchmarks.phase1_baselines import (
     BASELINE_AGENT_IDS,
     build_baseline_scores,
@@ -515,6 +523,34 @@ def _extract_yes_probability(probabilities: Mapping[str, Any] | None) -> float |
     return None
 
 
+def _normalize_probabilities(probabilities: Mapping[str, Any] | None) -> Dict[str, float] | None:
+    if not isinstance(probabilities, Mapping):
+        return None
+    normalized: Dict[str, float] = {}
+    for label, raw_value in probabilities.items():
+        numeric = _finite_float_or_none(raw_value)
+        if numeric is None:
+            continue
+        normalized[str(label)] = float(numeric)
+    return normalized or None
+
+
+def _resolve_ordered_labels(
+    event: Mapping[str, Any],
+    probabilities: Mapping[str, Any] | None,
+) -> List[str]:
+    options = event.get("options")
+    if isinstance(options, list) and options:
+        labels = [str(option) for option in options]
+    elif isinstance(probabilities, Mapping) and probabilities:
+        labels = sorted(str(label) for label in probabilities.keys())
+    else:
+        raise ValueError("Unable to resolve ordered labels for RPS")
+    if len(set(labels)) != len(labels):
+        raise ValueError("Ordered labels must be unique for RPS")
+    return labels
+
+
 def _resolve_event_label(event: Mapping[str, Any]) -> str | None:
     for key in ("outcome", "answer", "label"):
         value = event.get(key)
@@ -595,10 +631,12 @@ def build_event_result_row(
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
     ground_truth = event.get("outcome") or event.get("answer", "")
+    normalized_probabilities = _normalize_probabilities(probabilities)
     directional_correct: int | None = None
-    if probabilities and isinstance(ground_truth, str) and ground_truth.strip():
+    predicted_label: str | None = None
+    if normalized_probabilities and isinstance(ground_truth, str) and ground_truth.strip():
         predicted_label = max(
-            ((str(label), float(value)) for label, value in probabilities.items()),
+            normalized_probabilities.items(),
             key=lambda item: (item[1], item[0]),
         )[0]
         directional_correct = int(predicted_label == ground_truth.strip())
@@ -614,6 +652,20 @@ def build_event_result_row(
     resolved_yes_probability = _finite_float_or_none(yes_probability)
     if resolved_yes_probability is None:
         resolved_yes_probability = _extract_yes_probability(probabilities)
+    rps: float | None = None
+    calibration_bracket: str | None = None
+    calibration_predicted_probability: float | None = None
+    calibration_hit: int | None = None
+    if normalized_probabilities and isinstance(ground_truth, str) and ground_truth.strip():
+        ordered_labels = _resolve_ordered_labels(event, normalized_probabilities)
+        rps = ranked_probability_score(normalized_probabilities, ground_truth.strip(), ordered_labels)
+        if predicted_label is not None:
+            calibration_predicted_probability = _finite_float_or_none(
+                normalized_probabilities.get(predicted_label)
+            )
+            if calibration_predicted_probability is not None:
+                calibration_bracket = assign_probability_bracket(calibration_predicted_probability)
+                calibration_hit = int(predicted_label == ground_truth.strip())
     if seed_file:
         try:
             seed_metadata = load_seed_metadata(Path(seed_file).parent)
@@ -671,6 +723,10 @@ def build_event_result_row(
         "directional_correct": directional_correct,
         "weighted_rubric_score": resolved_weighted_rubric_score,
         "yes_probability": resolved_yes_probability,
+        "rps": rps,
+        "calibration_bracket": calibration_bracket,
+        "calibration_predicted_probability": calibration_predicted_probability,
+        "calibration_hit": calibration_hit,
         "strict_contract": strict_contract,
         "injection_direction": injection_direction,
         "signed_delta": signed_delta,
@@ -845,6 +901,61 @@ def _summarize_evaluator_reliability(rows: List[Dict[str, Any]]) -> Dict[str, An
     return {"evaluator_noisy": sorted(noisy_dimensions)}
 
 
+def _summarize_rps(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    per_condition: Dict[str, List[float]] = {condition: [] for condition in CONDITIONS}
+    overall_values: List[float] = []
+    for row in rows:
+        value = _finite_float_or_none(row.get("rps"))
+        if value is None:
+            continue
+        overall_values.append(value)
+        condition = str(row.get("condition", ""))
+        if condition in per_condition:
+            per_condition[condition].append(value)
+
+    by_condition = {
+        condition: round(sum(values) / len(values), 6) if values else 0.0
+        for condition, values in per_condition.items()
+    }
+    overall = round(sum(overall_values) / len(overall_values), 6) if overall_values else 0.0
+    return {"overall": overall, "by_condition": by_condition}
+
+
+def _summarize_calibration(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    per_condition: Dict[str, List[tuple[float, bool]]] = {condition: [] for condition in CONDITIONS}
+    overall_items: List[tuple[float, bool]] = []
+    for row in rows:
+        probability = _finite_float_or_none(row.get("calibration_predicted_probability"))
+        hit = row.get("calibration_hit")
+        if probability is None or hit is None:
+            continue
+        if not isinstance(hit, (bool, int)):
+            raise ValueError("calibration_hit must be boolean or integer")
+        overall_items.append((probability, bool(hit)))
+        condition = str(row.get("condition", ""))
+        if condition in per_condition:
+            per_condition[condition].append((probability, bool(hit)))
+
+    return {
+        "overall": aggregate_calibration_counts(overall_items),
+        "by_condition": {
+            condition: aggregate_calibration_counts(values)
+            for condition, values in per_condition.items()
+        },
+    }
+
+
+def _collect_metric_values(rows: List[Dict[str, Any]], condition: str, metric: str) -> List[float]:
+    values: List[float] = []
+    for row in rows:
+        if str(row.get("condition", "")) != condition:
+            continue
+        value = _finite_float_or_none(row.get(metric))
+        if value is not None:
+            values.append(value)
+    return values
+
+
 def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
@@ -884,6 +995,33 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             ),
         },
     }
+    summary["rps"] = _summarize_rps(completed_rows)
+    summary["calibration"] = _summarize_calibration(completed_rows)
+    brier_a = _collect_metric_values(completed_rows, "A", "brier")
+    brier_b = _collect_metric_values(completed_rows, "B", "brier")
+    actual_n = min(len(brier_a), len(brier_b))
+    effect_size: Dict[str, Any] = {
+        "cohens_d": None,
+        "ci_lower": None,
+        "ci_upper": None,
+        "confidence": 0.95,
+        "metric": "brier",
+    }
+    power_analysis: Dict[str, Any] = {
+        "required_n_for_target_power": None,
+        "actual_n": actual_n,
+        "apriori_power": None,
+        "achieved_power": None,
+    }
+    if len(brier_a) >= 2 and len(brier_b) >= 2:
+        effect_size = compute_cohens_d_with_ci(brier_a, brier_b)
+        effect_size["metric"] = "brier"
+        power_analysis = compute_power_analysis(
+            actual_n,
+            observed_sigma=effect_size["pooled_std"],
+        )
+    summary["effect_size"] = effect_size
+    summary["power_analysis"] = power_analysis
     round_jsd_means = [
         sum(values) / len(values)
         for values in (row.get("round_jsd") for row in completed_rows)
@@ -912,6 +1050,12 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def write_summary(run_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary = summarize_event_results(rows)
+    calibration = summary.get("calibration")
+    if isinstance(calibration, Mapping):
+        overall = calibration.get("overall")
+        if isinstance(overall, Mapping):
+            plot_path = run_dir / "calibration_curve.png"
+            calibration["plot_path"] = write_calibration_plot(overall, plot_path)
     (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 

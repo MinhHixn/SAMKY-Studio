@@ -9,6 +9,7 @@ from app.benchmarks.orchestrator import (
     ConditionExecutor,
     ProtocolConditionExecutor,
 )
+from app.benchmarks.schemas import validate_event_result_row
 
 
 def test_condition_executor_returns_simulation_failed_row(monkeypatch, tmp_path):
@@ -802,6 +803,7 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
                 "repeat": kwargs["repeat"],
                 "simulation_status": "completed",
                 "full_simulation_completed": True,
+                "probabilities": {"A": 0.7, "B": 0.3},
                 "brier": 0.2,
                 "baseline_scores": {
                     "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
@@ -809,6 +811,9 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
                 },
                 "round_jsd": [0.1, 0.2, 0.3, 0.4, 0.5],
                 "convergence_monotonic": True,
+                "rps": 0.19,
+                "calibration_bracket": "0.5-0.75",
+                "delta_conformity": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -849,7 +854,17 @@ def test_orchestrator_writes_provided_manifest_payload(tmp_path):
                 "repeat": kwargs["repeat"],
                 "simulation_status": "completed",
                 "full_simulation_completed": True,
+                "probabilities": {"A": 0.7, "B": 0.3},
                 "brier": 0.2,
+                "round_jsd": None,
+                "convergence_monotonic": None,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "rps": 0.19,
+                "calibration_bracket": "0.5-0.75",
+                "delta_conformity": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -894,6 +909,15 @@ def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
                 "full_simulation_completed": True,
                 "probabilities": {"A": 1.0},
                 "brier": 0.0,
+                "round_jsd": [0.2, 0.15, 0.1, 0.05, 0.01],
+                "convergence_monotonic": True,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "rps": 0.0,
+                "calibration_bracket": "0.75-1.0",
+                "delta_conformity": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -947,6 +971,15 @@ def test_orchestrator_isolates_malformed_rows_and_missing_event_lookup(tmp_path)
                 "full_simulation_completed": True,
                 "probabilities": {"A": 1.0},
                 "brier": 0.0,
+                "round_jsd": [0.2, 0.15, 0.1, 0.05, 0.01],
+                "convergence_monotonic": True,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "rps": 0.0,
+                "calibration_bracket": "0.75-1.0",
+                "delta_conformity": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -1010,6 +1043,15 @@ def test_orchestrator_fallback_row_contains_rubric_keys(tmp_path):
                 "full_simulation_completed": True,
                 "probabilities": {"A": 1.0},
                 "brier": 0.0,
+                "round_jsd": None,
+                "convergence_monotonic": None,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "rps": 0.0,
+                "calibration_bracket": "0.75-1.0",
+                "delta_conformity": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -1035,5 +1077,13 @@ def test_orchestrator_fallback_row_contains_rubric_keys(tmp_path):
     assert len(rows) == 1
     row = rows[0]
     assert row["simulation_status"] == "simulation_failed"
+    assert row["probabilities"] is None
+    assert row["round_jsd"] is None
+    assert row["convergence_monotonic"] is None
     assert row["mcq_dimensions"] is None
     assert row["validated_scales"] is None
+    assert row["baseline_scores"] is None
+    assert row["rps"] is None
+    assert row["calibration_bracket"] is None
+    assert row["delta_conformity"] is None
+    validate_event_result_row(row)

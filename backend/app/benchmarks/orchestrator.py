@@ -612,6 +612,9 @@ class BenchmarkRunOrchestrator:
                         "round_jsd": None,
                         "convergence_monotonic": None,
                         "baseline_scores": None,
+                        "rps": None,
+                        "calibration_bracket": None,
+                        "delta_conformity": None,
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )

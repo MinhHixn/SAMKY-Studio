@@ -290,6 +290,7 @@ class ProtocolConditionExecutor:
         validated_scales: Mapping[str, Any] | None = None
         evaluator_noisy_dimensions: Any = None
         evaluator_dimension_labels: Any = None
+        evaluator_reliability_status: str | None = None
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
@@ -398,6 +399,7 @@ class ProtocolConditionExecutor:
                         )
                         evaluator_noisy_dimensions = evaluation_payload.get("evaluator_noisy_dimensions")
                         evaluator_dimension_labels = evaluation_payload.get("evaluator_dimension_labels")
+                        evaluator_reliability_status = evaluation_payload.get("evaluator_reliability_status")
                     else:
                         raise ValueError("Evaluator result must be a tuple or mapping")
                     evaluation_completed = True
@@ -423,6 +425,7 @@ class ProtocolConditionExecutor:
                     validated_scales = None
                     evaluator_noisy_dimensions = None
                     evaluator_dimension_labels = None
+                    evaluator_reliability_status = None
                     row_error = self._exception_formatter(exc)
                     self._trace_writer.write(
                         {
@@ -486,6 +489,7 @@ class ProtocolConditionExecutor:
             validated_scales=validated_scales,
             evaluator_noisy_dimensions=evaluator_noisy_dimensions,
             evaluator_dimension_labels=evaluator_dimension_labels,
+            evaluator_reliability_status=evaluator_reliability_status,
             error=row_error,
             strict_contract=strict_contract,
             simulation_executed=(condition != "A"),

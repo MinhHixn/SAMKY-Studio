@@ -102,6 +102,10 @@ COMPOSITE_SCORE_KEY_MAP = {
     "polarization": "polarization_score",
     "info_diversity": "information_diversity_score",
 }
+_SCORING_DIMENSION_ALIASES = {
+    "deliberation_quality": "dqi",
+    "information_diversity": "info_diversity",
+}
 
 EventRecord = Mapping[str, Any]
 SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
@@ -152,6 +156,26 @@ def _as_list(value: Any) -> List[Any]:
     if isinstance(value, tuple):
         return list(value)
     return [value]
+
+
+def _normalize_scoring_dimension_name(raw_dimension: Any) -> str | None:
+    dimension = str(raw_dimension).strip()
+    if not dimension:
+        return None
+    if dimension in COMPOSITE_SCORE_KEY_MAP:
+        return dimension
+    return _SCORING_DIMENSION_ALIASES.get(dimension)
+
+
+def _normalize_known_scoring_dimensions(dimensions: Iterable[Any]) -> List[str]:
+    normalized = {
+        dimension
+        for dimension in (
+            _normalize_scoring_dimension_name(raw_dimension) for raw_dimension in dimensions
+        )
+        if dimension is not None
+    }
+    return sorted(normalized)
 
 
 def _looks_like_event(record: Mapping[str, Any]) -> bool:
@@ -629,6 +653,7 @@ def build_event_result_row(
     belief_update_failure: bool | None = None,
     evaluator_noisy_dimensions: Any = None,
     evaluator_dimension_labels: Any = None,
+    evaluator_reliability_status: str | None = None,
     round_jsd: list[float] | None = None,
     convergence_monotonic: bool | None = None,
     baseline_scores: Mapping[str, Any] | None = None,
@@ -743,6 +768,9 @@ def build_event_result_row(
         "evaluator_dimension_labels": (
             dict(evaluator_dimension_labels) if isinstance(evaluator_dimension_labels, Mapping) else None
         ),
+        "evaluator_reliability_status": (
+            str(evaluator_reliability_status) if isinstance(evaluator_reliability_status, str) else None
+        ),
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "round_jsd": list(resolved_round_jsd) if isinstance(resolved_round_jsd, list) else resolved_round_jsd,
@@ -831,33 +859,47 @@ def _evaluate_row(
 ) -> Dict[str, Any]:
     evaluator = ProbabilityEvaluator(router)
     evaluation_run1 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
-    evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+    try:
+        evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+    except Exception:  # noqa: BLE001 - run2 is reliability-only, keep run1 scoring if it fails
+        evaluation_run2 = None
     probabilities = evaluation_run1.get("normalized_probabilities") or evaluation_run1.get("probabilities")
     if not isinstance(probabilities, Mapping):
         raise ValueError("Evaluator did not return probabilities")
     mcq_dimensions = evaluation_run1.get("mcq_dimensions")
     validated_scales = evaluation_run1.get("validated_scales")
-    mcq_dimensions_run2 = evaluation_run2.get("mcq_dimensions")
+    mcq_dimensions_run2 = evaluation_run2.get("mcq_dimensions") if isinstance(evaluation_run2, Mapping) else None
+    mcq_dimensions_run2_map = mcq_dimensions_run2 if isinstance(mcq_dimensions_run2, Mapping) else {}
     if not isinstance(mcq_dimensions, Mapping):
         raise ValueError("Evaluator did not return mcq_dimensions")
     if not isinstance(validated_scales, Mapping):
         raise ValueError("Evaluator did not return validated_scales")
-    if not isinstance(mcq_dimensions_run2, Mapping):
-        raise ValueError("Evaluator second run did not return mcq_dimensions")
     evaluator_noisy_dimensions = [
         str(dimension) for dimension in _as_list(evaluation_run1.get("evaluator_noisy_dimensions"))
     ]
     evaluator_dimension_labels: Dict[str, Dict[str, str]] = {}
+    run1_reliability_dimensions = 0
     for dimension, buckets_run1_raw in mcq_dimensions.items():
         if not isinstance(dimension, str) or not isinstance(buckets_run1_raw, Mapping):
             continue
-        buckets_run2_raw = mcq_dimensions_run2.get(dimension)
+        try:
+            run1_label = dominant_bucket_label(buckets_run1_raw)
+        except ValueError:
+            continue
+        run1_reliability_dimensions += 1
+        buckets_run2_raw = mcq_dimensions_run2_map.get(dimension)
         if not isinstance(buckets_run2_raw, Mapping):
             continue
-        evaluator_dimension_labels[dimension] = {
-            "run1": dominant_bucket_label(buckets_run1_raw),
-            "run2": dominant_bucket_label(buckets_run2_raw),
-        }
+        try:
+            run2_label = dominant_bucket_label(buckets_run2_raw)
+        except ValueError:
+            continue
+        evaluator_dimension_labels[dimension] = {"run1": run1_label, "run2": run2_label}
+    evaluator_reliability_status = "complete"
+    if run1_reliability_dimensions == 0 or not isinstance(mcq_dimensions_run2, Mapping) or not evaluator_dimension_labels:
+        evaluator_reliability_status = "absent"
+    elif len(evaluator_dimension_labels) < run1_reliability_dimensions:
+        evaluator_reliability_status = "partial"
 
     ground_truth = event.get("outcome") or event.get("answer", "")
     if not isinstance(ground_truth, str) or not ground_truth.strip():
@@ -897,6 +939,7 @@ def _evaluate_row(
         "weighted_rubric_score": weighted_rubric_score,
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
         "evaluator_dimension_labels": evaluator_dimension_labels,
+        "evaluator_reliability_status": evaluator_reliability_status,
     }
 
 
@@ -926,18 +969,17 @@ def _summarize_evaluator_reliability(
     kappa_cutoff: float = DEFAULT_KAPPA_CUTOFF,
 ) -> Dict[str, Any]:
     kappa_scores = kappa_by_dimension(rows)
-    noisy_dimensions = sorted(
+    noisy_dimensions_from_kappa = sorted(
         dimension for dimension, kappa_value in kappa_scores.items() if float(kappa_value) < float(kappa_cutoff)
     )
     if not kappa_scores:
-        noisy_dimensions = sorted(
-            {
-                str(dimension).strip()
-                for row in rows
-                for dimension in _as_list(row.get("evaluator_noisy_dimensions"))
-                if str(dimension).strip()
-            }
+        noisy_dimensions = _normalize_known_scoring_dimensions(
+            dimension
+            for row in rows
+            for dimension in _as_list(row.get("evaluator_noisy_dimensions"))
         )
+    else:
+        noisy_dimensions = _normalize_known_scoring_dimensions(noisy_dimensions_from_kappa)
     dropped_dimensions_count = len(noisy_dimensions)
     return {
         "kappa_by_dimension": kappa_scores,

@@ -1197,12 +1197,193 @@ def test_summarize_event_results_uses_legacy_evaluator_noisy_dimensions_when_kap
 
     assert summary["evaluator_reliability"] == {
         "kappa_by_dimension": {},
-        "evaluator_noisy": ["123", "convergence"],
-        "dropped_dimensions_count": 2,
-        "evaluator_unstable": True,
+        "evaluator_noisy": ["convergence"],
+        "dropped_dimensions_count": 1,
+        "evaluator_unstable": False,
         "kappa_cutoff": 0.8,
     }
     assert summary["composite_score"]["excluded_dimensions"] == ["convergence"]
+
+
+def test_summarize_event_results_ignores_invalid_legacy_noisy_dimensions_for_unstable_counts():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "evaluator_noisy_dimensions": ["legacy_noise", "", None, 123],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.9,
+                    "polarization_score": 0.5,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.2,
+                    "convergence_score": 0.1,
+                    "information_diversity_score": 0.6,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        }
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["evaluator_reliability"] == {
+        "kappa_by_dimension": {},
+        "evaluator_noisy": [],
+        "dropped_dimensions_count": 0,
+        "evaluator_unstable": False,
+        "kappa_cutoff": 0.8,
+    }
+    assert summary["composite_score"]["excluded_dimensions"] == []
+
+
+def test_evaluate_row_marks_evaluator_reliability_absent_when_second_run_fails(monkeypatch):
+    run1_labels = {
+        "prediction_accuracy": "high",
+        "polarization": "low",
+        "herd_effect": "high",
+        "deliberation_quality": "high",
+        "susceptibility": "low",
+        "convergence": "high",
+        "information_diversity": "very_high",
+    }
+
+    def _build_mcq_dimensions(labels):
+        mcq_dimensions = {}
+        for dimension, bucket in labels.items():
+            mcq_dimensions[dimension] = {"very_low": 0.0, "low": 0.0, "high": 0.0, "very_high": 0.0}
+            mcq_dimensions[dimension][bucket] = 1.0
+        return mcq_dimensions
+
+    class FakeRouter:
+        def model_for(self, role):
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        calls = 0
+
+        def __init__(self, router):
+            self.router = router
+
+        def evaluate(self, question, condition, evidence_text):
+            del question, condition, evidence_text
+            FakeEvaluator.calls += 1
+            if FakeEvaluator.calls == 1:
+                return {
+                    "probabilities": {"A": 0.7, "B": 0.3},
+                    "mcq_dimensions": _build_mcq_dimensions(run1_labels),
+                    "validated_scales": {
+                        "schema_version": "v1",
+                        "scores": {
+                            "prediction_accuracy_score": 0.9,
+                            "polarization_score": 0.5,
+                            "herd_effect_score": 0.3,
+                            "deliberation_quality_score": 0.4,
+                            "susceptibility_score": 0.2,
+                            "convergence_score": 0.1,
+                            "information_diversity_score": 0.6,
+                            "weighted_rubric_score": 0.8,
+                        },
+                    },
+                    "evaluator_noisy_dimensions": ("convergence",),
+                }
+            raise RuntimeError("run2 evaluator failed")
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    row = protocol_script._evaluate_row(
+        {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        "A",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert row["probabilities"] == {"A": pytest.approx(0.7), "B": pytest.approx(0.3)}
+    assert row["validated_scales"]["scores"]["prediction_accuracy_score"] == pytest.approx(0.9)
+    assert row["evaluator_dimension_labels"] == {}
+    assert row["evaluator_reliability_status"] == "absent"
+
+
+def test_evaluate_row_marks_evaluator_reliability_partial_when_second_run_is_incomplete(monkeypatch):
+    run1_labels = {
+        "prediction_accuracy": "high",
+        "polarization": "low",
+        "herd_effect": "high",
+    }
+    run2_labels = {
+        "prediction_accuracy": "high",
+    }
+
+    def _build_mcq_dimensions(labels):
+        mcq_dimensions = {}
+        for dimension, bucket in labels.items():
+            mcq_dimensions[dimension] = {"very_low": 0.0, "low": 0.0, "high": 0.0, "very_high": 0.0}
+            mcq_dimensions[dimension][bucket] = 1.0
+        return mcq_dimensions
+
+    class FakeRouter:
+        def model_for(self, role):
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        calls = 0
+
+        def __init__(self, router):
+            self.router = router
+
+        def evaluate(self, question, condition, evidence_text):
+            del question, condition, evidence_text
+            FakeEvaluator.calls += 1
+            if FakeEvaluator.calls == 1:
+                return {
+                    "probabilities": {"A": 0.7, "B": 0.3},
+                    "mcq_dimensions": _build_mcq_dimensions(run1_labels),
+                    "validated_scales": {
+                        "schema_version": "v1",
+                        "scores": {
+                            "prediction_accuracy_score": 0.9,
+                            "polarization_score": 0.5,
+                            "herd_effect_score": 0.3,
+                            "deliberation_quality_score": 0.4,
+                            "susceptibility_score": 0.2,
+                            "convergence_score": 0.1,
+                            "information_diversity_score": 0.6,
+                            "weighted_rubric_score": 0.8,
+                        },
+                    },
+                }
+            return {
+                "probabilities": {"A": 0.1, "B": 0.9},
+                "mcq_dimensions": _build_mcq_dimensions(run2_labels),
+                "validated_scales": {
+                    "schema_version": "v1",
+                    "scores": {
+                        "prediction_accuracy_score": 0.1,
+                        "polarization_score": 0.1,
+                        "herd_effect_score": 0.1,
+                        "deliberation_quality_score": 0.1,
+                        "susceptibility_score": 0.1,
+                        "convergence_score": 0.9,
+                        "information_diversity_score": 0.1,
+                        "weighted_rubric_score": 0.1,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    row = protocol_script._evaluate_row(
+        {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        "A",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert row["probabilities"] == {"A": pytest.approx(0.7), "B": pytest.approx(0.3)}
+    assert row["evaluator_dimension_labels"] == {"prediction_accuracy": {"run1": "high", "run2": "high"}}
+    assert row["evaluator_reliability_status"] == "partial"
 
 
 def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypatch):
@@ -1295,6 +1476,7 @@ def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypa
     assert row["probabilities"] == {"A": pytest.approx(0.7), "B": pytest.approx(0.3)}
     assert row["evaluator_noisy_dimensions"] == ["convergence", "123"]
     assert row["validated_scales"]["scores"]["prediction_accuracy_score"] == pytest.approx(0.9)
+    assert row["evaluator_reliability_status"] == "complete"
     assert row["evaluator_dimension_labels"]["convergence"] == {"run1": "high", "run2": "low"}
     assert row["evaluator_dimension_labels"]["herd_effect"] == {"run1": "high", "run2": "low"}
 

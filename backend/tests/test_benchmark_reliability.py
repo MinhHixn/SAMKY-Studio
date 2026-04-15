@@ -50,3 +50,27 @@ def test_kappa_by_dimension_uses_completed_rows_only():
 
     assert kappas["convergence"] == pytest.approx(1.0)
     assert kappas["herd_effect"] == pytest.approx(-1.0)
+
+
+def test_kappa_by_dimension_ignores_missing_run2_labels_without_dropping_valid_pairs():
+    rows = [
+        {
+            "simulation_status": "completed",
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "high"},
+                "herd_effect": {"run1": "low", "run2": "low"},
+            },
+        },
+        {
+            "simulation_status": "completed",
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "high", "run2": "high"},
+                "herd_effect": {"run1": "low", "run2": "low"},
+            },
+        },
+    ]
+
+    kappas = kappa_by_dimension(rows)
+
+    assert kappas["convergence"] == pytest.approx(1.0)
+    assert kappas["herd_effect"] == pytest.approx(1.0)

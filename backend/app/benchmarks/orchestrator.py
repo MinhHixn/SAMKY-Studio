@@ -543,8 +543,15 @@ class BenchmarkRunOrchestrator:
         traces_dir = run_dir / "traces"
         run_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.mkdir(parents=True, exist_ok=True)
-        for stale_filename in ("event_results.json", "summary.json"):
-            (run_dir / stale_filename).unlink(missing_ok=True)
+
+        def cleanup_summary_artifacts() -> None:
+            for stale_filename in ("event_results.json", "summary.json"):
+                (run_dir / stale_filename).unlink(missing_ok=True)
+            for artifact_path in run_dir.glob("calibration_curve*.png"):
+                if artifact_path.is_file():
+                    artifact_path.unlink(missing_ok=True)
+
+        cleanup_summary_artifacts()
 
         manifest_payload = dict(manifest) if manifest is not None else {"run_id": run_id, "events_loaded": len(events), "repeats": repeats}
         (run_dir / "run_manifest.json").write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -622,13 +629,11 @@ class BenchmarkRunOrchestrator:
                 )
 
         event_results_path = run_dir / "event_results.json"
-        summary_path = run_dir / "summary.json"
         try:
             write_summary(run_dir, rows)
             validate_event_results(rows)
             event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
-            event_results_path.unlink(missing_ok=True)
-            summary_path.unlink(missing_ok=True)
+            cleanup_summary_artifacts()
             raise
         return run_dir

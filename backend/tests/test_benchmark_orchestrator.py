@@ -845,7 +845,7 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
     assert rows[0]["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
 
 
-def test_orchestrator_validates_and_writes_event_results_after_summary_enrichment(tmp_path):
+def test_orchestrator_cleanup_removes_summary_artifacts_after_summary_enrichment_validation_failure(tmp_path):
     class FakeExecutor:
         def execute(self, **kwargs):
             return {
@@ -871,7 +871,11 @@ def test_orchestrator_validates_and_writes_event_results_after_summary_enrichmen
 
     def invalidating_write_summary(path, rows):
         rows[0]["brier"] = "invalid-after-enrichment"
-        (path / "summary.json").write_text(json.dumps({"total_rows": len(rows)}), encoding="utf-8")
+        (path / "calibration_curve.png").write_text("stub-plot", encoding="utf-8")
+        (path / "summary.json").write_text(
+            json.dumps({"total_rows": len(rows), "calibration": {"plot_path": str(path / "calibration_curve.png")}}),
+            encoding="utf-8",
+        )
 
     with pytest.raises(ValueError, match=r"rows\[0\].*'brier' must be finite"):
         orchestrator.run(
@@ -886,6 +890,7 @@ def test_orchestrator_validates_and_writes_event_results_after_summary_enrichmen
 
     assert not (tmp_path / "fixed-run" / "event_results.json").exists()
     assert not (tmp_path / "fixed-run" / "summary.json").exists()
+    assert not (tmp_path / "fixed-run" / "calibration_curve.png").exists()
 
 
 def test_orchestrator_clears_stale_artifacts_on_rerun_when_validation_fails_before_write(tmp_path):

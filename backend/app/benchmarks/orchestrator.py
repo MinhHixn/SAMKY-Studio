@@ -622,7 +622,13 @@ class BenchmarkRunOrchestrator:
                 )
 
         event_results_path = run_dir / "event_results.json"
-        write_summary(run_dir, rows)
-        validate_event_results(rows)
-        event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary_path = run_dir / "summary.json"
+        try:
+            write_summary(run_dir, rows)
+            validate_event_results(rows)
+            event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            event_results_path.unlink(missing_ok=True)
+            summary_path.unlink(missing_ok=True)
+            raise
         return run_dir

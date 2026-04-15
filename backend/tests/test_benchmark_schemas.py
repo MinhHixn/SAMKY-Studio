@@ -38,6 +38,7 @@ def _valid_summary():
         "effect_size": {"cohens_d": 0.42},
         "rps": {"overall": {"mean": 0.2}},
         "calibration": {"overall": {"mean_observed": 0.4}},
+        "delta_conformity": {"overall": 0.2},
     }
 
 
@@ -97,4 +98,12 @@ def test_validate_summary_payload_schema_rejects_missing_required_blocks():
     summary.pop("power_analysis")
 
     with pytest.raises(ValueError, match="missing required blocks: power_analysis"):
+        validate_summary_payload(summary)
+
+
+def test_validate_summary_payload_schema_requires_delta_conformity_block():
+    summary = _valid_summary()
+    summary.pop("delta_conformity")
+
+    with pytest.raises(ValueError, match="missing required blocks: delta_conformity"):
         validate_summary_payload(summary)

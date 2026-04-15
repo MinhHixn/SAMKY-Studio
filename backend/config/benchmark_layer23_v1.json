@@ -1,6 +1,6 @@
 {
   "version": "layer23_v1",
-  "kappa_cutoff": 0.7,
+  "kappa_cutoff": 0.8,
   "jsd_monotonic_tolerance_epsilon": 0.002,
   "leakage_min_days_before_resolution": 7,
   "leakage_outcome_regex": "(?i)resolved|closed",

@@ -885,6 +885,7 @@ def test_orchestrator_validates_and_writes_event_results_after_summary_enrichmen
         )
 
     assert not (tmp_path / "fixed-run" / "event_results.json").exists()
+    assert not (tmp_path / "fixed-run" / "summary.json").exists()
 
 
 def test_orchestrator_clears_stale_artifacts_on_rerun_when_validation_fails_before_write(tmp_path):

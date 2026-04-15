@@ -1994,6 +1994,72 @@ def test_main_schema_guard_allows_valid_event_results(monkeypatch, tmp_path):
         assert key in row
 
 
+def test_main_applies_non_default_layer23_runtime_config_to_power_and_calibration(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    custom_layer23 = {
+        "version": "layer23_v1",
+        "kappa_cutoff": 0.8,
+        "jsd_monotonic_tolerance_epsilon": 0.002,
+        "leakage_min_days_before_resolution": 7,
+        "leakage_outcome_regex": r"(?i)resolved|closed",
+        "power_target_delta_brier": 0.15,
+        "power_assumed_sigma": 0.5,
+        "power_target": 0.9,
+        "calibration_brackets": [[0.0, 0.4], [0.4, 0.6], [0.6, 0.9], [0.9, 1.0]],
+    }
+    monkeypatch.setattr(protocol_script, "load_layer23_config", lambda *_args, **_kwargs: custom_layer23)
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    protocol_script.main()
+
+    row = protocol_script.build_event_result_row(
+        {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.95, "B": 0.05},
+        brier=0.05,
+    )
+    assert row["calibration_bracket"] == "0.9-1"
+
+    summary_rows = [
+        {"condition": "A", "brier": 0.05, "simulation_status": "completed", "calibration_predicted_probability": 0.95, "calibration_hit": 1},
+        {"condition": "A", "brier": 0.07, "simulation_status": "completed", "calibration_predicted_probability": 0.95, "calibration_hit": 1},
+        {"condition": "B", "brier": 0.20, "simulation_status": "completed", "calibration_predicted_probability": 0.55, "calibration_hit": 1},
+        {"condition": "B", "brier": 0.24, "simulation_status": "completed", "calibration_predicted_probability": 0.55, "calibration_hit": 1},
+    ]
+    summary = protocol_script.write_summary(tmp_path / "summary-check", summary_rows)
+
+    assert set(summary["calibration"]["overall"]) == {"0-0.4", "0.4-0.6", "0.6-0.9", "0.9-1"}
+
+    expected_power = protocol_script.compute_power_analysis(
+        2,
+        delta_target=0.15,
+        sigma_assumed=0.5,
+        target_power=0.9,
+        observed_sigma=summary["effect_size"]["pooled_std"],
+    )
+    assert summary["power_analysis"] == expected_power
+
+
 def test_main_writes_artifacts(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)

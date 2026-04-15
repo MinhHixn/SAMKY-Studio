@@ -28,6 +28,7 @@ REQUIRED_SUMMARY_BLOCKS: tuple[str, ...] = (
     "effect_size",
     "rps",
     "calibration",
+    "delta_conformity",
 )
 
 VALID_SIMULATION_STATUSES = frozenset({"completed", "simulation_failed", "evaluation_failed"})

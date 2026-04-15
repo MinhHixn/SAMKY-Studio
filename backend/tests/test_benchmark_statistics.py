@@ -62,3 +62,17 @@ def test_calibration_bucket_assignment_and_aggregation(tmp_path):
     returned_path = write_calibration_plot(buckets, output_path)
     assert output_path.exists()
     assert returned_path == str(output_path)
+
+
+def test_calibration_bucket_assignment_supports_custom_brackets():
+    custom_brackets = [(0.0, 0.4), (0.4, 0.6), (0.6, 0.9), (0.9, 1.0)]
+    assert assign_probability_bracket(0.55, brackets=custom_brackets) == "0.4-0.6"
+    assert assign_probability_bracket(0.95, brackets=custom_brackets) == "0.9-1"
+
+    buckets = aggregate_calibration_counts(
+        [(0.2, True), (0.55, False), (0.65, True), (0.95, True)],
+        brackets=custom_brackets,
+    )
+    assert set(buckets) == {"0-0.4", "0.4-0.6", "0.6-0.9", "0.9-1"}
+    assert buckets["0.4-0.6"]["count"] == 1
+    assert buckets["0.4-0.6"]["hits"] == 0

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 import matplotlib
 from scipy import stats
@@ -18,6 +18,40 @@ _CALIBRATION_BRACKETS = [
     (0.5, 0.75, "0.5-0.75"),
     (0.75, 1.0, "0.75-1.0"),
 ]
+
+
+def _format_calibration_label(lower: float, upper: float) -> str:
+    return f"{lower:g}-{upper:g}"
+
+
+def _resolve_calibration_brackets(
+    brackets: Sequence[Sequence[float]] | None = None,
+) -> list[tuple[float, float, str]]:
+    if brackets is None:
+        return list(_CALIBRATION_BRACKETS)
+    if not isinstance(brackets, Sequence) or not brackets:
+        raise ValueError("calibration brackets must be a non-empty sequence of [lower, upper] pairs")
+
+    expected_left = 0.0
+    resolved: list[tuple[float, float, str]] = []
+    for bracket in brackets:
+        if not isinstance(bracket, Sequence) or len(bracket) != 2:
+            raise ValueError("calibration brackets must be [lower, upper] pairs")
+        lower_raw, upper_raw = bracket
+        if not isinstance(lower_raw, (int, float)) or not isinstance(upper_raw, (int, float)):
+            raise ValueError("calibration brackets must be numeric")
+        lower = float(lower_raw)
+        upper = float(upper_raw)
+        if not math.isfinite(lower) or not math.isfinite(upper):
+            raise ValueError("calibration brackets must be finite")
+        if lower != expected_left or upper <= lower:
+            raise ValueError("calibration brackets must be contiguous and strictly increasing")
+        resolved.append((lower, upper, _format_calibration_label(lower, upper)))
+        expected_left = upper
+
+    if resolved[0][0] != 0.0 or resolved[-1][1] != 1.0:
+        raise ValueError("calibration brackets must span [0, 1]")
+    return resolved
 
 
 def ranked_probability_score(
@@ -188,33 +222,44 @@ def compute_power_analysis(
     }
 
 
-def assign_probability_bracket(probability: float) -> str:
+def assign_probability_bracket(
+    probability: float,
+    *,
+    brackets: Sequence[Sequence[float]] | None = None,
+) -> str:
     if not isinstance(probability, (int, float)):
         raise ValueError("probability must be numeric")
     value = float(probability)
     if not math.isfinite(value) or value < 0 or value > 1:
         raise ValueError("probability must be within [0, 1]")
-    for lower, upper, label in _CALIBRATION_BRACKETS[:-1]:
+    resolved_brackets = _resolve_calibration_brackets(brackets)
+    for lower, upper, label in resolved_brackets[:-1]:
         if lower <= value < upper:
             return label
-    return _CALIBRATION_BRACKETS[-1][2]
+    return resolved_brackets[-1][2]
 
 
-def _init_calibration_buckets() -> dict[str, dict[str, float | int]]:
+def _init_calibration_buckets(
+    *,
+    brackets: Sequence[Sequence[float]] | None = None,
+) -> dict[str, dict[str, float | int]]:
+    resolved_brackets = _resolve_calibration_brackets(brackets)
     return {
         label: {"count": 0, "hits": 0, "predicted_sum": 0.0}
-        for _, _, label in _CALIBRATION_BRACKETS
+        for _, _, label in resolved_brackets
     }
 
 
 def aggregate_calibration_counts(
     items: Iterable[tuple[float, bool | int]],
+    *,
+    brackets: Sequence[Sequence[float]] | None = None,
 ) -> dict[str, dict[str, float | int]]:
-    buckets = _init_calibration_buckets()
+    buckets = _init_calibration_buckets(brackets=brackets)
     for probability, hit in items:
         if not isinstance(hit, (bool, int)):
             raise ValueError("calibration hits must be boolean or integer")
-        bucket_label = assign_probability_bracket(probability)
+        bucket_label = assign_probability_bracket(probability, brackets=brackets)
         bucket = buckets[bucket_label]
         bucket["count"] += 1
         bucket["hits"] += int(hit)
@@ -232,11 +277,16 @@ def aggregate_calibration_counts(
     return buckets
 
 
-def write_calibration_plot(buckets: Mapping[str, Mapping[str, float | int]], output_path: Path | str) -> str:
+def write_calibration_plot(
+    buckets: Mapping[str, Mapping[str, float | int]],
+    output_path: Path | str,
+    *,
+    brackets: Sequence[Sequence[float]] | None = None,
+) -> str:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    ordered_labels = [label for _, _, label in _CALIBRATION_BRACKETS]
+    ordered_labels = [label for _, _, label in _resolve_calibration_brackets(brackets)]
     x_values: list[float] = []
     y_values: list[float] = []
     for label in ordered_labels:

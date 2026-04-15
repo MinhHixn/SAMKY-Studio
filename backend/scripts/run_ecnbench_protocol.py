@@ -9,7 +9,7 @@ from functools import lru_cache
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol, Sequence
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPTS_DIR.parent
@@ -94,6 +94,14 @@ MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
 DEFAULT_KAPPA_CUTOFF = 0.8
 _RUNTIME_KAPPA_CUTOFF = DEFAULT_KAPPA_CUTOFF
+DEFAULT_POWER_TARGET_DELTA_BRIER = 0.05
+DEFAULT_POWER_ASSUMED_SIGMA = 0.12
+DEFAULT_POWER_TARGET = 0.8
+DEFAULT_CALIBRATION_BRACKETS = [[0.0, 0.25], [0.25, 0.5], [0.5, 0.75], [0.75, 1.0]]
+_RUNTIME_POWER_TARGET_DELTA_BRIER = DEFAULT_POWER_TARGET_DELTA_BRIER
+_RUNTIME_POWER_ASSUMED_SIGMA = DEFAULT_POWER_ASSUMED_SIGMA
+_RUNTIME_POWER_TARGET = DEFAULT_POWER_TARGET
+_RUNTIME_CALIBRATION_BRACKETS = DEFAULT_CALIBRATION_BRACKETS
 _DECLARED_TOPOLOGY_PARAMETERS = {
     "graph_generator": {
         "twitter": "generate_twitter_agent_graph",
@@ -706,7 +714,10 @@ def build_event_result_row(
                     normalized_probabilities.get(predicted_label)
                 )
                 if calibration_predicted_probability is not None:
-                    calibration_bracket = assign_probability_bracket(calibration_predicted_probability)
+                    calibration_bracket = assign_probability_bracket(
+                        calibration_predicted_probability,
+                        brackets=_RUNTIME_CALIBRATION_BRACKETS,
+                    )
                     calibration_hit = int(predicted_label == ground_truth.strip())
         except ValueError as exc:
             scoring_error = f"RPS/calibration unavailable: {exc}"
@@ -1023,7 +1034,11 @@ def _summarize_rps(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"overall": overall, "by_condition": by_condition}
 
 
-def _summarize_calibration(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _summarize_calibration(
+    rows: List[Dict[str, Any]],
+    *,
+    calibration_brackets: Sequence[Sequence[float]] | None = None,
+) -> Dict[str, Any]:
     per_condition: Dict[str, List[tuple[float, bool]]] = {condition: [] for condition in CONDITIONS}
     overall_items: List[tuple[float, bool]] = []
     for row in rows:
@@ -1039,9 +1054,9 @@ def _summarize_calibration(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             per_condition[condition].append((probability, bool(hit)))
 
     return {
-        "overall": aggregate_calibration_counts(overall_items),
+        "overall": aggregate_calibration_counts(overall_items, brackets=calibration_brackets),
         "by_condition": {
-            condition: aggregate_calibration_counts(values)
+            condition: aggregate_calibration_counts(values, brackets=calibration_brackets)
             for condition, values in per_condition.items()
         },
     }
@@ -1174,6 +1189,10 @@ def summarize_event_results(
     rows: List[Dict[str, Any]],
     *,
     kappa_cutoff: float = DEFAULT_KAPPA_CUTOFF,
+    power_target_delta_brier: float = DEFAULT_POWER_TARGET_DELTA_BRIER,
+    power_assumed_sigma: float = DEFAULT_POWER_ASSUMED_SIGMA,
+    power_target: float = DEFAULT_POWER_TARGET,
+    calibration_brackets: Sequence[Sequence[float]] | None = None,
 ) -> Dict[str, Any]:
     completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
@@ -1218,7 +1237,10 @@ def summarize_event_results(
     }
     summary["signed_susceptibility"] = _summarize_signed_susceptibility(completed_rows)
     summary["rps"] = _summarize_rps(completed_rows)
-    summary["calibration"] = _summarize_calibration(completed_rows)
+    summary["calibration"] = _summarize_calibration(
+        completed_rows,
+        calibration_brackets=calibration_brackets,
+    )
     summary["delta_conformity"] = _summarize_delta_conformity(completed_rows)
     brier_a = _collect_metric_values(completed_rows, "A", "brier")
     brier_b = _collect_metric_values(completed_rows, "B", "brier")
@@ -1248,6 +1270,9 @@ def summarize_event_results(
             effect_size["error"] = None
             power_analysis = compute_power_analysis(
                 actual_n,
+                delta_target=power_target_delta_brier,
+                sigma_assumed=power_assumed_sigma,
+                target_power=power_target,
                 observed_sigma=effect_size["pooled_std"],
             )
         except ValueError as exc:
@@ -1281,13 +1306,24 @@ def summarize_event_results(
 
 
 def write_summary(run_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    summary = summarize_event_results(rows, kappa_cutoff=_RUNTIME_KAPPA_CUTOFF)
+    summary = summarize_event_results(
+        rows,
+        kappa_cutoff=_RUNTIME_KAPPA_CUTOFF,
+        power_target_delta_brier=_RUNTIME_POWER_TARGET_DELTA_BRIER,
+        power_assumed_sigma=_RUNTIME_POWER_ASSUMED_SIGMA,
+        power_target=_RUNTIME_POWER_TARGET,
+        calibration_brackets=_RUNTIME_CALIBRATION_BRACKETS,
+    )
     calibration = summary.get("calibration")
     if isinstance(calibration, Mapping):
         overall = calibration.get("overall")
         if isinstance(overall, Mapping):
             plot_path = run_dir / "calibration_curve.png"
-            calibration["plot_path"] = write_calibration_plot(overall, plot_path)
+            calibration["plot_path"] = write_calibration_plot(
+                overall,
+                plot_path,
+                brackets=_RUNTIME_CALIBRATION_BRACKETS,
+            )
     validate_summary_payload(summary)
     (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
@@ -1341,7 +1377,23 @@ def main() -> None:
     validate_injection_coverage(events, injection_loader)
     layer23_cfg = load_layer23_config(DEFAULT_LAYER23_CONFIG_PATH)
     global _RUNTIME_KAPPA_CUTOFF
+    global _RUNTIME_POWER_TARGET_DELTA_BRIER
+    global _RUNTIME_POWER_ASSUMED_SIGMA
+    global _RUNTIME_POWER_TARGET
+    global _RUNTIME_CALIBRATION_BRACKETS
     _RUNTIME_KAPPA_CUTOFF = float(layer23_cfg.get("kappa_cutoff", DEFAULT_KAPPA_CUTOFF))
+    _RUNTIME_POWER_TARGET_DELTA_BRIER = float(
+        layer23_cfg.get("power_target_delta_brier", DEFAULT_POWER_TARGET_DELTA_BRIER)
+    )
+    _RUNTIME_POWER_ASSUMED_SIGMA = float(layer23_cfg.get("power_assumed_sigma", DEFAULT_POWER_ASSUMED_SIGMA))
+    _RUNTIME_POWER_TARGET = float(layer23_cfg.get("power_target", DEFAULT_POWER_TARGET))
+    runtime_calibration_brackets = layer23_cfg.get("calibration_brackets", DEFAULT_CALIBRATION_BRACKETS)
+    if isinstance(runtime_calibration_brackets, Sequence) and not isinstance(
+        runtime_calibration_brackets, (str, bytes, bytearray)
+    ):
+        _RUNTIME_CALIBRATION_BRACKETS = [list(bracket) for bracket in runtime_calibration_brackets]
+    else:
+        _RUNTIME_CALIBRATION_BRACKETS = list(DEFAULT_CALIBRATION_BRACKETS)
     phase1_cfg = load_phase1_config(DEFAULT_PHASE1_CONFIG_PATH)
     for event in events:
         validate_polymarket_opening_prior(

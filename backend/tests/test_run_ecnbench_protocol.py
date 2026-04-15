@@ -1721,6 +1721,7 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
     assert captured["manifest"]["events_loaded"] == 1
     assert captured["manifest"]["trace_out"].endswith("traces\\execution.jsonl")
     assert captured["manifest"]["phase1_config_version"] == "phase1_v1"
+    assert captured["manifest"]["layer23_config_version"] == "layer23_v1"
     assert captured["manifest"]["telemetry_checkpoints"] == [12, 24, 36, 48, 60]
     assert captured["manifest"]["jsd_monotonic_tolerance_epsilon"] == pytest.approx(0.002)
     assert captured["manifest"]["baseline_agents"] == ["uniform_random", "market_prior"]
@@ -1837,6 +1838,8 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     assert manifest["expected_run_units"] == len(custom_matrix)
     assert manifest["weights_schema_version"] == "v1"
     assert manifest["mcq_prompt_version"] == "v1"
+    assert manifest["layer23_config_version"] == "layer23_v1"
+    assert manifest["leakage_check"] == "pass"
     assert manifest["deterministic_mode"] == {
         "benchmark_mode": False,
         "temperature": 0.125,

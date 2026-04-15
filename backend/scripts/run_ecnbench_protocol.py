@@ -1430,6 +1430,7 @@ def main() -> None:
         "mcq_prompt_version": "v1",
         "deterministic_mode": _deterministic_mode_config(),
         "phase1_config_version": phase1_cfg["version"],
+        "layer23_config_version": layer23_cfg["version"],
         "telemetry_checkpoints": list(phase1_cfg["telemetry_checkpoints"]),
         "jsd_monotonic_tolerance_epsilon": float(phase1_cfg["jsd_monotonic_tolerance_epsilon"]),
         "baseline_agents": list(baseline_agent_ids),

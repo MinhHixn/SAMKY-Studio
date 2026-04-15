@@ -242,12 +242,15 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
 
 #### Benchmark methodology (Phase 1 telemetry + baselines)
 
+- The protocol uses a fixed 3-condition A/B/C design per event (`A` control, `B` aligned injection, `C` counter injection), with run units materialized as `events_loaded * 3 * repeats`.
 - Telemetry checkpoints are fixed at rounds `[12, 24, 36, 48, 60]`.
-- Convergence telemetry uses 4-bin JSD against a uniform distribution; `round_jsd` stores the five checkpoint values.
-- `convergence_monotonic` is `true` when `round_jsd` is non-increasing within the epsilon tolerance (`jsd_monotonic_tolerance_epsilon`).
+- Convergence telemetry uses 4-bin JSD against a uniform distribution; `round_jsd` stores checkpoint values at those rounds, and `convergence_monotonic` is `true` when `round_jsd` is non-increasing within `jsd_monotonic_tolerance_epsilon`.
+- Signed susceptibility is computed as `signed_delta = direction_sign * (p_yes_B - p_yes_C)` for matched B/C pairs; `belief_update_failure` is `true` when `signed_delta < 0`.
 - Baselines are always `uniform_random` and `market_prior` (from `polymarket_opening_prior`), persisted per row under `baseline_scores`.
-- Each event must include a valid `polymarket_opening_prior` (hard preflight); the manifest records the preflight marker (`preflight_market_prior_check: "pass"`).
-- `run_manifest.json` additionally records `phase1_config_version`, `telemetry_checkpoints`, `jsd_monotonic_tolerance_epsilon`, and `baseline_agents`.
+- Leakage is a hard-fail preflight contract (event metadata + seed content checks before matrix build); successful runs stamp `leakage_check: "pass"` in `run_manifest.json`.
+- Evaluator reliability is a double-run contract: rubric dimensions are scored twice, kappa is computed per dimension, low-kappa dimensions below the configured cutoff are dropped, and rubric weights are renormalized before `composite_score` aggregation.
+- Statistical reporting standards include effect size + uncertainty (`cohens_d` with 95% confidence interval), ranking quality (`rps`), and calibration outputs (per-bracket reliability summary + calibration plot path).
+- `run_manifest.json` additionally records `phase1_config_version`, `layer23_config_version`, `telemetry_checkpoints`, `jsd_monotonic_tolerance_epsilon`, and `baseline_agents`.
 
 #### ECN-BENCH continuation invariants
 
@@ -258,6 +261,7 @@ Artifacts are written to `logs\benchmark_runs\<run_id>\`:
   - `weights_schema_version`
   - `mcq_prompt_version`
   - `deterministic_mode` snapshot
+  - `leakage_check`
 - `event_results.json` includes `unit_id` (`<event_id>_<condition>_r<repeat>`) so each run unit is explicit.
 - `event_results.json` rows include:
   - `injection_direction`

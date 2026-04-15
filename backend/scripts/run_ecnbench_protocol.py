@@ -1291,6 +1291,28 @@ def write_summary(run_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return summary
 
 
+def _load_runtime_topology_sample(run_dir: Path, condition_matrix: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    for matrix_row in condition_matrix:
+        try:
+            unit_id = f"{matrix_row['event_id']}_{matrix_row['condition']}_r{int(matrix_row['repeat'])}"
+        except Exception:
+            continue
+        config_path = run_dir / unit_id / "simulation_config.json"
+        if not config_path.exists():
+            continue
+        try:
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, Mapping):
+            return payload
+    return None
+
+
+def _write_run_manifest(run_dir: Path, manifest: Mapping[str, Any]) -> None:
+    (run_dir / "run_manifest.json").write_text(json.dumps(dict(manifest), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the ECN-BENCH protocol benchmark end-to-end")
     parser.add_argument("--seeds-dir", required=True)
@@ -1348,6 +1370,39 @@ def main() -> None:
     trace_writer = _LazyTraceWriter(trace_path)
     condition_matrix = build_condition_matrix(events, args.repeats)
     expected_run_units = len(condition_matrix)
+    event_lookup = {str(event["event_id"]): event for event in events}
+    event_index_lookup = {str(event["event_id"]): index for index, event in enumerate(events)}
+    cached_config_by_unit: dict[tuple[str, str], Dict[str, Any]] = {}
+    topology_sample_config: Mapping[str, Any] | None = None
+    if condition_matrix:
+        first_row = condition_matrix[0]
+        first_event_id = str(first_row.get("event_id"))
+        first_condition = str(first_row.get("condition"))
+        sample_event = event_lookup.get(first_event_id)
+        if sample_event is not None:
+            sampled_config = build_simulation_config(
+                sample_event,
+                first_condition,
+                profiles,
+                injection_loader,
+                llm_model=benchmark_model,
+            )
+            cached_config_by_unit[(first_event_id, first_condition)] = sampled_config
+            topology_sample_config = sampled_config
+
+    def _protocol_config_builder(event: Mapping[str, Any], condition: str) -> Dict[str, Any]:
+        cache_key = (str(event["event_id"]), condition)
+        cached = cached_config_by_unit.pop(cache_key, None)
+        if cached is not None:
+            return json.loads(json.dumps(cached, ensure_ascii=False))
+        return build_simulation_config(
+            event,
+            condition,
+            profiles,
+            injection_loader,
+            llm_model=benchmark_model,
+        )
+
     manifest = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1378,11 +1433,13 @@ def main() -> None:
         "baseline_agents": list(baseline_agent_ids),
         "preflight_market_prior_check": "pass",
         "leakage_check": "pass",
-        "topology": extract_topology_metadata({"benchmark_defaults": _DECLARED_TOPOLOGY_PARAMETERS}),
+        "topology": extract_topology_metadata(
+            {
+                "simulation_config": topology_sample_config,
+                "benchmark_defaults": _DECLARED_TOPOLOGY_PARAMETERS,
+            }
+        ),
     }
-
-    event_lookup = {str(event["event_id"]): event for event in events}
-    event_index_lookup = {str(event["event_id"]): index for index, event in enumerate(events)}
     executor = ProtocolConditionExecutor(
         router=router,
         python_exe=args.python_exe,
@@ -1402,15 +1459,12 @@ def main() -> None:
             phase1_cfg,
             resolved_label=_resolve_event_label(event),
         ),
-        delta_conformity_builder=lambda unit_dir, event: compute_delta_conformity(
-            unit_dir,
-            resolved_label=_resolve_event_label(event),
-        ),
+        delta_conformity_builder=lambda unit_dir, _event: compute_delta_conformity(unit_dir),
         baseline_scores_builder=build_baseline_scores,
         exception_formatter=_format_exception,
     )
     orchestrator = BenchmarkRunOrchestrator(executor=executor)
-    orchestrator.run(
+    run_dir = orchestrator.run(
         run_id=run_id,
         output_root=output_root,
         events=events,
@@ -1418,16 +1472,20 @@ def main() -> None:
         build_condition_matrix=lambda _events, _repeats: list(condition_matrix),
         event_lookup=event_lookup,
         write_summary=write_summary,
-        config_builder=lambda event, condition: build_simulation_config(
-            event,
-            condition,
-            profiles,
-            injection_loader,
-            llm_model=benchmark_model,
-        ),
+        config_builder=_protocol_config_builder,
         evaluator=_evaluate_row,
         manifest=manifest,
     )
+    runtime_topology_sample = _load_runtime_topology_sample(run_dir, condition_matrix)
+    if runtime_topology_sample is not None:
+        topology_sample_config = runtime_topology_sample
+    manifest["topology"] = extract_topology_metadata(
+        {
+            "simulation_config": topology_sample_config,
+            "benchmark_defaults": _DECLARED_TOPOLOGY_PARAMETERS,
+        }
+    )
+    _write_run_manifest(run_dir, manifest)
 
     if args.trace_out:
         default_trace_path = traces_dir / "execution.jsonl"

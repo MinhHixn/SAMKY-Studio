@@ -58,8 +58,7 @@ def extract_topology_metadata(config_or_defaults: Mapping[str, Any] | None) -> d
     return topology
 
 
-def compute_delta_conformity(unit_dir: Path | str, resolved_label: str | None) -> float | None:
-    del resolved_label
+def compute_delta_conformity(unit_dir: Path | str) -> float | None:
     rounds: dict[int, dict[str, float]] = {1: {}, 3: {}}
     unit_path = Path(unit_dir)
 
@@ -145,15 +144,16 @@ def _json_safe_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _read_actions(path: Path) -> Iterable[Mapping[str, Any]]:
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip():
-            continue
-        try:
-            entry = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, Mapping):
-            yield entry
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            if not raw_line.strip():
+                continue
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, Mapping):
+                yield entry
 
 
 def _is_round_marker(entry: Mapping[str, Any]) -> bool:
@@ -228,10 +228,6 @@ def _extract_probability_yes_from_mapping(payload: Mapping[str, Any]) -> float |
         probability_from_key = _as_probability_text(key)
         if probability_from_key is not None:
             return probability_from_key
-    numeric_values = [_as_probability(value) for value in payload.values()]
-    numeric_values = [value for value in numeric_values if value is not None]
-    if len(numeric_values) == 1:
-        return numeric_values[0]
     return None
 
 

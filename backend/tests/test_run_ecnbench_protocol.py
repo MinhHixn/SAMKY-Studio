@@ -1721,7 +1721,7 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
     assert executor_ctor_calls["seed_files"] == [tmp_path / "seed.md"]
     assert len(config_builder_calls) == 1
     event, condition, profiles, injection_loader, llm_model = config_builder_calls[0]
-    assert event == {"event_id": "E1", "question": "Q", "outcome": "A"}
+    assert event == expected_event
     assert condition == "A"
     assert profiles == [{"agent_id": 1}]
     assert isinstance(injection_loader, DummyInjectionLoader)
@@ -2427,7 +2427,7 @@ def test_compute_delta_conformity_from_actions_logs(tmp_path):
         encoding="utf-8",
     )
 
-    delta_conformity = protocol_script.compute_delta_conformity(unit_dir, resolved_label="YES")
+    delta_conformity = protocol_script.compute_delta_conformity(unit_dir)
 
     assert delta_conformity == pytest.approx(1 / 3)
 
@@ -2446,7 +2446,26 @@ def test_compute_delta_conformity_returns_none_when_insufficient_data(tmp_path):
         encoding="utf-8",
     )
 
-    delta_conformity = protocol_script.compute_delta_conformity(unit_dir, resolved_label="YES")
+    delta_conformity = protocol_script.compute_delta_conformity(unit_dir)
+
+    assert delta_conformity is None
+
+
+def test_compute_delta_conformity_ignores_no_only_probability_mapping(tmp_path):
+    unit_dir = tmp_path / "E1_C_r1"
+    actions_path = unit_dir / "twitter" / "actions.jsonl"
+    actions_path.parent.mkdir(parents=True, exist_ok=True)
+    actions_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"round": 1, "agent_id": "a1", "action_args": {"probabilities": {"NO": 0.8}}}),
+                json.dumps({"round": 3, "agent_id": "a1", "action_args": {"probabilities": {"NO": 0.8}}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    delta_conformity = protocol_script.compute_delta_conformity(unit_dir)
 
     assert delta_conformity is None
 
@@ -2510,3 +2529,39 @@ def test_main_manifest_includes_topology_metadata(monkeypatch, tmp_path):
     manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["topology"]["degree_distribution_descriptor"]
     assert "clustering_coefficient" in manifest["topology"]
+
+
+def test_main_manifest_topology_uses_runtime_simulation_config_when_available(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    monkeypatch.setattr(
+        protocol_script,
+        "build_simulation_config",
+        lambda *args, **kwargs: {
+            "event_id": "E1",
+            "degree_distribution_descriptor": "runtime-scale-free",
+            "clustering_coefficient": 0.31,
+        },
+    )
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    protocol_script.main()
+
+    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["topology"]["source"] == "simulation_config"
+    assert manifest["topology"]["degree_distribution_descriptor"] == "runtime-scale-free"
+    assert manifest["topology"]["clustering_coefficient"] == pytest.approx(0.31)

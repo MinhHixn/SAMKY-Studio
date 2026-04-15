@@ -543,6 +543,8 @@ class BenchmarkRunOrchestrator:
         traces_dir = run_dir / "traces"
         run_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.mkdir(parents=True, exist_ok=True)
+        for stale_filename in ("event_results.json", "summary.json"):
+            (run_dir / stale_filename).unlink(missing_ok=True)
 
         manifest_payload = dict(manifest) if manifest is not None else {"run_id": run_id, "events_loaded": len(events), "repeats": repeats}
         (run_dir / "run_manifest.json").write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -845,6 +845,48 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
     assert rows[0]["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
 
 
+def test_orchestrator_validates_and_writes_event_results_after_summary_enrichment(tmp_path):
+    class FakeExecutor:
+        def execute(self, **kwargs):
+            return {
+                "event_id": kwargs["event"]["event_id"],
+                "condition": kwargs["condition"],
+                "repeat": kwargs["repeat"],
+                "simulation_status": "completed",
+                "full_simulation_completed": True,
+                "probabilities": {"A": 0.7, "B": 0.3},
+                "brier": 0.2,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "round_jsd": [0.1, 0.2, 0.3, 0.4, 0.5],
+                "convergence_monotonic": True,
+                "rps": 0.19,
+                "calibration_bracket": "0.5-0.75",
+                "delta_conformity": None,
+            }
+
+    orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
+
+    def invalidating_write_summary(path, rows):
+        rows[0]["brier"] = "invalid-after-enrichment"
+        (path / "summary.json").write_text(json.dumps({"total_rows": len(rows)}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"rows\[0\].*'brier' must be finite"):
+        orchestrator.run(
+            run_id="fixed-run",
+            output_root=tmp_path,
+            events=[{"event_id": "E1"}],
+            repeats=1,
+            build_condition_matrix=lambda events, repeats: [{"event_id": "E1", "condition": "A", "repeat": 1}],
+            event_lookup={"E1": {"event_id": "E1"}},
+            write_summary=invalidating_write_summary,
+        )
+
+    assert not (tmp_path / "fixed-run" / "event_results.json").exists()
+
+
 def test_orchestrator_writes_provided_manifest_payload(tmp_path):
     class FakeExecutor:
         def execute(self, **kwargs):

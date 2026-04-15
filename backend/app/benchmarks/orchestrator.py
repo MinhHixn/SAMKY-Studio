@@ -620,8 +620,6 @@ class BenchmarkRunOrchestrator:
                 )
 
         event_results_path = run_dir / "event_results.json"
-        validate_event_results(rows)
-        event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         write_summary(run_dir, rows)
         validate_event_results(rows)
         event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")

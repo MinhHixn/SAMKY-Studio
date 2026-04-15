@@ -232,6 +232,7 @@ class ProtocolConditionExecutor:
         evidence_builder: Callable[[Path, Path], str],
         row_builder: Callable[..., Dict[str, Any]],
         telemetry_builder: Callable[[Path, Mapping[str, Any]], tuple[list[float], bool]] | None = None,
+        delta_conformity_builder: Callable[[Path, Mapping[str, Any]], float | None] | None = None,
         baseline_scores_builder: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
         exception_formatter: Callable[[BaseException], str],
     ):
@@ -249,6 +250,7 @@ class ProtocolConditionExecutor:
         self._evidence_builder = evidence_builder
         self._row_builder = row_builder
         self._telemetry_builder = telemetry_builder
+        self._delta_conformity_builder = delta_conformity_builder
         self._baseline_scores_builder = baseline_scores_builder
         self._exception_formatter = exception_formatter
 
@@ -296,6 +298,7 @@ class ProtocolConditionExecutor:
         evaluation_completed = False
         round_jsd: list[float] | None = None
         convergence_monotonic: bool | None = None
+        delta_conformity: float | None = None
         baseline_scores: Mapping[str, Any] | None = None
         strict_contract: bool | None = None
         evidence_text = ""
@@ -476,6 +479,20 @@ class ProtocolConditionExecutor:
                 else:
                     row_error = f"Telemetry error: {telemetry_error}"
 
+        if self._delta_conformity_builder and simulation_completed and condition == "C":
+            try:
+                delta_conformity = self._delta_conformity_builder(unit_dir, event)
+            except Exception as exc:
+                telemetry_error = self._exception_formatter(exc)
+                delta_conformity = None
+                if simulation_status == "completed":
+                    simulation_status = "evaluation_failed"
+                    evaluation_completed = False
+                if row_error:
+                    row_error = f"{row_error}; Telemetry error: {telemetry_error}"
+                else:
+                    row_error = f"Telemetry error: {telemetry_error}"
+
         return self._row_builder(
             event,
             condition,
@@ -497,6 +514,7 @@ class ProtocolConditionExecutor:
             evidence_text=evidence_text or None,
             round_jsd=round_jsd,
             convergence_monotonic=convergence_monotonic,
+            delta_conformity=delta_conformity,
             baseline_scores=baseline_scores,
         )
 

@@ -2407,3 +2407,106 @@ def test_signed_susceptibility_excludes_mismatched_injection_directions():
     assert rows[1]["belief_update_failure"] is None
     assert rows[0]["signed_delta_error"] == "injection_direction_mismatch"
     assert rows[1]["signed_delta_error"] == "injection_direction_mismatch"
+
+
+def test_compute_delta_conformity_from_actions_logs(tmp_path):
+    unit_dir = tmp_path / "E1_C_r1"
+    actions_path = unit_dir / "twitter" / "actions.jsonl"
+    actions_path.parent.mkdir(parents=True, exist_ok=True)
+    actions_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"round": 1, "agent_id": "a1", "action_args": {"probabilities": {"YES": 0.2, "NO": 0.8}}}),
+                json.dumps({"round": 1, "agent_id": "a2", "action_args": {"probabilities": {"YES": 0.9, "NO": 0.1}}}),
+                json.dumps({"round": 1, "agent_id": "a3", "action_args": {"probabilities": {"YES": 0.3, "NO": 0.7}}}),
+                json.dumps({"round": 3, "agent_id": "a1", "action_args": {"probabilities": {"YES": 0.7, "NO": 0.3}}}),
+                json.dumps({"round": 3, "agent_id": "a2", "action_args": {"probabilities": {"YES": 0.8, "NO": 0.2}}}),
+                json.dumps({"round": 3, "agent_id": "a3", "action_args": {"probabilities": {"YES": 0.1, "NO": 0.9}}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    delta_conformity = protocol_script.compute_delta_conformity(unit_dir, resolved_label="YES")
+
+    assert delta_conformity == pytest.approx(1 / 3)
+
+
+def test_compute_delta_conformity_returns_none_when_insufficient_data(tmp_path):
+    unit_dir = tmp_path / "E1_C_r1"
+    actions_path = unit_dir / "twitter" / "actions.jsonl"
+    actions_path.parent.mkdir(parents=True, exist_ok=True)
+    actions_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"round": 1, "agent_id": "a1", "action_args": {"probabilities": {"YES": 0.2, "NO": 0.8}}}),
+                json.dumps({"round": 3, "agent_id": "a2", "action_args": {"probabilities": {"YES": 0.7, "NO": 0.3}}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    delta_conformity = protocol_script.compute_delta_conformity(unit_dir, resolved_label="YES")
+
+    assert delta_conformity is None
+
+
+def test_summarize_event_results_includes_delta_conformity_aggregate():
+    rows = [
+        {
+            "condition": "C",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "delta_conformity": 0.25,
+        },
+        {
+            "condition": "C",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "delta_conformity": 0.75,
+        },
+        {
+            "condition": "B",
+            "brier": 0.4,
+            "simulation_status": "completed",
+            "delta_conformity": None,
+        },
+        {
+            "condition": "C",
+            "brier": 0.1,
+            "simulation_status": "evaluation_failed",
+            "delta_conformity": 1.0,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["delta_conformity"]["overall"] == pytest.approx(0.5)
+    assert summary["delta_conformity"]["by_condition"]["C"] == pytest.approx(0.5)
+    assert summary["delta_conformity"]["count"] == 2
+
+
+def test_main_manifest_includes_topology_metadata(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    protocol_script.main()
+
+    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["topology"]["degree_distribution_descriptor"]
+    assert "clustering_coefficient" in manifest["topology"]

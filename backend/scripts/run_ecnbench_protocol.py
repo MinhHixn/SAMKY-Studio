@@ -56,6 +56,7 @@ from app.benchmarks.phase1_telemetry import (
     compute_round_jsd_trace,
     is_monotonic_nonincreasing_with_epsilon,
 )
+from app.benchmarks.topology import compute_delta_conformity, extract_topology_metadata
 from app.utils.benchmark_trace import BenchmarkTraceWriter
 
 
@@ -92,6 +93,14 @@ MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
 DEFAULT_KAPPA_CUTOFF = 0.8
 _RUNTIME_KAPPA_CUTOFF = DEFAULT_KAPPA_CUTOFF
+_DECLARED_TOPOLOGY_PARAMETERS = {
+    "graph_generator": {
+        "twitter": "generate_twitter_agent_graph",
+        "reddit": "generate_reddit_agent_graph",
+    },
+    "degree_distribution_descriptor": "oasis-default-unspecified",
+    "clustering_coefficient": None,
+}
 
 COMPOSITE_SCORE_KEY_MAP = {
     "prediction_accuracy": "prediction_accuracy_score",
@@ -656,6 +665,7 @@ def build_event_result_row(
     evaluator_reliability_status: str | None = None,
     round_jsd: list[float] | None = None,
     convergence_monotonic: bool | None = None,
+    delta_conformity: float | None = None,
     baseline_scores: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
@@ -681,6 +691,7 @@ def build_event_result_row(
     resolved_yes_probability = _finite_float_or_none(yes_probability)
     if resolved_yes_probability is None:
         resolved_yes_probability = _extract_yes_probability(probabilities)
+    resolved_delta_conformity = _finite_float_or_none(delta_conformity)
     rps: float | None = None
     calibration_bracket: str | None = None
     calibration_predicted_probability: float | None = None
@@ -775,6 +786,7 @@ def build_event_result_row(
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "round_jsd": list(resolved_round_jsd) if isinstance(resolved_round_jsd, list) else resolved_round_jsd,
         "convergence_monotonic": convergence_monotonic,
+        "delta_conformity": resolved_delta_conformity,
         "baseline_scores": dict(baseline_scores) if isinstance(baseline_scores, Mapping) else None,
         "error": error,
         "evidence_text": evidence_text,
@@ -1034,6 +1046,29 @@ def _summarize_calibration(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _summarize_delta_conformity(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_condition_values: Dict[str, List[float]] = {}
+    for row in rows:
+        value = _finite_float_or_none(row.get("delta_conformity"))
+        if value is None:
+            continue
+        condition = str(row.get("condition", ""))
+        by_condition_values.setdefault(condition, []).append(value)
+
+    by_condition = {
+        condition: round(sum(values) / len(values), 6)
+        for condition, values in by_condition_values.items()
+        if values
+    }
+    overall_values = [value for values in by_condition_values.values() for value in values]
+    return {
+        "overall": round(sum(overall_values) / len(overall_values), 6) if overall_values else None,
+        "by_condition": by_condition,
+        "count": len(overall_values),
+        "condition_c_overall": by_condition.get("C"),
+    }
+
+
 def _collect_metric_values(rows: List[Dict[str, Any]], condition: str, metric: str) -> List[float]:
     values: List[float] = []
     for row in rows:
@@ -1183,6 +1218,7 @@ def summarize_event_results(
     summary["signed_susceptibility"] = _summarize_signed_susceptibility(completed_rows)
     summary["rps"] = _summarize_rps(completed_rows)
     summary["calibration"] = _summarize_calibration(completed_rows)
+    summary["delta_conformity"] = _summarize_delta_conformity(completed_rows)
     brier_a = _collect_metric_values(completed_rows, "A", "brier")
     brier_b = _collect_metric_values(completed_rows, "B", "brier")
     actual_n = min(len(brier_a), len(brier_b))
@@ -1342,6 +1378,7 @@ def main() -> None:
         "baseline_agents": list(baseline_agent_ids),
         "preflight_market_prior_check": "pass",
         "leakage_check": "pass",
+        "topology": extract_topology_metadata({"benchmark_defaults": _DECLARED_TOPOLOGY_PARAMETERS}),
     }
 
     event_lookup = {str(event["event_id"]): event for event in events}
@@ -1363,6 +1400,10 @@ def main() -> None:
         telemetry_builder=lambda unit_dir, event: _compute_convergence_telemetry(
             unit_dir,
             phase1_cfg,
+            resolved_label=_resolve_event_label(event),
+        ),
+        delta_conformity_builder=lambda unit_dir, event: compute_delta_conformity(
+            unit_dir,
             resolved_label=_resolve_event_label(event),
         ),
         baseline_scores_builder=build_baseline_scores,

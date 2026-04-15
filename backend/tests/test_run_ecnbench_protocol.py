@@ -1923,6 +1923,72 @@ def test_main_writes_artifacts(monkeypatch, tmp_path):
     assert (run_dir / "summary.json").exists()
 
 
+def test_main_persists_signed_enrichment_in_event_results(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    monkeypatch.setattr(
+        protocol_script,
+        "load_events_from_raw",
+        lambda *args, **kwargs: [
+            {
+                "event_id": "E1",
+                "question": "Q1",
+                "outcome": "YES",
+                "options": ["YES", "NO"],
+                "polymarket_opening_prior": {"YES": 0.5, "NO": 0.5},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        protocol_script,
+        "build_condition_matrix",
+        lambda *args, **kwargs: [
+            {"event_id": "E1", "condition": "B", "repeat": 1},
+            {"event_id": "E1", "condition": "C", "repeat": 1},
+        ],
+    )
+    monkeypatch.setattr(
+        protocol_script,
+        "load_seed_metadata",
+        lambda *_args, **_kwargs: {"injection_direction": "pro_YES"},
+    )
+    monkeypatch.setattr(
+        protocol_script,
+        "_compute_convergence_telemetry",
+        lambda *_args, **_kwargs: ([0.2, 0.15, 0.1, 0.05, 0.01], True),
+    )
+
+    def evaluate_row(_event, condition, *_args, **_kwargs):
+        if condition == "B":
+            return {"YES": 0.8, "NO": 0.2}, 0.1
+        return {"YES": 0.3, "NO": 0.7}, 0.2
+
+    monkeypatch.setattr(protocol_script, "_evaluate_row", evaluate_row)
+
+    output_dir = tmp_path / "runs"
+    argv = [
+        "run_ecnbench_protocol.py",
+        "--seeds-dir",
+        str(tmp_path / "seeds"),
+        "--events-raw",
+        str(tmp_path / "events.json"),
+        "--output-dir",
+        str(output_dir),
+    ]
+    monkeypatch.setattr(protocol_script.sys, "argv", argv)
+
+    protocol_script.main()
+
+    rows = json.loads((output_dir / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))
+    rows_by_condition = {row["condition"]: row for row in rows}
+    row_b = rows_by_condition["B"]
+    row_c = rows_by_condition["C"]
+    assert row_b["signed_delta"] == pytest.approx(0.5)
+    assert row_c["signed_delta"] == pytest.approx(0.5)
+    assert row_b["belief_update_failure"] is False
+    assert row_c["belief_update_failure"] is False
+
+
 def test_main_writes_traces_to_custom_path(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
@@ -2302,3 +2368,42 @@ def test_signed_susceptibility_missing_bc_pair_excluded_from_analyzed_count():
 
     assert summary["signed_susceptibility"]["analyzed_pair_count"] == 1
     assert summary["signed_susceptibility"]["mean_signed_delta"] == pytest.approx(0.3)
+
+
+def test_signed_susceptibility_excludes_mismatched_injection_directions():
+    rows = [
+        {
+            "event_id": "E5",
+            "repeat": 1,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.8,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+            "signed_delta": None,
+            "belief_update_failure": None,
+        },
+        {
+            "event_id": "E5",
+            "repeat": 1,
+            "condition": "C",
+            "brier": 0.2,
+            "yes_probability": 0.3,
+            "injection_direction": "anti_YES",
+            "simulation_status": "completed",
+            "signed_delta": None,
+            "belief_update_failure": None,
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["signed_susceptibility"]["analyzed_pair_count"] == 0
+    assert summary["signed_susceptibility"]["direction_mismatch_count"] == 1
+    assert summary["signed_susceptibility"]["mean_signed_delta"] == pytest.approx(0.0)
+    assert rows[0]["signed_delta"] is None
+    assert rows[1]["signed_delta"] is None
+    assert rows[0]["belief_update_failure"] is None
+    assert rows[1]["belief_update_failure"] is None
+    assert rows[0]["signed_delta_error"] == "injection_direction_mismatch"
+    assert rows[1]["signed_delta_error"] == "injection_direction_mismatch"

@@ -597,6 +597,8 @@ class BenchmarkRunOrchestrator:
                     }
                 )
 
-        (run_dir / "event_results.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        event_results_path = run_dir / "event_results.json"
+        event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         write_summary(run_dir, rows)
+        event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         return run_dir

@@ -1072,6 +1072,7 @@ def _summarize_signed_susceptibility(rows: List[Dict[str, Any]]) -> Dict[str, An
 
     signed_deltas: List[float] = []
     belief_update_failure_count = 0
+    direction_mismatch_count = 0
     for pair in paired_rows.values():
         row_b = pair.get("B")
         row_c = pair.get("C")
@@ -1082,9 +1083,23 @@ def _summarize_signed_susceptibility(rows: List[Dict[str, Any]]) -> Dict[str, An
         if p_yes_b is None or p_yes_c is None:
             continue
 
-        direction_sign = _injection_direction_sign(row_b.get("injection_direction"))
+        direction_sign_b = _injection_direction_sign(row_b.get("injection_direction"))
+        direction_sign_c = _injection_direction_sign(row_c.get("injection_direction"))
+        if direction_sign_b is not None and direction_sign_c is not None and direction_sign_b != direction_sign_c:
+            direction_mismatch_count += 1
+            row_b["signed_delta"] = None
+            row_c["signed_delta"] = None
+            row_b["belief_update_failure"] = None
+            row_c["belief_update_failure"] = None
+            row_b["signed_delta_error"] = "injection_direction_mismatch"
+            row_c["signed_delta_error"] = "injection_direction_mismatch"
+            continue
+
+        row_b.pop("signed_delta_error", None)
+        row_c.pop("signed_delta_error", None)
+        direction_sign = direction_sign_b
         if direction_sign is None:
-            direction_sign = _injection_direction_sign(row_c.get("injection_direction"))
+            direction_sign = direction_sign_c
         if direction_sign is None:
             continue
 
@@ -1115,6 +1130,7 @@ def _summarize_signed_susceptibility(rows: List[Dict[str, Any]]) -> Dict[str, An
         "belief_update_failure_count": belief_update_failure_count,
         "belief_update_failure_rate": belief_update_failure_rate,
         "analyzed_pair_count": analyzed_pair_count,
+        "direction_mismatch_count": direction_mismatch_count,
     }
 
 

@@ -14,6 +14,7 @@ from .evaluator import (
     _normalize_probability_mapping,
     _validate_numeric_scores_mapping,
 )
+from .schemas import validate_event_results
 
 LegacyEvaluatorPayload: TypeAlias = tuple[Dict[str, float], float]
 
@@ -616,7 +617,9 @@ class BenchmarkRunOrchestrator:
                 )
 
         event_results_path = run_dir / "event_results.json"
+        validate_event_results(rows)
         event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         write_summary(run_dir, rows)
+        validate_event_results(rows)
         event_results_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         return run_dir

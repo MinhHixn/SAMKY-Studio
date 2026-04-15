@@ -865,6 +865,19 @@ def test_write_summary_includes_calibration_plot_artifact(tmp_path):
     assert (tmp_path / "calibration_curve.png").exists()
 
 
+def test_write_summary_schema_rejects_missing_required_blocks(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        protocol_script,
+        "summarize_event_results",
+        lambda *_args, **_kwargs: {"composite_score": {"composite_score": 0.4}},
+    )
+
+    with pytest.raises(ValueError, match="missing required blocks:"):
+        protocol_script.write_summary(tmp_path, [])
+
+    assert not (tmp_path / "summary.json").exists()
+
+
 def test_summarize_event_results_includes_convergence_block():
     rows = [
         {
@@ -1896,6 +1909,86 @@ def test_main_records_evaluation_failure_and_summary(monkeypatch, tmp_path):
     assert rows[0]["simulation_status"] == "evaluation_failed"
     assert rows[0]["unit_id"] == "E1_A_r1"
     assert summary["evaluation_failure_count"] == 1
+
+
+def test_main_schema_guard_raises_on_malformed_event_results(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    def malformed_row_builder(event, condition, repeat, **kwargs):
+        del kwargs
+        return {
+            "event_id": str(event["event_id"]),
+            "condition": condition,
+            "repeat": repeat,
+            "simulation_status": "completed",
+            "probabilities": {"A": 1.0},
+            "brier": 0.0,
+            "round_jsd": None,
+            "convergence_monotonic": None,
+            "baseline_scores": {"uniform_random": {"brier": 0.5}},
+            "rps": 0.0,
+            "calibration_bracket": "0.75-1.0",
+        }
+
+    monkeypatch.setattr(protocol_script, "build_event_result_row", malformed_row_builder)
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    with pytest.raises(ValueError, match=r"rows\[0\].+delta_conformity"):
+        protocol_script.main()
+
+
+def test_main_schema_guard_allows_valid_event_results(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    protocol_script.main()
+
+    row = json.loads((output_dir / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))[0]
+    for key in (
+        "event_id",
+        "condition",
+        "repeat",
+        "simulation_status",
+        "probabilities",
+        "brier",
+        "round_jsd",
+        "convergence_monotonic",
+        "baseline_scores",
+        "rps",
+        "calibration_bracket",
+        "delta_conformity",
+    ):
+        assert key in row
 
 
 def test_main_writes_artifacts(monkeypatch, tmp_path):

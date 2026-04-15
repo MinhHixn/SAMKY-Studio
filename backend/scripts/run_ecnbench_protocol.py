@@ -25,6 +25,7 @@ from app.benchmarks.layer23_registry import load_layer23_config
 from app.benchmarks.reliability import dominant_bucket_label, kappa_by_dimension
 from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
+from app.benchmarks.schemas import validate_summary_payload
 from app.config import Config
 from app.benchmarks.weight_registry import load_benchmark_weights
 from app.benchmarks.scoring import (
@@ -1287,6 +1288,7 @@ def write_summary(run_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         if isinstance(overall, Mapping):
             plot_path = run_dir / "calibration_curve.png"
             calibration["plot_path"] = write_calibration_plot(overall, plot_path)
+    validate_summary_payload(summary)
     (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 

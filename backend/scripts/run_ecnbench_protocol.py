@@ -657,15 +657,19 @@ def build_event_result_row(
     calibration_predicted_probability: float | None = None
     calibration_hit: int | None = None
     if normalized_probabilities and isinstance(ground_truth, str) and ground_truth.strip():
-        ordered_labels = _resolve_ordered_labels(event, normalized_probabilities)
-        rps = ranked_probability_score(normalized_probabilities, ground_truth.strip(), ordered_labels)
-        if predicted_label is not None:
-            calibration_predicted_probability = _finite_float_or_none(
-                normalized_probabilities.get(predicted_label)
-            )
-            if calibration_predicted_probability is not None:
-                calibration_bracket = assign_probability_bracket(calibration_predicted_probability)
-                calibration_hit = int(predicted_label == ground_truth.strip())
+        try:
+            ordered_labels = _resolve_ordered_labels(event, normalized_probabilities)
+            rps = ranked_probability_score(normalized_probabilities, ground_truth.strip(), ordered_labels)
+            if predicted_label is not None:
+                calibration_predicted_probability = _finite_float_or_none(
+                    normalized_probabilities.get(predicted_label)
+                )
+                if calibration_predicted_probability is not None:
+                    calibration_bracket = assign_probability_bracket(calibration_predicted_probability)
+                    calibration_hit = int(predicted_label == ground_truth.strip())
+        except ValueError as exc:
+            scoring_error = f"RPS/calibration unavailable: {exc}"
+            error = f"{error}; {scoring_error}" if error else scoring_error
     if seed_file:
         try:
             seed_metadata = load_seed_metadata(Path(seed_file).parent)
@@ -1006,6 +1010,11 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "ci_upper": None,
         "confidence": 0.95,
         "metric": "brier",
+        "mean_difference": None,
+        "pooled_std": None,
+        "n_a": float(len(brier_a)),
+        "n_b": float(len(brier_b)),
+        "error": None,
     }
     power_analysis: Dict[str, Any] = {
         "required_n_for_target_power": None,
@@ -1014,12 +1023,16 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "achieved_power": None,
     }
     if len(brier_a) >= 2 and len(brier_b) >= 2:
-        effect_size = compute_cohens_d_with_ci(brier_a, brier_b)
-        effect_size["metric"] = "brier"
-        power_analysis = compute_power_analysis(
-            actual_n,
-            observed_sigma=effect_size["pooled_std"],
-        )
+        try:
+            effect_size = compute_cohens_d_with_ci(brier_a, brier_b)
+            effect_size["metric"] = "brier"
+            effect_size["error"] = None
+            power_analysis = compute_power_analysis(
+                actual_n,
+                observed_sigma=effect_size["pooled_std"],
+            )
+        except ValueError as exc:
+            effect_size["error"] = f"Cohen's d undefined: {exc}"
     summary["effect_size"] = effect_size
     summary["power_analysis"] = power_analysis
     round_jsd_means = [

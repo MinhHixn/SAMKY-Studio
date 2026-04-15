@@ -533,6 +533,28 @@ def test_build_event_result_row_includes_rps_and_calibration_fields():
     assert row["calibration_hit"] == 1
 
 
+def test_build_event_result_row_handles_rps_probability_option_label_mismatch():
+    event = {"event_id": "E1", "question": "Q", "outcome": "B", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.2, "B": 0.3, "C": 0.5},
+        brier=0.2,
+    )
+
+    assert row["rps"] is None
+    assert row["calibration_bracket"] is None
+    assert row["calibration_predicted_probability"] is None
+    assert row["calibration_hit"] is None
+    assert "RPS/calibration unavailable" in row["error"]
+    assert "not present in ordered_labels" in row["error"]
+
+
 def test_build_event_result_row_includes_seed_metadata_contract_keys():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 
@@ -923,6 +945,23 @@ def test_summarize_event_results_includes_statistical_blocks():
     assert summary["power_analysis"]["actual_n"] == 2
     assert summary["calibration"]["overall"]["0-0.25"]["count"] == 2
     assert summary["calibration"]["overall"]["0-0.25"]["hits"] == 1
+
+
+def test_summarize_event_results_handles_undefined_cohens_d():
+    rows = [
+        {"condition": "A", "brier": 0.2, "simulation_status": "completed"},
+        {"condition": "A", "brier": 0.2, "simulation_status": "completed"},
+        {"condition": "B", "brier": 0.4, "simulation_status": "completed"},
+        {"condition": "B", "brier": 0.4, "simulation_status": "completed"},
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["effect_size"]["cohens_d"] is None
+    assert summary["effect_size"]["ci_lower"] is None
+    assert summary["effect_size"]["ci_upper"] is None
+    assert summary["effect_size"]["error"] is not None
+    assert "Cohen's d undefined" in summary["effect_size"]["error"]
 
 
 def test_summarize_event_results_includes_composite_score_block():

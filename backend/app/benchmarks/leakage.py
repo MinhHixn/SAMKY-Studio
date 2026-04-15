@@ -53,11 +53,20 @@ def _parse_iso_date(value: Any, *, field_name: str, event_id: str) -> date:
             raise ValueError(f"{event_id}: unable to parse {field_name} value {value!r} as ISO date") from exc
 
 
-def _resolve_seed_path(event: Mapping[str, Any], seed_files: Sequence[Path], event_index: int) -> Path:
+def _resolve_seed_path(
+    event: Mapping[str, Any],
+    seed_files: Sequence[Path],
+    event_index: int,
+    *,
+    seed_base_dir: Path | None = None,
+) -> Path:
     for key in SEED_PATH_KEYS:
         raw_path = event.get(key)
         if isinstance(raw_path, str) and raw_path.strip():
-            return Path(raw_path)
+            path = Path(raw_path)
+            if seed_base_dir is not None and not path.is_absolute():
+                return seed_base_dir / path
+            return path
     if not seed_files:
         raise ValueError(f"{_resolve_event_id(event, event_index)}: no seed files available for leakage preflight")
     return Path(seed_files[event_index % len(seed_files)])
@@ -104,6 +113,8 @@ def validate_leakage_preflight(
     events: Iterable[Mapping[str, Any]],
     seed_files: Sequence[Path],
     layer23_config: Mapping[str, Any],
+    *,
+    seed_base_dir: Path | str | None = None,
 ) -> None:
     pattern_raw = layer23_config.get("leakage_outcome_regex")
     if not isinstance(pattern_raw, str) or not pattern_raw.strip():
@@ -117,9 +128,15 @@ def validate_leakage_preflight(
     leakage_outcome_pattern = re.compile(pattern_raw, re.IGNORECASE)
     failures: list[str] = []
 
+    resolved_seed_base_dir = Path(seed_base_dir) if seed_base_dir is not None else None
     for event_index, event in enumerate(events):
         event_id = _resolve_event_id(event, event_index)
-        seed_path = _resolve_seed_path(event, seed_files, event_index)
+        seed_path = _resolve_seed_path(
+            event,
+            seed_files,
+            event_index,
+            seed_base_dir=resolved_seed_base_dir,
+        )
         try:
             seed_text = seed_path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:

@@ -1145,10 +1145,12 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
         monkeypatch.setattr(protocol_script, "_evaluate_row", lambda *args, **kwargs: ({"A": 1.0}, 0.0))
 
 
-def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
+def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypatch, tmp_path):
     captured: dict[str, object] = {}
     config_builder_calls: list[tuple[dict[str, object], str, list[dict[str, object]], object, str]] = []
     executor_ctor_calls: dict[str, object] = {}
+    seed_file = tmp_path / "seed.md"
+    seed_file.write_text("Neutral background text only.", encoding="utf-8")
 
     class DummyInjectionLoader:
         def has_event(self, event_id):
@@ -1190,10 +1192,13 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
                 "outcome": "A",
                 "options": ["A", "B"],
                 "polymarket_opening_prior": {"A": 0.5, "B": 0.5},
+                "seed_date": "2024-01-01",
+                "resolution_date": "2024-01-10",
+                "seed_file": "seed.md",
             }
         ],
     )
-    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [tmp_path / "seed.md"])
+    monkeypatch.setattr(protocol_script, "load_seed_files", lambda *args, **kwargs: [seed_file])
     monkeypatch.setattr(protocol_script, "build_profiles", lambda *args, **kwargs: [{"agent_id": 1}])
     monkeypatch.setattr(
         protocol_script.BenchmarkRoleRouter,
@@ -1241,6 +1246,9 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
         "outcome": "A",
         "options": ["A", "B"],
         "polymarket_opening_prior": {"A": 0.5, "B": 0.5},
+        "seed_date": "2024-01-01",
+        "resolution_date": "2024-01-10",
+        "seed_file": "seed.md",
     }
     assert captured["events"] == [expected_event]
     assert captured["repeats"] == 1
@@ -1257,6 +1265,7 @@ def test_main_delegates_run_loop_to_orchestrator(monkeypatch, tmp_path):
     assert captured["manifest"]["jsd_monotonic_tolerance_epsilon"] == pytest.approx(0.002)
     assert captured["manifest"]["baseline_agents"] == ["uniform_random", "market_prior"]
     assert captured["manifest"]["preflight_market_prior_check"] == "pass"
+    assert captured["manifest"]["leakage_check"] == "pass"
     assert captured["run_dir_exists_before_run"] is False
     assert captured["manifest_exists_before_run"] is False
     assert captured["built_config"] == {"event_id": "E1", "condition": "A"}

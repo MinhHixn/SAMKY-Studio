@@ -955,7 +955,12 @@ def main() -> None:
             f"expected {implemented_baseline_agent_ids}, got {baseline_agent_ids}"
         )
 
-    validate_leakage_preflight(events, seed_files, layer23_cfg)
+    validate_leakage_preflight(
+        events,
+        seed_files,
+        layer23_cfg,
+        seed_base_dir=args.seeds_dir,
+    )
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()

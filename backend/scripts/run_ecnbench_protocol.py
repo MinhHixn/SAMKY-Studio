@@ -22,6 +22,7 @@ from app.benchmarks.leakage import validate_leakage_preflight
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
 from app.benchmarks.layer23_registry import load_layer23_config
+from app.benchmarks.reliability import dominant_bucket_label, kappa_by_dimension
 from app.benchmarks.seed_metadata import load_seed_metadata
 from app.benchmarks.role_router import BenchmarkRoleRouter
 from app.config import Config
@@ -89,6 +90,8 @@ TARGET_AGENT_COUNT = 3000
 TOTAL_SIMULATION_HOURS = 60
 MINUTES_PER_ROUND = 60
 SIMULATION_SUBPROCESS_TIMEOUT_SECONDS = TOTAL_SIMULATION_HOURS * 60 * 60
+DEFAULT_KAPPA_CUTOFF = 0.8
+_RUNTIME_KAPPA_CUTOFF = DEFAULT_KAPPA_CUTOFF
 
 COMPOSITE_SCORE_KEY_MAP = {
     "prediction_accuracy": "prediction_accuracy_score",
@@ -625,6 +628,7 @@ def build_event_result_row(
     signed_delta: float | None = None,
     belief_update_failure: bool | None = None,
     evaluator_noisy_dimensions: Any = None,
+    evaluator_dimension_labels: Any = None,
     round_jsd: list[float] | None = None,
     convergence_monotonic: bool | None = None,
     baseline_scores: Mapping[str, Any] | None = None,
@@ -736,6 +740,9 @@ def build_event_result_row(
         "signed_delta": signed_delta,
         "belief_update_failure": belief_update_failure,
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
+        "evaluator_dimension_labels": (
+            dict(evaluator_dimension_labels) if isinstance(evaluator_dimension_labels, Mapping) else None
+        ),
         "mcq_dimensions": dict(mcq_dimensions) if isinstance(mcq_dimensions, Mapping) else None,
         "validated_scales": dict(validated_scales) if isinstance(validated_scales, Mapping) else None,
         "round_jsd": list(resolved_round_jsd) if isinstance(resolved_round_jsd, list) else resolved_round_jsd,
@@ -823,24 +830,41 @@ def _evaluate_row(
     router: BenchmarkRoleRouter,
 ) -> Dict[str, Any]:
     evaluator = ProbabilityEvaluator(router)
-    evaluation = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
-    probabilities = evaluation.get("normalized_probabilities") or evaluation.get("probabilities")
+    evaluation_run1 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+    evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+    probabilities = evaluation_run1.get("normalized_probabilities") or evaluation_run1.get("probabilities")
     if not isinstance(probabilities, Mapping):
         raise ValueError("Evaluator did not return probabilities")
-    mcq_dimensions = evaluation.get("mcq_dimensions")
-    validated_scales = evaluation.get("validated_scales")
+    mcq_dimensions = evaluation_run1.get("mcq_dimensions")
+    validated_scales = evaluation_run1.get("validated_scales")
+    mcq_dimensions_run2 = evaluation_run2.get("mcq_dimensions")
     if not isinstance(mcq_dimensions, Mapping):
         raise ValueError("Evaluator did not return mcq_dimensions")
     if not isinstance(validated_scales, Mapping):
         raise ValueError("Evaluator did not return validated_scales")
-    evaluator_noisy_dimensions = [str(dimension) for dimension in _as_list(evaluation.get("evaluator_noisy_dimensions"))]
+    if not isinstance(mcq_dimensions_run2, Mapping):
+        raise ValueError("Evaluator second run did not return mcq_dimensions")
+    evaluator_noisy_dimensions = [
+        str(dimension) for dimension in _as_list(evaluation_run1.get("evaluator_noisy_dimensions"))
+    ]
+    evaluator_dimension_labels: Dict[str, Dict[str, str]] = {}
+    for dimension, buckets_run1_raw in mcq_dimensions.items():
+        if not isinstance(dimension, str) or not isinstance(buckets_run1_raw, Mapping):
+            continue
+        buckets_run2_raw = mcq_dimensions_run2.get(dimension)
+        if not isinstance(buckets_run2_raw, Mapping):
+            continue
+        evaluator_dimension_labels[dimension] = {
+            "run1": dominant_bucket_label(buckets_run1_raw),
+            "run2": dominant_bucket_label(buckets_run2_raw),
+        }
 
     ground_truth = event.get("outcome") or event.get("answer", "")
     if not isinstance(ground_truth, str) or not ground_truth.strip():
         raise ValueError("Event is missing a ground-truth outcome")
 
     normalized_probabilities = {str(label): float(value) for label, value in probabilities.items()}
-    directional_accuracy = _finite_float_or_none(evaluation.get("directional_accuracy"))
+    directional_accuracy = _finite_float_or_none(evaluation_run1.get("directional_accuracy"))
     if directional_accuracy is None:
         predicted_label = max(
             ((str(label), float(value)) for label, value in normalized_probabilities.items()),
@@ -855,7 +879,7 @@ def _evaluate_row(
     else:
         normalized_scores = {}
 
-    weighted_rubric_score = _finite_float_or_none(evaluation.get("weighted_rubric_score"))
+    weighted_rubric_score = _finite_float_or_none(evaluation_run1.get("weighted_rubric_score"))
     if weighted_rubric_score is None:
         weighted_rubric_score = _finite_float_or_none(normalized_scores.get("weighted_rubric_score"))
     if weighted_rubric_score is None:
@@ -872,6 +896,7 @@ def _evaluate_row(
         "directional_accuracy": directional_accuracy,
         "weighted_rubric_score": weighted_rubric_score,
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
+        "evaluator_dimension_labels": evaluator_dimension_labels,
     }
 
 
@@ -895,14 +920,32 @@ def _summarize_composite_score(rows: List[Dict[str, Any]], noisy_dimensions: Ite
     return compute_composite_score(averaged_scores, _load_composite_weights(), noisy_dimensions=noisy_dimensions)
 
 
-def _summarize_evaluator_reliability(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    noisy_dimensions: set[str] = set()
-    for row in rows:
-        for dimension in _as_list(row.get("evaluator_noisy_dimensions")):
-            dimension_key = str(dimension).strip()
-            if dimension_key:
-                noisy_dimensions.add(dimension_key)
-    return {"evaluator_noisy": sorted(noisy_dimensions)}
+def _summarize_evaluator_reliability(
+    rows: List[Dict[str, Any]],
+    *,
+    kappa_cutoff: float = DEFAULT_KAPPA_CUTOFF,
+) -> Dict[str, Any]:
+    kappa_scores = kappa_by_dimension(rows)
+    noisy_dimensions = sorted(
+        dimension for dimension, kappa_value in kappa_scores.items() if float(kappa_value) < float(kappa_cutoff)
+    )
+    if not kappa_scores:
+        noisy_dimensions = sorted(
+            {
+                str(dimension).strip()
+                for row in rows
+                for dimension in _as_list(row.get("evaluator_noisy_dimensions"))
+                if str(dimension).strip()
+            }
+        )
+    dropped_dimensions_count = len(noisy_dimensions)
+    return {
+        "kappa_by_dimension": kappa_scores,
+        "evaluator_noisy": noisy_dimensions,
+        "dropped_dimensions_count": dropped_dimensions_count,
+        "evaluator_unstable": dropped_dimensions_count >= 2,
+        "kappa_cutoff": float(kappa_cutoff),
+    }
 
 
 def _summarize_rps(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -960,7 +1003,11 @@ def _collect_metric_values(rows: List[Dict[str, Any]], condition: str, metric: s
     return values
 
 
-def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_event_results(
+    rows: List[Dict[str, Any]],
+    *,
+    kappa_cutoff: float = DEFAULT_KAPPA_CUTOFF,
+) -> Dict[str, Any]:
     completed_rows = [row for row in rows if row.get("simulation_status") == "completed"]
     simulation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "simulation_failed")
     evaluation_failed_count = sum(1 for row in rows if row.get("simulation_status") == "evaluation_failed")
@@ -968,7 +1015,10 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     summary["rubric"] = summarize_rubric_artifacts(completed_rows)
     summary["directional_accuracy"] = summarize_directional_accuracy(completed_rows)
     summary["weighted_rubric_score"] = summarize_weighted_rubric_score(completed_rows)
-    summary["evaluator_reliability"] = _summarize_evaluator_reliability(completed_rows)
+    summary["evaluator_reliability"] = _summarize_evaluator_reliability(
+        completed_rows,
+        kappa_cutoff=kappa_cutoff,
+    )
     evaluator_reliability = summary["evaluator_reliability"]
     noisy_dimensions: List[str] = []
     if isinstance(evaluator_reliability, Mapping):
@@ -1062,7 +1112,7 @@ def summarize_event_results(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def write_summary(run_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    summary = summarize_event_results(rows)
+    summary = summarize_event_results(rows, kappa_cutoff=_RUNTIME_KAPPA_CUTOFF)
     calibration = summary.get("calibration")
     if isinstance(calibration, Mapping):
         overall = calibration.get("overall")
@@ -1098,6 +1148,8 @@ def main() -> None:
     injection_loader = Step30InjectionLoader(args.injection_bank)
     validate_injection_coverage(events, injection_loader)
     layer23_cfg = load_layer23_config(DEFAULT_LAYER23_CONFIG_PATH)
+    global _RUNTIME_KAPPA_CUTOFF
+    _RUNTIME_KAPPA_CUTOFF = float(layer23_cfg.get("kappa_cutoff", DEFAULT_KAPPA_CUTOFF))
     phase1_cfg = load_phase1_config(DEFAULT_PHASE1_CONFIG_PATH)
     for event in events:
         validate_polymarket_opening_prior(

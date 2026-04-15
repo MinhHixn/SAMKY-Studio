@@ -1025,13 +1025,16 @@ def test_summarize_event_results_includes_composite_score_block():
     assert composite["composite_score"] == pytest.approx(0.455)
 
 
-def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composite_score():
+def test_summarize_event_results_uses_kappa_evaluator_reliability_for_composite_score():
     rows = [
         {
             "condition": "A",
             "brier": 0.2,
             "simulation_status": "completed",
-            "evaluator_noisy_dimensions": ["convergence"],
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "high", "run2": "low"},
+                "herd_effect": {"run1": "low", "run2": "high"},
+            },
             "validated_scales": {
                 "scores": {
                     "prediction_accuracy_score": 0.9,
@@ -1049,7 +1052,10 @@ def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composi
             "condition": "B",
             "brier": 0.3,
             "simulation_status": "completed",
-            "evaluator_noisy_dimensions": ["herd_effect"],
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "low", "run2": "high"},
+                "herd_effect": {"run1": "high", "run2": "low"},
+            },
             "validated_scales": {
                 "scores": {
                     "prediction_accuracy_score": 0.9,
@@ -1065,11 +1071,18 @@ def test_summarize_event_results_uses_row_evaluator_noisy_dimensions_for_composi
         },
     ]
 
-    summary = protocol_script.summarize_event_results(rows)
+    summary = protocol_script.summarize_event_results(rows, kappa_cutoff=0.8)
     composite = summary["composite_score"]
 
     assert summary["evaluator_reliability"] == {
+        "kappa_by_dimension": {
+            "convergence": pytest.approx(-1.0),
+            "herd_effect": pytest.approx(-1.0),
+        },
         "evaluator_noisy": ["convergence", "herd_effect"],
+        "dropped_dimensions_count": 2,
+        "evaluator_unstable": True,
+        "kappa_cutoff": 0.8,
     }
     assert composite["excluded_dimensions"] == ["convergence", "herd_effect"]
     assert set(composite["included_dimensions"]) == {
@@ -1088,7 +1101,9 @@ def test_summarize_event_results_ignores_failed_rows_when_aggregating_evaluator_
             "condition": "A",
             "brier": 0.2,
             "simulation_status": "completed",
-            "evaluator_noisy_dimensions": ["convergence"],
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "high", "run2": "high"},
+            },
             "validated_scales": {
                 "scores": {
                     "prediction_accuracy_score": 0.9,
@@ -1103,10 +1118,32 @@ def test_summarize_event_results_ignores_failed_rows_when_aggregating_evaluator_
             },
         },
         {
+            "condition": "A",
+            "brier": 0.21,
+            "simulation_status": "completed",
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "low", "run2": "low"},
+            },
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.91,
+                    "polarization_score": 0.51,
+                    "herd_effect_score": 0.31,
+                    "deliberation_quality_score": 0.41,
+                    "susceptibility_score": 0.21,
+                    "convergence_score": 0.11,
+                    "information_diversity_score": 0.61,
+                    "weighted_rubric_score": 0.81,
+                }
+            },
+        },
+        {
             "condition": "B",
             "brier": None,
             "simulation_status": "evaluation_failed",
-            "evaluator_noisy_dimensions": ["herd_effect"],
+            "evaluator_dimension_labels": {
+                "convergence": {"run1": "very_low", "run2": "very_high"},
+            },
             "validated_scales": {
                 "scores": {
                     "prediction_accuracy_score": 0.3,
@@ -1124,50 +1161,125 @@ def test_summarize_event_results_ignores_failed_rows_when_aggregating_evaluator_
 
     summary = protocol_script.summarize_event_results(rows)
 
-    assert summary["evaluator_reliability"] == {"evaluator_noisy": ["convergence"]}
+    assert summary["evaluator_reliability"] == {
+        "kappa_by_dimension": {"convergence": pytest.approx(1.0)},
+        "evaluator_noisy": [],
+        "dropped_dimensions_count": 0,
+        "evaluator_unstable": False,
+        "kappa_cutoff": 0.8,
+    }
+    assert summary["composite_score"]["excluded_dimensions"] == []
+
+
+def test_summarize_event_results_uses_legacy_evaluator_noisy_dimensions_when_kappa_missing():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "evaluator_noisy_dimensions": ["convergence", 123],
+            "validated_scales": {
+                "scores": {
+                    "prediction_accuracy_score": 0.9,
+                    "polarization_score": 0.5,
+                    "herd_effect_score": 0.3,
+                    "deliberation_quality_score": 0.4,
+                    "susceptibility_score": 0.2,
+                    "convergence_score": 0.1,
+                    "information_diversity_score": 0.6,
+                    "weighted_rubric_score": 0.8,
+                }
+            },
+        }
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["evaluator_reliability"] == {
+        "kappa_by_dimension": {},
+        "evaluator_noisy": ["123", "convergence"],
+        "dropped_dimensions_count": 2,
+        "evaluator_unstable": True,
+        "kappa_cutoff": 0.8,
+    }
     assert summary["composite_score"]["excluded_dimensions"] == ["convergence"]
 
 
-def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_them(monkeypatch):
-    mcq_dimensions = {
-        key: {"very_low": 1.0, "low": 1.0, "high": 1.0, "very_high": 1.0}
-        for key in (
-            "prediction_accuracy",
-            "polarization",
-            "herd_effect",
-            "deliberation_quality",
-            "susceptibility",
-            "convergence",
-            "information_diversity",
-        )
+def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypatch):
+    run1_labels = {
+        "prediction_accuracy": "high",
+        "polarization": "low",
+        "herd_effect": "high",
+        "deliberation_quality": "high",
+        "susceptibility": "low",
+        "convergence": "high",
+        "information_diversity": "very_high",
     }
+    run2_labels = {
+        "prediction_accuracy": "high",
+        "polarization": "low",
+        "herd_effect": "low",
+        "deliberation_quality": "high",
+        "susceptibility": "low",
+        "convergence": "low",
+        "information_diversity": "very_high",
+    }
+
+    def _build_mcq_dimensions(labels):
+        mcq_dimensions = {}
+        for dimension, bucket in labels.items():
+            mcq_dimensions[dimension] = {"very_low": 0.0, "low": 0.0, "high": 0.0, "very_high": 0.0}
+            mcq_dimensions[dimension][bucket] = 1.0
+        return mcq_dimensions
 
     class FakeRouter:
         def model_for(self, role):
             return "openrouter/benchmark-model"
 
     class FakeEvaluator:
+        calls = []
+
         def __init__(self, router):
             self.router = router
 
         def evaluate(self, question, condition, evidence_text):
+            FakeEvaluator.calls.append((question, condition, evidence_text))
+            if len(FakeEvaluator.calls) == 1:
+                return {
+                    "probabilities": {"A": 0.7, "B": 0.3},
+                    "mcq_dimensions": _build_mcq_dimensions(run1_labels),
+                    "validated_scales": {
+                        "schema_version": "v1",
+                        "scores": {
+                            "prediction_accuracy_score": 0.9,
+                            "polarization_score": 0.5,
+                            "herd_effect_score": 0.3,
+                            "deliberation_quality_score": 0.4,
+                            "susceptibility_score": 0.2,
+                            "convergence_score": 0.1,
+                            "information_diversity_score": 0.6,
+                            "weighted_rubric_score": 0.8,
+                        },
+                    },
+                    "evaluator_noisy_dimensions": ("convergence", 123),
+                }
             return {
-                "probabilities": {"A": 0.7, "B": 0.3},
-                "mcq_dimensions": mcq_dimensions,
+                "probabilities": {"A": 0.1, "B": 0.9},
+                "mcq_dimensions": _build_mcq_dimensions(run2_labels),
                 "validated_scales": {
                     "schema_version": "v1",
                     "scores": {
-                        "prediction_accuracy_score": 0.9,
-                        "polarization_score": 0.5,
-                        "herd_effect_score": 0.3,
-                        "deliberation_quality_score": 0.4,
-                        "susceptibility_score": 0.2,
-                        "convergence_score": 0.1,
-                        "information_diversity_score": 0.6,
-                        "weighted_rubric_score": 0.8,
+                        "prediction_accuracy_score": 0.1,
+                        "polarization_score": 0.1,
+                        "herd_effect_score": 0.1,
+                        "deliberation_quality_score": 0.1,
+                        "susceptibility_score": 0.1,
+                        "convergence_score": 0.9,
+                        "information_diversity_score": 0.1,
+                        "weighted_rubric_score": 0.1,
                     },
                 },
-                "evaluator_noisy_dimensions": ("convergence", 123),
+                "evaluator_noisy_dimensions": ("herd_effect",),
             }
 
     monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
@@ -1179,7 +1291,12 @@ def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_th
         FakeRouter(),
     )
 
+    assert len(FakeEvaluator.calls) == 2
+    assert row["probabilities"] == {"A": pytest.approx(0.7), "B": pytest.approx(0.3)}
     assert row["evaluator_noisy_dimensions"] == ["convergence", "123"]
+    assert row["validated_scales"]["scores"]["prediction_accuracy_score"] == pytest.approx(0.9)
+    assert row["evaluator_dimension_labels"]["convergence"] == {"run1": "high", "run2": "low"}
+    assert row["evaluator_dimension_labels"]["herd_effect"] == {"run1": "high", "run2": "low"}
 
     row["condition"] = "A"
     row["simulation_status"] = "completed"
@@ -1188,11 +1305,25 @@ def test_evaluate_row_returns_evaluator_noisy_dimensions_and_summary_excludes_th
     failed_row["simulation_status"] = "evaluation_failed"
     failed_row["evaluator_noisy_dimensions"] = ["herd_effect"]
 
-    summary = protocol_script.summarize_event_results([row, failed_row])
+    summary = protocol_script.summarize_event_results([row, failed_row], kappa_cutoff=0.8)
     composite = summary["composite_score"]
 
-    assert summary["evaluator_reliability"] == {"evaluator_noisy": ["123", "convergence"]}
-    assert composite["excluded_dimensions"] == ["convergence"]
+    assert summary["evaluator_reliability"] == {
+        "kappa_by_dimension": {
+            "convergence": pytest.approx(0.0),
+            "deliberation_quality": pytest.approx(1.0),
+            "herd_effect": pytest.approx(0.0),
+            "information_diversity": pytest.approx(1.0),
+            "polarization": pytest.approx(1.0),
+            "prediction_accuracy": pytest.approx(1.0),
+            "susceptibility": pytest.approx(1.0),
+        },
+        "evaluator_noisy": ["convergence", "herd_effect"],
+        "dropped_dimensions_count": 2,
+        "evaluator_unstable": True,
+        "kappa_cutoff": 0.8,
+    }
+    assert composite["excluded_dimensions"] == ["convergence", "herd_effect"]
     assert "convergence" not in composite["included_dimensions"]
 
 

@@ -1045,6 +1045,79 @@ def _collect_metric_values(rows: List[Dict[str, Any]], condition: str, metric: s
     return values
 
 
+def _injection_direction_sign(injection_direction: Any) -> float | None:
+    if not isinstance(injection_direction, str):
+        return None
+    normalized = injection_direction.strip().casefold().replace("-", "_")
+    if normalized == "pro_yes":
+        return 1.0
+    if normalized == "anti_yes":
+        return -1.0
+    return None
+
+
+def _summarize_signed_susceptibility(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    paired_rows: Dict[tuple[str, Any], Dict[str, Dict[str, Any]]] = {}
+    for row in rows:
+        condition = str(row.get("condition", ""))
+        if condition not in {"B", "C"}:
+            continue
+        event_id = row.get("event_id")
+        repeat = row.get("repeat")
+        if event_id is None or repeat is None:
+            continue
+        pair_key = (str(event_id), repeat)
+        pair = paired_rows.setdefault(pair_key, {})
+        pair[condition] = row
+
+    signed_deltas: List[float] = []
+    belief_update_failure_count = 0
+    for pair in paired_rows.values():
+        row_b = pair.get("B")
+        row_c = pair.get("C")
+        if row_b is None or row_c is None:
+            continue
+        p_yes_b = _finite_float_or_none(row_b.get("yes_probability"))
+        p_yes_c = _finite_float_or_none(row_c.get("yes_probability"))
+        if p_yes_b is None or p_yes_c is None:
+            continue
+
+        direction_sign = _injection_direction_sign(row_b.get("injection_direction"))
+        if direction_sign is None:
+            direction_sign = _injection_direction_sign(row_c.get("injection_direction"))
+        if direction_sign is None:
+            continue
+
+        signed_delta = direction_sign * (p_yes_b - p_yes_c)
+        belief_update_failure = signed_delta < 0
+        row_b["signed_delta"] = signed_delta
+        row_c["signed_delta"] = signed_delta
+        row_b["belief_update_failure"] = belief_update_failure
+        row_c["belief_update_failure"] = belief_update_failure
+
+        signed_deltas.append(signed_delta)
+        if belief_update_failure:
+            belief_update_failure_count += 1
+
+    analyzed_pair_count = len(signed_deltas)
+    directional_accuracy = (
+        round((analyzed_pair_count - belief_update_failure_count) / analyzed_pair_count, 6)
+        if analyzed_pair_count
+        else 0.0
+    )
+    belief_update_failure_rate = (
+        round(belief_update_failure_count / analyzed_pair_count, 6) if analyzed_pair_count else 0.0
+    )
+    mean_signed_delta = round(sum(signed_deltas) / analyzed_pair_count, 6) if analyzed_pair_count else 0.0
+    return {
+        "mean_signed_delta": mean_signed_delta,
+        "directional_accuracy": directional_accuracy,
+        "belief_update_failure_count": belief_update_failure_count,
+        "belief_update_failure_rate": belief_update_failure_rate,
+        "analyzed_pair_count": analyzed_pair_count,
+    }
+
+
 def summarize_event_results(
     rows: List[Dict[str, Any]],
     *,
@@ -1091,6 +1164,7 @@ def summarize_event_results(
             ),
         },
     }
+    summary["signed_susceptibility"] = _summarize_signed_susceptibility(completed_rows)
     summary["rps"] = _summarize_rps(completed_rows)
     summary["calibration"] = _summarize_calibration(completed_rows)
     brier_a = _collect_metric_values(completed_rows, "A", "brier")

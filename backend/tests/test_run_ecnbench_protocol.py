@@ -2179,3 +2179,126 @@ def test_summarize_event_results_includes_content_susceptibility_and_strict_cont
     assert summary["content_susceptibility"]["delta"]["B_minus_C"] == pytest.approx(0.5)
     assert summary["strict_contract"]["strict_contract_completed_count"] == 2
     assert summary["strict_contract"]["legacy_contract_completed_count"] == 1
+
+
+def test_signed_susceptibility_pro_yes_positive_delta_has_no_belief_update_failure():
+    rows = [
+        {
+            "event_id": "E1",
+            "repeat": 1,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.8,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E1",
+            "repeat": 1,
+            "condition": "C",
+            "brier": 0.3,
+            "yes_probability": 0.3,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["signed_susceptibility"]["mean_signed_delta"] == pytest.approx(0.5)
+    assert summary["signed_susceptibility"]["directional_accuracy"] == pytest.approx(1.0)
+    assert summary["signed_susceptibility"]["belief_update_failure_count"] == 0
+    assert summary["signed_susceptibility"]["belief_update_failure_rate"] == pytest.approx(0.0)
+    assert summary["signed_susceptibility"]["analyzed_pair_count"] == 1
+    assert rows[0]["signed_delta"] == pytest.approx(0.5)
+    assert rows[0]["belief_update_failure"] is False
+    assert rows[1]["signed_delta"] == pytest.approx(0.5)
+    assert rows[1]["belief_update_failure"] is False
+
+
+def test_belief_update_failure_anti_yes_positive_raw_delta_is_failure():
+    rows = [
+        {
+            "event_id": "E2",
+            "repeat": 2,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.7,
+            "injection_direction": "anti_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E2",
+            "repeat": 2,
+            "condition": "C",
+            "brier": 0.2,
+            "yes_probability": 0.2,
+            "injection_direction": "anti_YES",
+            "simulation_status": "completed",
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["signed_susceptibility"]["mean_signed_delta"] == pytest.approx(-0.5)
+    assert summary["signed_susceptibility"]["directional_accuracy"] == pytest.approx(0.0)
+    assert summary["signed_susceptibility"]["belief_update_failure_count"] == 1
+    assert summary["signed_susceptibility"]["belief_update_failure_rate"] == pytest.approx(1.0)
+    assert summary["signed_susceptibility"]["analyzed_pair_count"] == 1
+    assert rows[0]["belief_update_failure"] is True
+    assert rows[1]["belief_update_failure"] is True
+
+
+def test_signed_susceptibility_missing_bc_pair_excluded_from_analyzed_count():
+    rows = [
+        {
+            "event_id": "E1",
+            "repeat": 1,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.6,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E1",
+            "repeat": 1,
+            "condition": "C",
+            "brier": 0.2,
+            "yes_probability": 0.3,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E3",
+            "repeat": 1,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.9,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E4",
+            "repeat": 1,
+            "condition": "B",
+            "brier": 0.2,
+            "yes_probability": 0.9,
+            "injection_direction": "pro_YES",
+            "simulation_status": "completed",
+        },
+        {
+            "event_id": "E4",
+            "repeat": 1,
+            "condition": "C",
+            "brier": 0.2,
+            "yes_probability": 0.1,
+            "injection_direction": "pro_YES",
+            "simulation_status": "evaluation_failed",
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["signed_susceptibility"]["analyzed_pair_count"] == 1
+    assert summary["signed_susceptibility"]["mean_signed_delta"] == pytest.approx(0.3)

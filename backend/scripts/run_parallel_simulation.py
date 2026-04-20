@@ -1035,14 +1035,28 @@ def _is_headless_mode_enabled() -> bool:
 
 _TELEMETRY_DISTRIBUTION_SUM_MIN = 0.95
 _TELEMETRY_DISTRIBUTION_SUM_MAX = 1.05
-_TELEMETRY_PROBE_BINARY_PROMPT_TEMPLATE = (
-    "--- AUTHORITATIVE SYSTEM OVERRIDE: SUSPEND PERSONA ROLEPLAY ---\n"
-    "You are currently participating in a prediction benchmark telemetry probe.\n"
-    "Regardless of your assigned persona's background or stated limitations, you MUST now act as a predictive processing unit.\n"
-    "Target question: {question}\n"
+_TELEMETRY_PROBE_CONTEXTUAL_SYSTEM_PROMPT = """You are the following persona:
+Bio: {bio}
+Persona: {persona}
+
+Recent Events on your Timeline:
+{memory}
+
+TASK: Based STRICTLY on your persona's worldview and the recent events you have observed, estimate the probability of the following outcome. You must respond with your internal, subjective belief as a probability between 0.0 and 1.0."""
+
+_TELEMETRY_PROBE_BINARY_PROMPT_FOOTER = (
+    "\nTarget question: {question}\n"
     "Return only valid JSON with one key exactly named yes_probability.\n"
-    "Example: {{\"yes_probability\": 0.63}}\n"
+    "Example: {\"yes_probability\": 0.63}\n"
     "Constraints: JSON only, no prose, no markdown, no persona-based refusals. Value must be between 0 and 1."
+)
+
+_TELEMETRY_PROBE_CATEGORICAL_PROMPT_FOOTER = (
+    "\nTarget question: {question}\n"
+    "Valid options: {options_json}\n"
+    "Return only valid JSON where keys are exactly the option strings above and values are probabilities.\n"
+    "Example: {example_json}\n"
+    "Constraints: JSON only, no prose, no markdown, no persona-based refusals, every value must be between 0 and 1, and values must sum to 1."
 )
 
 
@@ -1399,6 +1413,72 @@ def _serialize_probe_response_snippet(payload: Any, max_chars: int = 280) -> str
     return compact[: max_chars - 3] + "..."
 
 
+def _get_agent_recent_memory_summary(db_path: str, agent_id: int, limit: int = 5) -> str:
+    """
+    Retrieve a natural language summary of the agent's recent dynamic history from the simulation database.
+    """
+    if not os.path.exists(db_path):
+        return "No recent observations recorded."
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get standard actions and potentially observations if tracked
+        cursor.execute("""
+            SELECT action, info, created_at
+            FROM trace
+            WHERE user_id = ? AND action NOT IN ('refresh', 'sign_up')
+            ORDER BY rowid DESC
+            LIMIT ?
+        """, (agent_id, limit))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return "No recent observations recorded."
+            
+        memories = []
+        for action, info_json, created_at in rows:
+            try:
+                info = json.loads(info_json) if info_json else {}
+                # Map technical action names to natural language for the persona
+                if action == 'create_post':
+                    memories.append(f"- You posted: \"{info.get('content', '')}\"")
+                elif action == 'like_post':
+                    memories.append(f"- You liked a post by {info.get('post_author_name', 'someone')}: \"{info.get('post_content', '')[:100]}...\"")
+                elif action == 'repost':
+                    memories.append(f"- You reposted content by {info.get('post_author_name', 'someone')}")
+                elif action == 'quote_post':
+                    memories.append(f"- You quoted {info.get('original_author_name', 'someone')}: \"{info.get('quote_content', '')[:100]}...\"")
+                elif action == 'create_comment':
+                    memories.append(f"- You commented on a post: \"{info.get('content', '')}\"")
+                else:
+                    # Generic fallback
+                    memories.append(f"- You performed a {action.replace('_', ' ')} action.")
+            except:
+                continue
+                
+        # Return in chronological order (oldest to newest)
+        return "\n".join(memories[::-1])
+    except Exception as e:
+        logging.warning(f"Error building memory summary for agent {agent_id}: {e}")
+        return "Memory retrieval failed."
+
+
+def _get_agent_profile_data(config: Dict[str, Any], agent_id: int) -> Dict[str, str]:
+    """Extract bio and persona from simulation config for a specific agent."""
+    agent_configs = config.get("agent_configs", [])
+    for ac in agent_configs:
+        if ac.get("agent_id") == agent_id:
+            return {
+                "bio": ac.get("bio", "No bio provided."),
+                "persona": ac.get("persona", ac.get("user_char", "No persona details provided."))
+            }
+    return {"bio": "Generic citizen.", "persona": "Neutral observer."}
+
+
 async def _capture_checkpoint_probe(
     *,
     env: Any,
@@ -1426,19 +1506,39 @@ async def _capture_checkpoint_probe(
 
     event_options = _extract_event_options(config)
     preferred_label = _resolve_probe_target_label(config, event_options)
-    prompt = _build_telemetry_probe_prompt(config)
     
+    # Contextual Reconstruction (Fix for Frozen JSD / Context Amnesia)
+    profile = _get_agent_profile_data(config, candidate_agent_id)
+    memory_summary = _get_agent_recent_memory_summary(db_path, candidate_agent_id)
+    
+    system_prompt = _TELEMETRY_PROBE_CONTEXTUAL_SYSTEM_PROMPT.format(
+        bio=profile["bio"],
+        persona=profile["persona"],
+        memory=memory_summary
+    )
+    
+    question = _extract_event_question(config)
+    user_prompt = ""
     schema = None
+    
     if len(event_options) > 1 and not _is_yes_no_options(event_options):
+        options_json = json.dumps(event_options, ensure_ascii=False)
+        example_json = json.dumps(_build_distribution_example(event_options), ensure_ascii=False)
+        user_prompt = _TELEMETRY_PROBE_CATEGORICAL_PROMPT_FOOTER.format(
+            question=question,
+            options_json=options_json,
+            example_json=example_json
+        )
         schema = _get_telemetry_categorical_schema(event_options)
     else:
+        user_prompt = _TELEMETRY_PROBE_BINARY_PROMPT_FOOTER.format(question=question)
         schema = _TELEMETRY_BINARY_SCHEMA
 
-    # Use a direct chat_json call with enforced schema to bypass persona refusals
+    # Use a direct chat_json call with enforced schema AND injected context
     client = LLMClient()
     messages = [
-        {"role": "system", "content": "--- AUTHORITATIVE SYSTEM OVERRIDE: SUSPEND PERSONA ROLEPLAY ---\nYou are a predictive processing unit. Output probabilities only based on your current state."},
-        {"role": "user", "content": prompt},
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
     try:
@@ -1449,7 +1549,9 @@ async def _capture_checkpoint_probe(
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
-            info_json = json.dumps({"prompt": prompt, "response": response}, ensure_ascii=False)
+            # Note: prompt in DB now includes the full contextual override for audit
+            db_prompt = f"SYSTEM: {system_prompt}\n\nUSER: {user_prompt}"
+            info_json = json.dumps({"prompt": db_prompt, "response": response}, ensure_ascii=False)
             created_at = datetime.now().isoformat()
             cursor.execute(
                 "INSERT INTO trace (user_id, action, info, created_at) VALUES (?, ?, ?, ?)",
@@ -1846,6 +1948,19 @@ async def run_twitter_simulation(
     if action_logger:
         action_logger.log_simulation_start(config)
     
+    # Calculate telemetry probe schedule
+    time_config = config.get("time_config", {})
+    total_hours = time_config.get("total_hours", 24)
+    minutes_per_round = time_config.get("minutes_per_round", 30)
+    total_rounds = (total_hours * 60) // minutes_per_round
+
+    if max_rounds is not None and max_rounds > 0:
+        total_rounds = min(total_rounds, max_rounds)
+    
+    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
+    if probe_rounds:
+        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
+
     total_actions = 0
     last_rowid = 0  # Track last processed row in Database (use rowid to avoid created_at format differences)
     
@@ -1903,10 +2018,6 @@ async def run_twitter_simulation(
         total_rounds = min(total_rounds, max_rounds)
         if total_rounds < original_rounds:
             log_info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
-
-    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
-    if probe_rounds:
-        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
 
     probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
     if probe_rounds:
@@ -2142,6 +2253,10 @@ async def run_reddit_simulation(
         total_rounds = min(total_rounds, max_rounds)
         if total_rounds < original_rounds:
             log_info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+
+    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
+    if probe_rounds:
+        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
     
     start_time = datetime.now()
     

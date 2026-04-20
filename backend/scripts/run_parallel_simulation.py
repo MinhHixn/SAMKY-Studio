@@ -161,6 +161,7 @@ def init_logging_for_simulation(simulation_dir: str):
 
 
 from action_logger import SimulationLogManager, PlatformActionLogger
+from app.utils.llm_client import LLMClient
 
 try:
     from camel.models import ModelFactory
@@ -1984,22 +1985,6 @@ async def run_twitter_simulation(
                 last_rowid=last_rowid,
                 agent_names=agent_names,
                 action_logger=action_logger,
-                platform_label="reddit",
-            )
-            if probe_count:
-                total_actions += probe_count
-                round_action_count += probe_count
-
-        if probe_rounds:
-            last_rowid, probe_count = await _capture_checkpoint_probe(
-                env=result.env,
-                config=config,
-                db_path=db_path,
-                round_num=round_num + 1,
-                probe_rounds=probe_rounds,
-                last_rowid=last_rowid,
-                agent_names=agent_names,
-                action_logger=action_logger,
                 platform_label="twitter",
             )
             if probe_count:
@@ -2220,6 +2205,22 @@ async def run_reddit_simulation(
                     )
                 total_actions += 1
                 round_action_count += 1
+
+        if probe_rounds:
+            last_rowid, probe_count = await _capture_checkpoint_probe(
+                env=result.env,
+                config=config,
+                db_path=db_path,
+                round_num=round_num + 1,
+                probe_rounds=probe_rounds,
+                last_rowid=last_rowid,
+                agent_names=agent_names,
+                action_logger=action_logger,
+                platform_label="reddit",
+            )
+            if probe_count:
+                total_actions += probe_count
+                round_action_count += probe_count
         
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)

@@ -814,6 +814,9 @@ def test_orchestrator_writes_event_results_and_summary(tmp_path):
                 "rps": 0.19,
                 "calibration_bracket": "0.5-0.75",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -865,6 +868,9 @@ def test_orchestrator_cleanup_removes_summary_artifacts_after_summary_enrichment
                 "rps": 0.19,
                 "calibration_bracket": "0.5-0.75",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -913,6 +919,9 @@ def test_orchestrator_clears_stale_artifacts_on_rerun_when_validation_fails_befo
                 "rps": 0.19,
                 "calibration_bracket": "0.5-0.75",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -956,6 +965,9 @@ def test_orchestrator_writes_provided_manifest_payload(tmp_path):
                 "rps": 0.19,
                 "calibration_bracket": "0.5-0.75",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -984,6 +996,66 @@ def test_orchestrator_writes_provided_manifest_payload(tmp_path):
     assert manifest == manifest_payload
 
 
+def test_orchestrator_enforces_deterministic_manifest_fields_in_benchmark_mode(monkeypatch, tmp_path):
+    class FakeExecutor:
+        def execute(self, **kwargs):
+            return {
+                "event_id": kwargs["event"]["event_id"],
+                "condition": kwargs["condition"],
+                "repeat": kwargs["repeat"],
+                "simulation_status": "completed",
+                "full_simulation_completed": True,
+                "probabilities": {"A": 0.7, "B": 0.3},
+                "brier": 0.2,
+                "baseline_scores": {
+                    "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
+                    "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
+                },
+                "round_jsd": [0.1, 0.2, 0.3, 0.4, 0.5],
+                "convergence_monotonic": True,
+                "rps": 0.19,
+                "calibration_bracket": "0.5-0.75",
+                "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
+            }
+
+    monkeypatch.setenv("BENCHMARK_MODE", "true")
+    monkeypatch.setenv("HEADLESS_MODE", "false")
+    orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
+    manifest_payload = {
+        "run_id": "fixed-run",
+        "events_loaded": 1,
+        "repeats": 1,
+        "deterministic_mode": False,
+        "enforced_temperature": 0.8,
+        "enforced_seed": 999,
+        "headless_mode": False,
+        "custom_note": "keep-me",
+    }
+
+    run_dir = orchestrator.run(
+        run_id="fixed-run",
+        output_root=tmp_path,
+        events=[{"event_id": "E1"}],
+        repeats=1,
+        build_condition_matrix=lambda events, repeats: [{"event_id": "E1", "condition": "A", "repeat": 1}],
+        event_lookup={"E1": {"event_id": "E1"}},
+        write_summary=lambda path, rows: (path / "summary.json").write_text(
+            json.dumps({"total_rows": len(rows)}), encoding="utf-8"
+        ),
+        manifest=manifest_payload,
+    )
+
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["custom_note"] == "keep-me"
+    assert manifest["deterministic_mode"] is True
+    assert manifest["enforced_temperature"] == 0.0
+    assert manifest["enforced_seed"] == 42
+    assert manifest["headless_mode"] is True
+
+
 def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
     class FakeExecutor:
         def execute(self, **kwargs):
@@ -1009,6 +1081,9 @@ def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
                 "rps": 0.0,
                 "calibration_bracket": "0.75-1.0",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -1071,6 +1146,9 @@ def test_orchestrator_isolates_malformed_rows_and_missing_event_lookup(tmp_path)
                 "rps": 0.0,
                 "calibration_bracket": "0.75-1.0",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())
@@ -1143,6 +1221,9 @@ def test_orchestrator_fallback_row_contains_rubric_keys(tmp_path):
                 "rps": 0.0,
                 "calibration_bracket": "0.75-1.0",
                 "delta_conformity": None,
+                "signed_delta": None,
+                "belief_update_failure": None,
+                "yes_probability": None,
             }
 
     orchestrator = BenchmarkRunOrchestrator(executor=FakeExecutor())

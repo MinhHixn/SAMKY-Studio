@@ -1,0 +1,78 @@
+# Context: AI Model Scoring >90% on MMLU Benchmark
+
+**Question:** Which AI company will first release a model scoring >90% on MMLU?  
+**Information Available Through:** December 31, 2024
+
+---
+
+## MMLU Benchmark
+
+**What is MMLU:**
+- Massive Multitask Language Understanding
+- 57 subjects (STEM, humanities, social sciences)
+- Multiple choice questions
+- Considered key AI capability benchmark
+
+**Current SOTA (State of the Art, mid-2024):** ~87-89%
+
+**Source:** MMLU paper, benchmark leaderboards
+
+## Leading Companies & Models
+
+**OpenAI:**
+- GPT-4: ~86-87% MMLU
+- GPT-4o: Similar performance
+- o1 models: Improved reasoning but MMLU not primary focus
+
+**Google DeepMind:**
+- Gemini 1.5 Pro: ~85-87%
+- PaLM 2: ~86%
+
+**Anthropic:**
+- Claude 3 Opus: ~86.8%
+- Claude 3.5 Sonnet: ~88.7% (announced June 2024)
+
+**Meta:**
+- Llama 3: ~86%
+
+**Source:** Company announcements, benchmark reports
+
+## Progress Through 2024
+
+**Early 2024:** Best models at 86-87%
+**Mid-2024:** Claude 3.5 Sonnet reached ~88.7%
+**Gap to 90%:** Remaining ~1-2 percentage points
+
+## Technical Challenges
+
+**Diminishing Returns:** Each percentage point harder
+**Test Contamination Concerns:** Models may have seen MMLU in training
+**Benchmark Saturation:** Approaching human expert level
+
+## Who's Likely
+
+**OpenAI:** Large resources, GPT-5 or next model could break 90%
+**Google DeepMind:** Gemini upgrades, strong research
+**Anthropic:** Claude 3.5 closest to 90%, next version candidate
+
+**Source:** AI research analysis
+
+## Timeline Considerations
+
+**2024 Releases:**
+- Multiple companies releasing new models throughout year
+- December: Running out of time for 2024
+- Need: Model release + verified 90%+ score
+
+## Verification
+
+**Official Scores:** Companies self-report, third-party verification varies
+**Leaderboards:** Track reported scores
+
+**Source:** Hugging Face, Papers with Code
+
+---
+
+**Sources:** MMLU benchmark documentation, company announcements, AI research community
+
+**Note:** As of mid-2024, Claude 3.5 Sonnet closest at ~88.7%. Breaking 90% requires significant advancement. Likely OpenAI, Google DeepMind, or Anthropic based on current trajectory.

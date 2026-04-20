@@ -1,0 +1,162 @@
+# Context: How Many Fed Rate Cuts in 2024?
+
+**Question:** How many total rate cuts will the Federal Reserve deliver in 2024?  
+**Market Opened:** January 2024  
+**Information Available Through:** December 17, 2024 (day before final FOMC decision announcement)
+
+---
+
+## The Setup: What Markets Expected at Year Start
+
+**January 2024 Baseline:**
+The Federal Funds Rate entered 2024 at **5.25–5.50%** — a 22-year high reached in July 2023 and held steady throughout 2023 H2.
+
+**Early 2024 Market Expectations (CME FedWatch, January 2024):**
+- Markets were pricing in **5–7 cuts** for 2024 (approximately 125–175 basis points of easing)
+- Rationale: Inflation had fallen sharply from its June 2022 peak of 9.1% CPI; the December 2023 FOMC "dot plot" had surprised dovishly
+- The Fed's December 2023 SEP showed median projection of ~3 cuts in 2024 — markets went further
+
+**This optimism would be significantly recalibrated throughout Q1–Q2 2024.**
+
+**Source:** CME FedWatch historical contract prices (January 2024); Federal Reserve December 2023 SEP
+
+---
+
+## The Nine FOMC Meetings of 2024
+
+**January 30–31:**
+- Decision: Hold at 5.25–5.50%
+- Powell statement: "We need greater confidence that inflation is sustainably moving down before we ease"
+- January CPI (released Feb 13): 3.1% — hotter than expected, triggered market repricing
+- **Market reaction:** Priced out ~2 cuts for year
+
+**March 19–20:**
+- Decision: Hold
+- New dot plot: Median still showed 3 cuts for 2024; Fed not changing guidance yet
+- But subsequent data (January, February CPI both above expectations) made markets skeptical
+
+**April 30–May 1:**
+- Decision: Hold
+- Powell: "It will take longer than previously expected" to be confident about inflation
+- Market had now priced out to ~2 expected cuts for the year
+
+**June 11–12:**
+- Decision: Hold
+- Updated dot plot: **Median shifted to just 1 cut** for 2024 (from 3)
+- But: One FOMC member's dot provided enough to move median; remained uncertain
+- Market reaction mixed; priced ~1–2 cuts by year end
+
+**July 30–31:**
+- Decision: Hold
+- Powell gives clearest signal yet: "The time is approaching" for a policy adjustment
+- Markets re-accelerated cut expectations toward September
+
+**September 17–18:**
+- ✅ **First Cut: -50 basis points**
+- Rate moved from 5.25–5.50% to **4.75–5.00%**
+- Larger-than-expected cut surprised some analysts; Fed cited "greater confidence" on inflation
+- Powell: "The time has come for policy to adjust"
+
+**November 6–7:**
+- ✅ **Second Cut: -25 basis points**
+- Rate moved from 4.75–5.00% to **4.50–4.75%**
+- Reaction calm; widely expected
+- Trump had won the election on Nov 5; Fed emphasized its independence
+
+**December 17–18:**
+- This is the final meeting — outcome announced December 18 at 2:00 PM ET
+- **Outcome is NOT known as of this document's cutoff (December 17)**
+- Total cuts through November: 75bp (counting by basis points); 2 rate cut events
+
+---
+
+## December Meeting: What Was Priced In (December 17)
+
+**CME FedWatch (December 17, 2024):**
+- Probability of 25bp cut: ~95%
+- Probability of hold: ~5%
+- Market consensus: A third cut was almost certain
+
+**Key Data Released Before December Meeting:**
+- **November Jobs Report (Dec 6):** +227,000 jobs; unemployment 4.2% — warm
+- **November CPI (Dec 11):** 2.7% year-over-year (headline); 3.3% (core) — still above target
+- **PCE (Nov data, released Dec 11):** 2.4% headline — closer to target
+- Mixed picture: Strong labor market but inflation not yet at 2%
+
+**Analyst Views (December 15–17):**
+- Goldman Sachs: "We expect a 25bp cut but watch for a more hawkish dot plot"
+- JPMorgan: "December cut is our base case; statement language will guide 2025 expectations"
+- Most Wall Street banks: 25bp cut with hawkish guidance for 2025 slowdown in pace
+
+**Source:** Bloomberg economics survey of dealers; Goldman Sachs US economics research note (Dec 15)
+
+---
+
+## "Count" Methodology — Why It Matters
+
+The Polymarket market explicitly asked about the **number of cuts**, not total basis points. This creates an ambiguity given September's 50bp cut:
+
+| Counting Method | Through November | If Dec cuts 25bp |
+|---|---|---|
+| **By rate-cut events (meetings)** | 2 | 3 |
+| **By 25bp increments** | 3 (one 50 + one 25) | 4 |
+| **By basis points** | 75bp | 100bp |
+
+**Most prediction markets defaulted to "number of FOMC meetings where a cut occurred":** September (1) + November (2) + potentially December (3).
+
+**Market framing:** "3 cuts" in most contexts meant 3 cut decisions (counting Sept's 50bp as one "cut").
+
+---
+
+## Structural Context: Where Expectations Started vs. Where We Ended
+
+| Date | Expected 2024 Cuts | Actual to that point |
+|---|---|---|
+| January 2024 | 5–7 | 0 |
+| March 2024 | 3–4 | 0 |
+| June 2024 | 1–2 | 0 |
+| September 2024 | 2–3 | 1 (September) |
+| November 2024 | 3 (including Dec) | 2 (Sept + Nov) |
+| December 17, 2024 | Very likely 3 | 2 (awaiting December) |
+
+This evolution — from 6+ expected cuts to likely 3 — is a rich time series of market belief updating, ideal for social simulation research.
+
+---
+
+## Global Central Bank Context (For Diversity)
+
+Other major central banks also navigated easing cycles in 2024:
+
+| Central Bank | First Cut (2024) | Total 2024 Cuts |
+|---|---|---|
+| Bank of Canada | June 2024 | 5 cuts (175bp) |
+| European Central Bank | June 2024 | 4 cuts (100bp) |
+| Bank of England | August 2024 | 2 cuts (50bp) |
+| Swiss National Bank | March 2024 | 3 cuts (75bp) |
+| Reserve Bank of New Zealand | August 2024 | Multiple cuts |
+| **Federal Reserve** | September 2024 | 2 (+ Dec pending) |
+
+**Key comparison:** The Fed was among the last major developed-market central banks to begin cutting — reflecting the US economy's unusual post-COVID strength relative to peers.
+
+**Source:** BIS (Bank for International Settlements) policy rate tracker; Bloomberg terminal central bank policy calendar
+
+---
+
+## Sources Summary
+
+**Federal Reserve:**
+- FOMC historical meeting materials: https://federalreserve.gov/monetarypolicy/fomc_historical.htm
+- CME FedWatch Tool: https://cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html
+- Federal Reserve FRED (historical rate data): https://fred.stlouisfed.org/series/FEDFUNDS
+
+**Economic Data:**
+- BLS (CPI, employment): https://bls.gov/
+- BEA (PCE, GDP): https://bea.gov/
+
+**Comparative Central Bank:**
+- Bank for International Settlements (BIS): https://bis.org/
+- Bloomberg central bank tracker
+
+**Analysis:**
+- Goldman Sachs US Economics weekly (Dec 2024)
+- JPMorgan US rates research

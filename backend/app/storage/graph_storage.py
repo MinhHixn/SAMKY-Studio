@@ -86,6 +86,32 @@ class GraphStorage(ABC):
     def get_all_edges(self, graph_id: str) -> List[Dict[str, Any]]:
         """Get all edges in a graph."""
 
+    @abstractmethod
+    def update_fact_validity(
+        self,
+        fact_id: str,
+        current_round: int,
+        status: str,
+        replacement_fact: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Mark an existing fact as invalid from a round onward, and optionally create a replacement fact.
+
+        Args:
+            fact_id: Existing fact identifier (RELATION uuid)
+            current_round: Round at which invalidation/replacement becomes effective
+            status: Reason/status for transition (e.g., superseded, contradicted)
+            replacement_fact: Optional replacement fact payload
+        """
+
+    @abstractmethod
+    def get_graph_snapshot(self, graph_id: str, round_num: int) -> Dict[str, Any]:
+        """
+        Return a round-filtered graph snapshot using temporal validity fields.
+
+        Snapshot should include entities/facts valid at the provided round.
+        """
+
     # --- Search ---
 
     @abstractmethod

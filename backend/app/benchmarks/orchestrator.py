@@ -554,6 +554,14 @@ class BenchmarkRunOrchestrator:
         cleanup_summary_artifacts()
 
         manifest_payload = dict(manifest) if manifest is not None else {"run_id": run_id, "events_loaded": len(events), "repeats": repeats}
+        benchmark_mode = os.environ.get("BENCHMARK_MODE", "").strip().lower() == "true"
+        if benchmark_mode:
+            manifest_payload["deterministic_mode"] = True
+            manifest_payload["enforced_temperature"] = 0.0
+            manifest_payload["enforced_seed"] = 42
+            manifest_payload["headless_mode"] = True
+        elif os.environ.get("HEADLESS_MODE", "").strip().lower() == "true":
+            manifest_payload.setdefault("headless_mode", True)
         (run_dir / "run_manifest.json").write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
         rows: list[Dict[str, Any]] = []
@@ -602,6 +610,9 @@ class BenchmarkRunOrchestrator:
                 )
                 if "unit_id" not in rows[-1]:
                     rows[-1]["unit_id"] = f"{event['event_id']}_{condition}_r{repeat}"
+                rows[-1].setdefault("signed_delta", None)
+                rows[-1].setdefault("belief_update_failure", None)
+                rows[-1].setdefault("yes_probability", None)
             except Exception as exc:
                 rows.append(
                     {
@@ -624,6 +635,9 @@ class BenchmarkRunOrchestrator:
                         "rps": None,
                         "calibration_bracket": None,
                         "delta_conformity": None,
+                        "signed_delta": None,
+                        "belief_update_failure": None,
+                        "yes_probability": None,
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )

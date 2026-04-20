@@ -906,6 +906,7 @@ class ReportAgent:
         self.simulation_requirement = simulation_requirement
 
         self.llm = llm_client or LLMClient()
+        self._headless_mode = bool(getattr(Config, "HEADLESS_MODE", False) or getattr(Config, "BENCHMARK_MODE", False))
         if graph_tools is None:
             raise ValueError(
                 "graph_tools (GraphToolsService) is required. "
@@ -922,6 +923,46 @@ class ReportAgent:
         self.console_logger: Optional[ReportConsoleLogger] = None
 
         logger.info(f"ReportAgent initialization complete: graph_id={graph_id}, simulation_id={simulation_id}")
+
+    def _build_headless_snapshot_interview(self, interview_topic: str) -> str:
+        storage = getattr(self.graph_tools, "storage", None)
+        if storage is not None and hasattr(storage, "get_graph_snapshot"):
+            try:
+                snapshot = storage.get_graph_snapshot(self.graph_id, 60)
+            except Exception as exc:
+                logger.warning("HEADLESS_MODE interview fallback snapshot failed: %s", exc)
+            else:
+                if isinstance(snapshot, dict):
+                    edge_count = int(snapshot.get("edge_count") or 0)
+                    node_count = int(snapshot.get("node_count") or 0)
+                    edges = snapshot.get("edges", [])
+                    sample_facts: List[str] = []
+                    if isinstance(edges, list):
+                        for edge in edges[:5]:
+                            if not isinstance(edge, dict):
+                                continue
+                            fact = edge.get("fact")
+                            if isinstance(fact, str) and fact.strip():
+                                sample_facts.append(fact.strip())
+                    lines = [
+                        "[HEADLESS_MODE] interview_agents skipped; using round-60 graph snapshot instead.",
+                        f"Interview topic: {interview_topic}",
+                        f"Snapshot coverage: nodes={node_count}, edges={edge_count}",
+                    ]
+                    if sample_facts:
+                        lines.append("Sample relational facts:")
+                        lines.extend(f"- {fact}" for fact in sample_facts)
+                    return "\n".join(lines)
+
+        panorama = self.graph_tools.panorama_search(
+            graph_id=self.graph_id,
+            query=interview_topic or self.simulation_requirement,
+            include_expired=True,
+        )
+        return (
+            "[HEADLESS_MODE] interview_agents skipped; using panorama snapshot fallback.\n"
+            + panorama.to_text()
+        )
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """Define available tools"""
@@ -1019,6 +1060,8 @@ class ReportAgent:
                 if isinstance(max_agents, str):
                     max_agents = int(max_agents)
                 max_agents = min(max_agents, 10)
+                if self._headless_mode:
+                    return self._build_headless_snapshot_interview(interview_topic)
                 result = self.graph_tools.interview_agents(
                     simulation_id=self.simulation_id,
                     interview_requirement=interview_topic,

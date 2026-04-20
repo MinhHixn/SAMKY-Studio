@@ -9,10 +9,15 @@ import os
 import re
 import random
 import time
+import logging
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError, RateLimitError
 
 from ..config import Config
+
+logger = logging.getLogger("mirofish.llm_client")
+ENFORCED_BENCHMARK_TEMPERATURE = 0.0
+ENFORCED_BENCHMARK_SEED = 42
 
 
 class LLMClient:
@@ -23,11 +28,12 @@ class LLMClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 300.0
+        timeout: Optional[float] = None
     ):
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model = model or Config.LLM_MODEL_NAME
+        resolved_timeout = float(timeout if timeout is not None else Config.LLM_TIMEOUT_SECONDS)
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
@@ -35,7 +41,7 @@ class LLMClient:
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
-            timeout=timeout,
+            timeout=resolved_timeout,
         )
 
         self._openrouter_http_referer = Config.OPENROUTER_HTTP_REFERER
@@ -44,14 +50,9 @@ class LLMClient:
         self._benchmark_temperature = Config.BENCHMARK_TEMPERATURE
         self._benchmark_seed = Config.BENCHMARK_SEED
         if self._benchmark_mode:
-            self._benchmark_temperature = self._coerce_float(
-                Config.BENCHMARK_TEMPERATURE,
-                "BENCHMARK_TEMPERATURE",
-            )
-            self._benchmark_seed = self._coerce_int(
-                Config.BENCHMARK_SEED,
-                "BENCHMARK_SEED",
-            )
+            self._warn_if_conflicting_benchmark_config()
+            self._benchmark_temperature = ENFORCED_BENCHMARK_TEMPERATURE
+            self._benchmark_seed = ENFORCED_BENCHMARK_SEED
         self._retry_max_retries = self._coerce_non_negative_int(
             Config.LLM_RETRY_MAX_RETRIES,
             "LLM_RETRY_MAX_RETRIES",
@@ -119,6 +120,37 @@ class LLMClient:
             return float(value)
         except (TypeError, ValueError) as error:
             raise ValueError(f"{name} must be a number") from error
+
+    @staticmethod
+    def _try_float(value: Any) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _try_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _warn_if_conflicting_benchmark_config(self) -> None:
+        configured_temperature = self._try_float(Config.BENCHMARK_TEMPERATURE)
+        configured_seed = self._try_int(Config.BENCHMARK_SEED)
+
+        if configured_temperature != ENFORCED_BENCHMARK_TEMPERATURE:
+            logger.warning(
+                "BENCHMARK_MODE enabled: overriding BENCHMARK_TEMPERATURE=%r with enforced value %.1f",
+                Config.BENCHMARK_TEMPERATURE,
+                ENFORCED_BENCHMARK_TEMPERATURE,
+            )
+        if configured_seed != ENFORCED_BENCHMARK_SEED:
+            logger.warning(
+                "BENCHMARK_MODE enabled: overriding BENCHMARK_SEED=%r with enforced value %d",
+                Config.BENCHMARK_SEED,
+                ENFORCED_BENCHMARK_SEED,
+            )
 
     @staticmethod
     def _is_quota_error_code(error_code: Optional[str]) -> bool:
@@ -265,12 +297,35 @@ class LLMClient:
         return stripped_payload + ''.join(repair_suffix)
 
     def _chat_create_with_retry(self, kwargs: Dict[str, Any]):
+        request_kwargs = dict(kwargs)
+        if self._benchmark_mode:
+            requested_temperature = request_kwargs.get("temperature")
+            parsed_temperature = self._try_float(requested_temperature)
+            if parsed_temperature != ENFORCED_BENCHMARK_TEMPERATURE:
+                logger.warning(
+                    "BENCHMARK_MODE enabled: overriding requested temperature=%r with enforced value %.1f",
+                    requested_temperature,
+                    ENFORCED_BENCHMARK_TEMPERATURE,
+                )
+
+            requested_seed = request_kwargs.get("seed")
+            parsed_seed = self._try_int(requested_seed)
+            if requested_seed is not None and parsed_seed != ENFORCED_BENCHMARK_SEED:
+                logger.warning(
+                    "BENCHMARK_MODE enabled: overriding requested seed=%r with enforced value %d",
+                    requested_seed,
+                    ENFORCED_BENCHMARK_SEED,
+                )
+
+            request_kwargs["temperature"] = ENFORCED_BENCHMARK_TEMPERATURE
+            request_kwargs["seed"] = ENFORCED_BENCHMARK_SEED
+
         delay = max(0.0, self._retry_initial_delay)
         attempt = 0
 
         while True:
             try:
-                return self.client.chat.completions.create(**kwargs)
+                return self.client.chat.completions.create(**request_kwargs)
             except Exception as error:
                 if self._is_rate_limit_error(error):
                     reset_wait = self._extract_rate_limit_reset_wait_seconds(error)
@@ -292,7 +347,7 @@ class LLMClient:
     def chat(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: int = 4096,
         response_format: Optional[Dict] = None
     ) -> str:
@@ -311,12 +366,9 @@ class LLMClient:
         kwargs = {
             "model": self.model,
             "messages": messages,
-            "temperature": self._benchmark_temperature if self._benchmark_mode else temperature,
+            "temperature": temperature if temperature is not None else 0.7,
             "max_tokens": max_tokens,
         }
-
-        if self._benchmark_mode:
-            kwargs["seed"] = self._benchmark_seed
 
         if response_format:
             kwargs["response_format"] = response_format
@@ -344,27 +396,36 @@ class LLMClient:
     def chat_json(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.3,
+        temperature: Optional[float] = None,
         max_tokens: int = 4096,
-        repair_truncated_json: bool = False
+        repair_truncated_json: bool = False,
+        json_schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Send chat request and return JSON
+        Send chat request and return JSON, optionally with a strict schema.
 
         Args:
             messages: Message list
             temperature: Temperature parameter
             max_tokens: Max token count
             repair_truncated_json: Attempt one safe JSON truncation repair when enabled
+            json_schema: Optional JSON schema for strict enforcement
 
         Returns:
             Parsed JSON object
         """
+        response_format = {"type": "json_object"}
+        if json_schema:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": json_schema
+            }
+
         response = self.chat(
             messages=messages,
-            temperature=temperature,
+            temperature=0.3 if temperature is None else temperature,
             max_tokens=max_tokens,
-            response_format={"type": "json_object"}
+            response_format=response_format
         )
         # Clean markdown code block markers
         cleaned_response = response.strip()

@@ -1,0 +1,146 @@
+# Context: Who Will Be the 2024 Democratic Presidential Nominee?
+
+**Question:** Who will be the 2024 Democratic presidential nominee?  
+**Market Opened:** June 2024  
+**Information Available Through:** August 21, 2024 (day before formal nomination)
+
+---
+
+## Background: The Incumbent's Candidacy Under Pressure
+
+Joe Biden announced his 2024 re-election campaign in April 2023 as the presumptive Democratic nominee. By June 2024, no serious primary challenger had emerged. However, the June 27, 2024 presidential debate with Donald Trump dramatically altered the political landscape.
+
+**Biden's Debate Performance (June 27, 2024):**
+- Widely described by commentators across the political spectrum as halting and confused
+- Audible stumbles, loss of train of thought mid-sentence, difficulty recalling figures
+- CNN debate moderators noted visible strain; multiple gaffes went unaddressed
+- Post-debate polls showed sharp drops in voter confidence in Biden's fitness
+
+**Source:** CNN debate transcripts; The New York Times, Washington Post post-debate coverage
+
+---
+
+## Post-Debate Political Dynamics (Late June – July 2024)
+
+**Internal Party Pressure:**
+- Donor calls to pause contributions; dozens of bundlers raised concerns within 48 hours
+- House Democratic caucus private calls reported to include urgent discussion
+- Polling from ActiVote, Morning Consult showed Biden approval dropping ~5 points in a week
+- Democratic strategists publicly and privately questioned electability
+
+**Biden's Initial Response:**
+- Biden held multiple rallies asserting fitness; attended NATO summit in Washington (July 9–11)
+- Letter to Congressional Democrats: "I intend to stay in the race and to beat Donald Trump"
+- White House cited regular medical reports; Dr. Kevin O'Connor's Feb 2024 physical noted "healthy, vigorous 81-year-old male"
+
+**July 4 Week:**
+- Reporting from The New York Times, The Atlantic, and CNN cited multiple senior Democrats expressing private concern
+- Some Congressional members publicly called for Biden to step aside
+- Ex-President Barack Obama, Nancy Pelosi described as key voices whose position was closely watched
+
+**Source:** NYT "Doubts About Biden" series (July 2024), CNN reporting, Politico Playbook
+
+---
+
+## Key Candidate Options (As of Early July 2024)
+
+If Biden stepped aside, the nominee would be chosen by delegates — delegates who had been pledged to Biden via primaries.
+
+**Kamala Harris (Vice President):**
+- Most prominent alternative; already on the Democratic ticket; had raised significant funds
+- Would inherit delegates and fundraising infrastructure
+- Perceived weaknesses: 2020 primary dropped out before Iowa; moderate approval ratings as VP
+- Path: Fastest route — delegates could rally behind sitting VP without a contested convention
+
+**Gavin Newsom (Governor of California):**
+- Strong fundraising network; had positioned himself as a national Democratic voice
+- Publicly denied interest in challenging Biden
+- Would require open convention to emerge as candidate
+
+**Gretchen Whitmer (Governor of Michigan):**
+- Popular in key swing state; considered having national profile
+- Denied interest in running
+
+**Michelle Obama:**
+- Consistently polled highest among alternatives in hypothetical matchups
+- Repeatedly and firmly declined interest; family members confirmed no intention to run
+
+**Other mentioned names:** Josh Shapiro (PA Gov), Andy Beshear (KY Gov), Wes Moore (MD Gov)
+
+**Source:** DNC delegate rules; Politico; FiveThirtyEight alternative candidate analysis
+
+---
+
+## Prediction Market Prices (Leading Into July 2024)
+
+**Polymarket — "Who will be the 2024 Democratic presidential nominee?"**
+
+| Candidate | July 1 | July 10 | July 20 |
+|---|---|---|---|
+| Biden | ~75¢ | ~50¢ | ~30¢ |
+| Harris | ~15¢ | ~30¢ | ~50¢ |
+| Newsom | ~5¢ | ~8¢ | ~8¢ |
+| Other | ~5¢ | ~12¢ | ~12¢ |
+
+Market prices shifted dramatically as political pressure mounted through July.
+
+**Source:** Polymarket historical data; PredictIt tracking
+
+---
+
+## Biden's Choices and Constraints
+
+**If He Stayed:**
+- Democrats would run an 81-year-old incumbent with fresh doubts about fitness
+- Down-ballot Democrats expressed concern about electability drag
+
+**If He Stepped Aside:**
+- Convention delegates could select nominee (DNC rules allow delegates to vote for any eligible candidate)
+- Endorsement of Harris vs. open convention was key procedural question
+
+**Key Convention Mechanics:**
+- Democratic National Convention: August 19–22, 2024 (Chicago)
+- Biden-pledged delegates become "free agents" if he withdraws
+- DNC could allow virtual vote roll call before convention
+
+**Source:** DNC Rules and Bylaws Committee; Politico convention coverage
+
+---
+
+## Key Uncertainty Factors for Forecasters (Pre-August 22)
+
+1. **Would Biden actually withdraw?** Held ~50% probability in markets by mid-July
+2. **Would the party rally behind Harris or seek an open contest?** Harris path seen as cleanest
+3. **Would a major party figure (Obama, Pelosi) publicly call for him to exit?** That was viewed as a likely tipping point
+4. **Timeline:** Every day that passed without a decision increased pressure
+
+**Expert Analysis:**
+- Nate Silver (Silver Bulletin): "Biden staying becomes increasingly untenable as polling settles post-debate. Harris is the most likely beneficiary if he exits."
+- The Economist: "Democratic elites fear electoral catastrophe. The question is not if but when."
+- Larry Sabato (UVA): "Harris wins the nomination on Day 1 if Biden steps back — party wants unified transition, not a contested convention."
+
+---
+
+## Note on Pre-Resolution Context
+
+The information above reflects public knowledge through August 21, 2024. The Democratic National Convention formal nomination was scheduled for August 22. Do not include information about what actually happened after this date.
+
+---
+
+## Sources Summary
+
+**Political Reporting:**
+- The New York Times (Biden fitness coverage, July 2024)
+- Politico (DNC mechanics, delegate rules)
+- Washington Post (internal Democratic Party dynamics)
+- CNN (debate coverage, post-debate polling)
+
+**Forecasting:**
+- Polymarket market history
+- PredictIt historical data
+- FiveThirtyEight alternative candidate analysis
+- Nate Silver/Silver Bulletin
+
+**Official Sources:**
+- DNC Rules and Bylaws Committee
+- FEC (candidate registration filings)

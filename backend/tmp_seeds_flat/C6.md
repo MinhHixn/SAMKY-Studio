@@ -1,0 +1,144 @@
+# Context: How Many Fed Rate Cuts in 2025?
+
+**Question:** How many Fed rate cuts in 2025?  
+**Market Opened:** January 2025  
+**Information Available Through:** June 30, 2025
+
+---
+
+## Starting Conditions: Where Rates Stood Entering 2025
+
+**Federal Funds Rate (end of 2024):**
+- Following three cuts in 2024 (September: 50bp, November: 25bp, December: 25bp), the rate ended 2024 at **4.25–4.50%**
+- This represented 100 basis points (1.00%) of total easing in the second half of 2024
+
+**Fed's Own December 2024 Projections (FOMC "Dot Plot"):**
+- Median member projection for end-2025 rate: ~3.9% (implying approximately **2 cuts** of 25bp each)
+- But wide dispersion: some members projected 0 cuts; others projected 3 or more
+- Powell's December 2024 press conference: "We are in a 'new phase' of policy; we expect to move more cautiously going forward"
+
+This dramatically hawkish tone shift (relative to expectations going into the meeting) caused a sharp market selloff. Markets had expected a more dovish stance; instead, the dot plot penciled in fewer 2025 cuts than anticipated.
+
+**Source:** Federal Reserve December 2024 FOMC Summary of Economic Projections (SEP); Federal Reserve press conference transcript, Dec 18, 2024
+
+---
+
+## Economic Backdrop Entering 2025
+
+**Inflation:**
+- PCE (Fed's preferred measure): ~2.4–2.5% heading into 2025 — above 2% target
+- Core PCE: ~2.8% — "last mile" of inflation proving sticky
+- CPI November 2024: 2.7% year-over-year
+- Shelter and services inflation remained elevated
+
+**Labor Market:**
+- Unemployment: 4.2% (November 2024) — marginally above cycle lows but not recessionary
+- Job additions: ~150,000–200,000/month, slowing from 2022-23 pace
+- Wage growth: ~4% year-over-year — still above Fed's comfort zone
+
+**GDP:**
+- Q3 2024: 2.8% annualized — economy still resilient
+- Atlanta Fed GDPNow for Q4 2024: ~3.2%
+- No recession signals as 2025 opened
+
+**Source:** BLS monthly CPI/jobs reports; BEA GDP release; Federal Reserve Board data
+
+---
+
+## Key Uncertainty: Trump Administration Policy Effects
+
+**Tariffs:**
+- Trump promised broad tariff increases: 10–25% universal tariff on imports; 60–100% on Chinese goods
+- Consensus among economists: Tariffs are inflationary; could add 0.5–1.5% to CPI
+- Effect on Fed: Would support keeping rates higher for longer; reduce number of cuts
+
+**Immigration:**
+- Mass deportation plans could reduce labor supply → upward wage pressure → inflation
+- Uncertainty about scale and timing of implementation
+
+**Tax Cuts:**
+- Potential extension of 2017 TCJA expiring provisions; new corporate cuts proposed
+- Fiscal stimulus → potentially inflationary or growth-supportive; cuts could stimulate demand
+
+**Source:** JP Morgan economics (tariff inflation impact study, Dec 2024); Goldman Sachs Global Investment Research (2025 US outlook)
+
+---
+
+## Market Expectations at Market Open (January 2025)
+
+**CME FedWatch Tool (January 2025):**
+- 0 cuts in 2025: ~15% probability
+- 1 cut: ~35% probability
+- 2 cuts: ~30% probability
+- 3+ cuts: ~20% probability
+
+**Wall Street Bank Median Forecasts (January 2025):**
+
+| Institution | 2025 Fed Cuts Forecast |
+|---|---|
+| Goldman Sachs | 2 cuts |
+| JPMorgan | 2 cuts |
+| Morgan Stanley | 3 cuts |
+| Bank of America | 1–2 cuts |
+| Deutsche Bank | 1 cut |
+| Barclays | 2 cuts |
+
+**Source:** Bloomberg Economics consensus; individual bank research notes (December 2024 – January 2025 outlooks)
+
+---
+
+## Arguments for More Cuts (3+ scenario)
+
+- Tariff impacts may be one-time price-level effects, not sustained inflation
+- Labor market softening could accelerate if immigration crackdown reduces consumer spending
+- Geopolitical uncertainty (trade wars) could slow global economy → recession risk
+- Fed historically has cut pre-emptively in uncertain environments
+- Core PCE closer to 2% than headline CPI suggests
+
+**Source:** Former Fed economists' analysis (Brookings Institution); PIIE (Peterson Institute for International Economics) tariff analysis
+
+---
+
+## Arguments for Fewer Cuts (0–1 scenario)
+
+- Inflation not at 2% target; premature easing risks reigniting price pressures
+- Labor market sturdy — Fed doesn't need to stimulate employment
+- Trump's fiscal plans could add to aggregate demand, requiring tighter policy
+- If tariffs prove inflationary, Fed may need to pause or reverse
+- "Higher for longer" doctrine still credible given 2021–2022 inflation overshoot mistake
+
+**Source:** Neel Kashkari (Minneapolis Fed) speeches; Atlanta Fed research on neutral rate estimates
+
+---
+
+## Historical Comparison
+
+| Year | Starting Rate | Year-End Rate | Total Cuts | Context |
+|---|---|---|---|---|
+| 2007 | 5.25% | 4.25% | 4 | Early financial crisis |
+| 2019 | 2.50% | 1.75% | 3 | "Insurance" cuts, trade war |
+| 2020 | 1.75% | 0.25% | 4 (emergency) | COVID pandemic |
+| 2024 | 5.50% | 4.25% | 3 | Post-inflation normalization |
+
+2025 consensus was more cautious than any of these precedents.
+
+**Source:** Federal Reserve historical data; FRED (St. Louis Fed) policy rate history
+
+---
+
+## Sources Summary
+
+**Federal Reserve:**
+- Federal Reserve: https://www.federalreserve.gov/
+- FOMC meeting calendars and statements
+- CME FedWatch Tool: https://cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html
+
+**Economic Data:**
+- BLS: https://bls.gov/
+- BEA: https://bea.gov/
+- FRED: https://fred.stlouisfed.org/
+
+**Analysis:**
+- Brookings Institution economic research
+- Peterson Institute for International Economics (PIIE): https://piie.com/
+- Major investment bank research (Goldman Sachs, JPMorgan Global Research)

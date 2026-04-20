@@ -1,0 +1,74 @@
+# Context: 2024 NBA Championship
+
+**Question:** Which team will win the 2024 NBA Championship?  
+**Information Available Through:** June 17, 2024 (Finals Game 5)
+
+---
+
+## Season
+
+**2023-24 NBA Season**
+**Playoffs:** April-June 2024
+**Finals:** June 6-17, 2024
+
+**Source:** NBA: https://www.nba.com/
+
+## Finals Matchup
+
+**Boston Celtics vs Dallas Mavericks**
+
+**Celtics:** Eastern Conference champions
+**Mavericks:** Western Conference champions
+
+**Source:** Playoff results
+
+## Regular Season
+
+**Boston Celtics:** 64-18 (best record in NBA)
+**Dallas Mavericks:** 50-32
+
+## Pre-Season Favorites
+
+**Betting Odds (October 2023):**
+- Boston Celtics: Favorites
+- Denver Nuggets: Defending champs
+- Milwaukee Bucks
+- Phoenix Suns
+
+**Source:** Betting markets
+
+## Playoffs Performance
+
+**Celtics Path:**
+- Dominated Eastern Conference
+- Strong throughout playoffs
+
+**Mavericks Path:**
+- Luka Dončić, Kyrie Irving duo
+- Upset higher seeds
+
+## Finals Status (Through June 17)
+
+**Series:** Best-of-7
+**Celtics Performance:** Check games 1-5 results
+**Historical Context:** Celtics seeking 18th championship (record)
+
+**Source:** NBA game results
+
+## Team Profiles
+
+**Celtics:**
+- Jayson Tatum, Jaylen Brown stars
+- Deep roster
+- Coach: Joe Mazzulla
+
+**Mavericks:**
+- Luka Dončić (superstar)
+- Kyrie Irving
+- Coach: Jason Kidd
+
+---
+
+**Sources:** NBA, ESPN, team websites
+
+**Note:** Finals conclude by June 17, 2024. Celtics heavily favored throughout season and playoffs as noted in question context: "favourites throughout; useful calibration test for high-confidence categoricals."

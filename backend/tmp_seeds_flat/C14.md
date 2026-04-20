@@ -1,0 +1,159 @@
+# Context: 2025 German Federal Election — Which Party Forms Government?
+
+**Question:** Which party (or coalition leader) will form the next German government after the February 2025 federal election?  
+**Market Opened:** November 2024 (after Traffic Light coalition collapsed)  
+**Information Available Through:** February 22, 2025 (day before the election)
+
+---
+
+## Background: Why the Snap Election
+
+**The "Traffic Light" Coalition Collapse:**
+Germany's governing coalition — SPD (Social Democrats), Greens, and FDP (Free Democrats) — unraveled on November 6, 2024, following a public and acrimonious dispute over the 2025 federal budget.
+
+- **Trigger:** FDP Finance Minister Christian Lindner refused to accept suspension of the constitutional "debt brake" (Schuldenbremse) to fund investment priorities
+- Chancellor Olaf Scholz (SPD) dismissed Lindner; the coalition broke apart immediately
+- Scholz announced a confidence vote, which he intentionally lost on December 16, 2024
+- Federal President Frank-Walter Steinmeier dissolved the Bundestag and called snap elections for **February 23, 2025**
+
+**Source:** Bundeswahlleiter (German Federal Returning Officer): https://bundeswahlleiter.de/; Der Spiegel (coalition breakdown coverage, Nov 2024)
+
+---
+
+## German Electoral System
+
+Germany uses a **personalized proportional representation** system:
+- Voters cast two ballots: one for a local constituency candidate, one for a party list
+- Seats are allocated roughly proportionally to second votes above the **5% threshold**
+- Parties failing to clear 5% nationally receive no seats (unless winning 3 direct constituencies)
+- **Result:** Coalitions are almost always necessary — no party has won an outright majority since Adenauer in 1957
+
+**Bundestag Size (2025):** Complicated by reform; target ~630 seats (reduced from 736 in outgoing Bundestag)
+
+---
+
+## Main Parties and Polling (December 2024 – February 2025)
+
+### Pre-Election Polling (major aggregated averages)
+
+| Party | Description | Polling Range (Jan–Feb 2025) |
+|---|---|---|
+| **CDU/CSU** | Christian Democrats — center-right | 28–33% |
+| **AfD** | Alternative für Deutschland — far-right | 18–21% |
+| **SPD** | Social Democrats — center-left | 14–17% |
+| **Greens** | Bündnis 90/Die Grünen | 11–14% |
+| **BSW** | Sahra Wagenknecht Alliance — left-populist | 5–8% |
+| **FDP** | Free Democrats — liberal | 3–5% (threshold risk) |
+| **Die Linke** | The Left — hard left | 2–4% (threshold risk) |
+
+**CDU/CSU consistent frontrunner at ~30–32%** for months; AfD stable second.
+
+**Source:** Politbarometer (ZDF/Forschungsgruppe Wahlen); Infratest dimap (ARD); INSA; Forsa; aggregated at wahlrecht.de
+
+---
+
+## Key Parties in Detail
+
+### CDU/CSU (Frontrunner)
+
+**Leader:** Friedrich Merz (CDU)  
+**Platform:**
+- Economic liberalization; supply-side reform of German economy
+- Tougher immigration policy (significant issue for German voters in 2024–25)
+- Rebuilding German industrial competitiveness; addressing energy costs
+- Atlantic/NATO solidarity; Ukraine support
+
+**Merz Polling:** Consistently most trusted leader on economic issues; lower personal favorability than Scholz historically, but ahead in 2025
+
+**CDU/CSU's Problem:** Coalition partners. CDU needs 50%+ coalition to govern. Options:
+- CDU + SPD (Grand Coalition/"GroKo") — historically the fallback
+- CDU + Greens 
+- CDU + FDP (if FDP clears 5%; not guaranteed)
+- CDU + BSW (Merz publicly ruled out)
+
+### AfD (Second in Polls; Coalition-Blocked)
+
+**Leader:** Alice Weidel  
+**Platform:** Anti-immigration, Eurosceptic, Russia-skeptic foreign policy criticism, "Germany first"
+
+**The Cordon Sanitaire:** All other major parties have formally pledged not to coalition with AfD under any circumstances. This is a firm commitment maintained through the campaign.
+
+**AfD's position:** Even if second, it cannot enter government. This is the central structural fact of the 2025 election.
+
+### SPD (Scholz; Facing Decline)
+
+**Leader for election:** Olaf Scholz initially; Boris Pistorius (Defense Minister) was floated as potential alternative candidate but SPD chose to run with Scholz
+**Challenge:** Scholz's personal approval rating was very low; coalition collapse blamed on him by many voters
+**Historic floor:** SPD unlikely to fall below ~14% given core union voter base
+
+### BSW (Wagenknecht Alliance)
+
+**Leader:** Sahra Wagenknecht — left-wing populist; strongly anti-weapons-to-Ukraine; anti-sanctions; partially anti-immigration
+- Founded in January 2024; polling above 5% threshold
+- Merz explicitly ruled out BSW as coalition partner; Scholz also distanced
+- BSW's existence fragments the left-of-center vote
+
+---
+
+## Coalition Math (Pre-Election)
+
+**CDU/CSU-led options:**
+
+| Coalition | Approximate Combined Polling | Feasibility |
+|---|---|---|
+| CDU/CSU + SPD (GroKo) | ~47–49% | High — traditional fallback |
+| CDU/CSU + Greens | ~42–46% | Medium — ideologically distant, but possible |
+| CDU/CSU + SPD + FDP | ~48–52% | High if FDP clears threshold |
+| CDU/CSU + SPD + Greens | ~55–59% | Near-certain majority, less likely (unwieldy) |
+| CDU/CSU alone | ~30–33% | Short of majority (needs partner) |
+
+**Primary strategic question:** Can a two-party CDU/CSU-led majority be assembled?
+- If FDP clears 5%: CDU + FDP alone is unlikely (~35–38%); need 3rd partner
+- Most analysts expected CDU-led coalition with SPD as most likely outcome
+
+**Source:** German political science analysts at Hertie School (Berlin), WZB Berlin Social Science Center; Politico Europe election tracker
+
+---
+
+## Historical Context: German Coalition Dynamics
+
+**Post-2017 "Grand Coalition" Exhaustion:**
+- SPD repeatedly suffered from being in GroKo under CDU/CSU — lost its identity
+- SPD ran against GroKo in 2021; still ended up leading one (reversed order)
+- In 2025, SPD junior partner status was acceptable given their weakened position
+
+**AfD Historic Position:**
+- AfD won its first state government plurality in Thuringia (September 2024) — but was frozen out of government there too
+- Austrian FPÖ parallel widely discussed in Germany: what happens if AfD consistently leads polls and is permanently blocked?
+
+**Source:** Bundeszentrale für politische Bildung (Federal Agency for Civic Education): https://bpb.de/
+
+---
+
+## Expert Commentary (February 2025)
+
+**Forschungsgruppe Wahlen (ZDF Institute, Feb 20):**
+"CDU/CSU leads with approximately 31–32%. Their coalition options remain intact. AfD may slightly improve on its polling average due to late mobilization; SPD may face strategic voting. CDU-led government is by far the most likely outcome."
+
+**Politico Europe (Feb 19):**
+"Merz is set to become Chancellor. The question is who sits with him — most likely SPD. The FDP's survival is the key wildcard for coalition formation."
+
+---
+
+## Sources Summary
+
+**German Official Sources:**
+- Bundeswahlleiter: https://bundeswahlleiter.de/
+- Bundestag: https://bundestag.de/
+- Bundeszentrale für politische Bildung: https://bpb.de/
+
+**Polling:**
+- Politbarometer (ZDF): https://zdf.de/politik/politbarometer (Forschungsgruppe Wahlen)
+- Infratest dimap (ARD): https://infratest-dimap.de/
+- INSA: https://insa-consulere.de/
+- Aggregator: https://wahlrecht.de/umfragen/
+
+**International Analysis:**
+- Politico Europe: https://politico.eu/
+- Spiegel International: https://spiegel.de/international/
+- Hertie School (Berlin): https://hertie-school.org/

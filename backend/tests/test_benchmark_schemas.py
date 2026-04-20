@@ -12,6 +12,7 @@ from app.benchmarks.schemas import (
 def _valid_completed_row(*, condition: str = "B", telemetry_error: bool = False):
     return {
         "event_id": "E1",
+        "unit_id": f"E1_{condition}_r1",
         "condition": condition,
         "repeat": 1,
         "simulation_status": "completed",
@@ -23,6 +24,9 @@ def _valid_completed_row(*, condition: str = "B", telemetry_error: bool = False)
         "rps": 0.18,
         "calibration_bracket": "0.5-0.75",
         "delta_conformity": 0.2,
+        "signed_delta": 0.1,
+        "belief_update_failure": False,
+        "yes_probability": 0.7,
         "error": "Telemetry error: missing trace" if telemetry_error else None,
     }
 
@@ -80,6 +84,22 @@ def test_validate_event_result_row_schema_rejects_short_round_jsd_without_teleme
 
 def test_validate_event_result_row_schema_allows_missing_round_jsd_with_explicit_telemetry_error():
     validate_event_result_row(_valid_completed_row(condition="C", telemetry_error=True))
+
+
+def test_validate_event_result_row_schema_rejects_missing_phase1_hardening_keys():
+    row = _valid_completed_row()
+    row.update(
+        {
+            "unit_id": "E1_B_r1",
+            "signed_delta": 0.1,
+            "belief_update_failure": False,
+            "yes_probability": 0.7,
+        }
+    )
+    row.pop("unit_id")
+
+    with pytest.raises(ValueError, match="missing required keys: unit_id"):
+        validate_event_result_row(row)
 
 
 def test_validate_event_results_schema_prefixes_row_index_in_error():

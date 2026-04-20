@@ -1,0 +1,62 @@
+# Context: Next UK Prime Minister After 2024 Election
+
+**Question:** Who will be next UK PM?  
+**Information Available Through:** July 5, 2024
+
+---
+
+## Election
+
+**Date:** July 4, 2024
+**See C4** for full election context
+
+**Source:** UK Electoral Commission
+
+## Candidates
+
+**Keir Starmer (Labour):** Opposition Leader
+**Rishi Sunak (Conservative):** Incumbent PM
+**Ed Davey (Lib Dem)**
+**Nigel Farage (Reform UK)**
+**Others**
+
+## Polling Consensus
+
+**Labour:** 38-42% (400-450 seat projection)
+**Conservatives:** 20-24% (100-150 seats)
+
+Labour landslide expected
+
+**Source:** UK polls (YouGov, Survation, etc.)
+
+## How PM is Chosen
+
+**Not Direct Election:** PM is leader of party with most seats
+**Keir Starmer:** Labour leader since 2020
+**If Labour wins most seats:** Starmer becomes PM
+
+## Starmer Profile
+
+**Background:** Former prosecutor, human rights lawyer
+**Labour Leader:** Since April 2020
+**Platform:** Center-left, "changed Labour party"
+**Polling:** Priced 85-90% to become PM
+
+**Source:** Labour Party, BBC profiles
+
+## Alternative Scenarios
+
+**Conservative Win:** Sunak remains (unlikely per polls)
+**Hung Parliament:** Coalition negotiations (very unlikely)
+**Lib Dem Surge:** Davey (extremely unlikely)
+
+## Certainty Level
+
+**Pre-Election:** Starmer heavily favored
+**Post-Election (July 5):** Results known, PM clear
+
+---
+
+**Sources:** BBC, UK Electoral Commission, polling organizations
+
+**Note:** Starmer overwhelmingly expected to become PM based on Labour's massive polling lead. Would be confirmed after election results July 4-5.

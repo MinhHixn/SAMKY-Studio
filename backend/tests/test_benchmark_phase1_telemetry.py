@@ -143,6 +143,43 @@ def test_compute_round_jsd_trace_skips_unmatched_resolved_label(tmp_path):
         )
 
 
+def test_compute_round_jsd_trace_carries_forward_latest_nonempty_round(tmp_path):
+    unit_dir = tmp_path / "unit"
+    twitter_path = unit_dir / "twitter" / "actions.jsonl"
+    entries = [
+        {"round": 0, "action_type": "CREATE_POST", "action_args": {"content": "Market leaning yes but no number yet."}},
+    ]
+    _write_actions(twitter_path, entries)
+
+    trace = compute_round_jsd_trace(
+        unit_dir,
+        checkpoints=[6],
+        min_parsed_probability_ratio=1.0,
+        resolved_label="YES",
+    )
+
+    assert trace == pytest.approx([0.5487949407], rel=1e-6)
+
+
+def test_compute_round_jsd_trace_parses_percentage_fallback_from_text(tmp_path):
+    unit_dir = tmp_path / "unit"
+    twitter_path = unit_dir / "twitter" / "actions.jsonl"
+    entries = [
+        {"round": 12, "action_type": "CREATE_POST", "action_args": {"content": "Estimated win chance now at 63%."}},
+        {"round": 12, "action_type": "CREATE_POST", "action_args": {"content": "Confidence update: 37%."}},
+    ]
+    _write_actions(twitter_path, entries)
+
+    trace = compute_round_jsd_trace(
+        unit_dir,
+        checkpoints=[12],
+        min_parsed_probability_ratio=1.0,
+        resolved_label="YES",
+    )
+
+    assert trace[0] >= 0.0
+
+
 def test_is_monotonic_nonincreasing_with_epsilon_allows_small_increase():
     assert is_monotonic_nonincreasing_with_epsilon([0.5, 0.48, 0.49], epsilon=0.02)
     assert not is_monotonic_nonincreasing_with_epsilon([0.5, 0.48, 0.53], epsilon=0.02)

@@ -1,0 +1,65 @@
+# Context: 2024 UK General Election
+
+**Question:** Which party will win the most seats?  
+**Information Available Through:** July 5, 2024
+
+---
+
+## Background
+
+**Election Date:** July 4, 2024
+**Called by:** PM Rishi Sunak (May 22 surprise announcement)
+**Parliament:** 650 seats, 326 needed for majority
+
+**Source:** UK Electoral Commission, BBC
+
+## Main Parties
+
+**Labour:** Led by Keir Starmer (opposition since 2019)
+**Conservative:** Led by Rishi Sunak (governing party since 2010)
+**Liberal Democrats:** Ed Davey
+**Reform UK:** Nigel Farage
+**SNP:** Scottish National Party
+**Greens, Others**
+
+## Polling (Final Week)
+
+**Labour:** 38-42%
+**Conservatives:** 20-24%
+**Reform UK:** 15-17%
+**Liberal Democrats:** 10-12%
+
+Labour leading by ~18-20 points
+
+**Source:** YouGov, Survation, Ipsos MORI
+
+## Seat Projections
+
+**Labour:** 400-450 seats (landslide)
+**Conservatives:** 100-150 seats (historic losses)
+**Lib Dems:** 50-70 seats
+**Others:** SNP decline expected
+
+Labour priced >90% through most campaign
+
+**Source:** Electoral Calculus, UK Polling Report
+
+## Historical Context
+
+**2019 Election:** Conservative majority (365 seats), Labour 202
+**Conservative Rule:** 14 years (since 2010)
+**Labour Opposition:** Since 2010
+
+## Campaign Issues
+
+**Economy:** Cost of living, NHS crisis, public services
+**Conservative Problems:** Party divisions, scandals, economic struggles
+**Labour Message:** "Time for change"
+
+**Source:** Campaign coverage (BBC, Guardian, Telegraph)
+
+---
+
+**Sources:** BBC, Guardian, UK Electoral Commission, polling organizations
+
+**Note:** Consensus polling showed Labour landslide victory as highly likely. Conservatives faced historic defeat after 14 years in power.

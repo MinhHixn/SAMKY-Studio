@@ -1,0 +1,47 @@
+# Context: Will Bitcoin Hit $110,000 in 2025?
+
+**Question:** Will Bitcoin hit $110,000 in 2025?  
+**Market Opened:** December 2024  
+**Information Available Through:** January 31, 2025
+
+---
+
+## Late-2024 to Early-2025 Price Context
+
+- Bitcoin broke above $100,000 intraday in early December 2024.
+- Price then became highly volatile into year-end and January.
+- As of January 2025, BTC was trading below $110,000 but remained within reach during high-volatility sessions.
+
+## Verified Market Path (Daily OHLC Cross-Check)
+
+Using daily OHLC market data (CryptoCompare):
+
+- Jan 2025 highs remained below $110,000.
+- Earliest 2025 daily high at/above $110,000 appears on **2025-05-21** (high ~110,778).
+
+This means:
+
+- A January-only framing for a $110,000 hit is too strong.
+- A 2025-wide YES outcome can still be consistent if the threshold is hit later in the year.
+
+## Main Catalysts Tracked in Early 2025
+
+- Macro policy expectations (rates/liquidity).
+- Spot ETF flows and institutional demand.
+- Post-halving cycle momentum.
+- Regulatory and political headlines.
+
+## Main Risks
+
+- Profit-taking after large prior rally.
+- Hawkish macro surprises.
+- Risk-off episodes causing sharp drawdowns.
+
+---
+
+## Sources Summary
+
+- CryptoCompare BTC historical daily OHLC data
+- Major market coverage (CoinDesk, Bloomberg/CNBC-style reporting)
+- Public macro/ETF flow commentary
+

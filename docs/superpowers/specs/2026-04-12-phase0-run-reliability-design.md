@@ -2,12 +2,12 @@
 
 ## Problem
 
-The full Phase 0 run currently fails for two concrete reasons:
+The 1-model test for one event only currently fails for two concrete reasons:
 
 1. Non-benchmark taxonomy records (for example `short`, `medium`) are being interpreted as runnable events, which then fail B/C injection lookup with `Missing injection event_id`.
 2. OpenRouter free-tier rate limits (`429`) cause evaluator failures before units complete.
 
-Goal: make full Phase 0 runs reliable for the existing one-LLM-at-a-time A/B/C workflow with 30 events, while preserving current benchmark semantics.
+Goal: make the 1-model, one-event test reliable for the existing one-LLM-at-a-time A/B/C workflow, while preserving current benchmark semantics.
 
 ## Scope
 

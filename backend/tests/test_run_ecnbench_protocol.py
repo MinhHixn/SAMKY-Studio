@@ -1253,6 +1253,8 @@ def test_summarize_event_results_ignores_invalid_legacy_noisy_dimensions_for_uns
 
 
 def test_evaluate_row_marks_evaluator_reliability_absent_when_second_run_fails(monkeypatch):
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("DEV_MINIMAL_EVALUATOR_SINGLE_PASS", raising=False)
     run1_labels = {
         "prediction_accuracy": "high",
         "polarization": "low",
@@ -1320,6 +1322,8 @@ def test_evaluate_row_marks_evaluator_reliability_absent_when_second_run_fails(m
 
 
 def test_evaluate_row_marks_evaluator_reliability_partial_when_second_run_is_incomplete(monkeypatch):
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("DEV_MINIMAL_EVALUATOR_SINGLE_PASS", raising=False)
     run1_labels = {
         "prediction_accuracy": "high",
         "polarization": "low",
@@ -1400,6 +1404,8 @@ def test_evaluate_row_marks_evaluator_reliability_partial_when_second_run_is_inc
 
 
 def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypatch):
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("DEV_MINIMAL_EVALUATOR_SINGLE_PASS", raising=False)
     run1_labels = {
         "prediction_accuracy": "high",
         "polarization": "low",
@@ -1522,6 +1528,93 @@ def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypa
     assert "convergence" not in composite["included_dimensions"]
 
 
+def test_evaluate_row_uses_single_pass_reliability_in_dev_minimal(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "true")
+    monkeypatch.setenv("DEV_MINIMAL_EVALUATOR_SINGLE_PASS", "true")
+
+    class FakeRouter:
+        def model_for(self, role):
+            del role
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        calls = 0
+
+        def __init__(self, router):
+            self.router = router
+
+        def evaluate(self, question, condition, evidence_text):
+            del question, condition, evidence_text
+            FakeEvaluator.calls += 1
+            return {
+                "probabilities": {"YES": 0.8, "NO": 0.2},
+                "mcq_dimensions": {
+                    "prediction_accuracy": {"very_low": 0.0, "low": 0.0, "high": 1.0, "very_high": 0.0}
+                },
+                "validated_scales": {
+                    "schema_version": "v1",
+                    "scores": {
+                        "prediction_accuracy_score": 0.9,
+                        "polarization_score": 0.5,
+                        "herd_effect_score": 0.3,
+                        "deliberation_quality_score": 0.4,
+                        "susceptibility_score": 0.2,
+                        "convergence_score": 0.1,
+                        "information_diversity_score": 0.6,
+                        "weighted_rubric_score": 0.8,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    row = protocol_script._evaluate_row(
+        {"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]},
+        "B",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert FakeEvaluator.calls == 1
+    assert row["probabilities"]["YES"] == pytest.approx(0.8)
+    assert row["evaluator_reliability_status"] == "absent"
+
+
+def test_evaluate_row_skips_condition_a_evaluator_in_dev_minimal(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "true")
+    monkeypatch.setenv("DEV_MINIMAL_SKIP_A_EVALUATION", "true")
+
+    class FakeRouter:
+        def model_for(self, role):
+            del role
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        def __init__(self, router):
+            del router
+
+        def evaluate(self, *_args, **_kwargs):
+            raise AssertionError("Condition A evaluator should be bypassed in dev minimal mode")
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    probabilities, brier = protocol_script._evaluate_row(
+        {
+            "event_id": "E1",
+            "question": "Q",
+            "outcome": "YES",
+            "options": ["YES", "NO"],
+            "polymarket_opening_prior": {"YES": 0.7, "NO": 0.3},
+        },
+        "A",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert probabilities == {"YES": pytest.approx(0.7), "NO": pytest.approx(0.3)}
+    assert isinstance(brier, float)
+
+
 def test_summarize_event_results_propagates_unexpected_composite_value_errors(monkeypatch):
     monkeypatch.setattr(
         protocol_script,
@@ -1554,6 +1647,8 @@ def test_summarize_event_results_propagates_unexpected_composite_value_errors(mo
 
 
 def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, evaluate_side_effect=None):
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("TELEMETRY_REQUIRED", raising=False)
     events = [
         {
             "event_id": "E1",
@@ -1598,6 +1693,7 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
     monkeypatch.setattr(protocol_script, "write_profiles", lambda *args, **kwargs: (tmp_path / "twitter_profiles.csv", tmp_path / "reddit_profiles.json"))
     monkeypatch.setattr(protocol_script, "build_evidence_text", lambda *args, **kwargs: "evidence")
     monkeypatch.setattr(protocol_script, "_run_simulation_subprocess", lambda *args, **kwargs: simulation_result)
+    monkeypatch.setattr(protocol_script, "_check_neo4j_connectivity", lambda: (True, None))
     monkeypatch.setattr(protocol_script.BenchmarkRoleRouter, "from_config", classmethod(lambda cls, config=None: DummyRouter()))
     if evaluate_side_effect is not None:
         monkeypatch.setattr(protocol_script, "_evaluate_row", evaluate_side_effect)
@@ -1606,6 +1702,8 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
 
 
 def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypatch, tmp_path):
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("TELEMETRY_REQUIRED", raising=False)
     captured: dict[str, object] = {}
     config_builder_calls: list[tuple[dict[str, object], str, list[dict[str, object]], object, str]] = []
     executor_ctor_calls: dict[str, object] = {}
@@ -1672,6 +1770,7 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
         ),
     )
     monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: DummyInjectionLoader())
+    monkeypatch.setattr(protocol_script, "_check_neo4j_connectivity", lambda: (True, None))
     monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
     monkeypatch.setattr(
         protocol_script,
@@ -1727,6 +1826,10 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
     assert captured["manifest"]["baseline_agents"] == ["uniform_random", "market_prior"]
     assert captured["manifest"]["preflight_market_prior_check"] == "pass"
     assert captured["manifest"]["leakage_check"] == "pass"
+    assert captured["manifest"]["telemetry_mode"] == "neo4j"
+    assert captured["manifest"]["telemetry_required"] is True
+    assert captured["manifest"]["neo4j_connected"] is True
+    assert captured["manifest"]["neo4j_error"] is None
     assert captured["run_dir_exists_before_run"] is False
     assert captured["manifest_exists_before_run"] is False
     assert captured["built_config"] == {"event_id": "E1", "condition": "A"}
@@ -1786,6 +1889,7 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
     _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
     monkeypatch.setattr(protocol_script.Config, "BENCHMARK_MODE", False, raising=False)
+    monkeypatch.setattr(protocol_script.Config, "HEADLESS_MODE", True, raising=False)
     monkeypatch.setattr(protocol_script.Config, "BENCHMARK_TEMPERATURE", 0.125, raising=False)
     monkeypatch.setattr(protocol_script.Config, "BENCHMARK_SEED", 9876, raising=False)
     custom_events = [
@@ -1840,11 +1944,70 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
     assert manifest["mcq_prompt_version"] == "v1"
     assert manifest["layer23_config_version"] == "layer23_v1"
     assert manifest["leakage_check"] == "pass"
-    assert manifest["deterministic_mode"] == {
+    assert manifest["deterministic_mode"] is False
+    assert manifest["deterministic_mode_snapshot"] == {
         "benchmark_mode": False,
         "temperature": 0.125,
         "seed": 9876,
     }
+    assert manifest["headless_mode"] is True
+
+
+def test_main_fails_fast_when_neo4j_unreachable_in_strict_benchmark(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(protocol_script, "_check_neo4j_connectivity", lambda: (False, "connection refused"))
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Neo4j is unreachable"):
+        protocol_script.main()
+
+
+def test_main_uses_mock_telemetry_when_dev_minimal_and_neo4j_unreachable(monkeypatch, tmp_path):
+    simulation_result = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+    _patch_minimal_main_inputs(monkeypatch, tmp_path, simulation_result=simulation_result)
+    monkeypatch.setattr(protocol_script.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(protocol_script, "_check_neo4j_connectivity", lambda: (False, "connection refused"))
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "true")
+    monkeypatch.setenv("TELEMETRY_REQUIRED", "false")
+
+    output_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        protocol_script.sys,
+        "argv",
+        [
+            "run_ecnbench_protocol.py",
+            "--seeds-dir",
+            str(tmp_path / "seeds"),
+            "--events-raw",
+            str(tmp_path / "events.json"),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    protocol_script.main()
+
+    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["telemetry_mode"] == "mock"
+    assert manifest["telemetry_required"] is False
+    assert manifest["neo4j_connected"] is False
+    assert "connection refused" in manifest["neo4j_error"]
 
 
 def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
@@ -2249,11 +2412,127 @@ def test_run_simulation_subprocess_uses_router_benchmark_env(monkeypatch, tmp_pa
     assert env["LLM_BASE_URL"] == "https://openrouter.ai/api/v1"
     assert env["LLM_MODEL_NAME"] == "openrouter/benchmark-model"
     assert env["BENCHMARK_MODE"] == "true"
-    assert env["BENCHMARK_TEMPERATURE"] == "0.25"
-    assert env["BENCHMARK_SEED"] == "31415"
+    assert env["BENCHMARK_TEMPERATURE"] == "0.0"
+    assert env["BENCHMARK_SEED"] == "42"
+    assert env["HEADLESS_MODE"] == "true"
     assert captured["kwargs"]["timeout"] == protocol_script.SIMULATION_SUBPROCESS_TIMEOUT_SECONDS
     assert captured["kwargs"]["stdout"] == subprocess.DEVNULL
     assert captured["kwargs"]["stderr"] == subprocess.DEVNULL
+
+
+def test_resolve_telemetry_runtime_raises_when_benchmark_requires_neo4j():
+    with pytest.raises(RuntimeError, match="Neo4j is unreachable"):
+        protocol_script._resolve_telemetry_runtime(
+            phase1_cfg={"min_parsed_probability_ratio": 0.25},
+            neo4j_connected=False,
+            neo4j_error="connection refused",
+            benchmark_mode=True,
+            dev_minimal_mode=False,
+            telemetry_required=True,
+        )
+
+
+def test_resolve_telemetry_runtime_falls_back_to_mock_for_dev_minimal():
+    telemetry = protocol_script._resolve_telemetry_runtime(
+        phase1_cfg={"min_parsed_probability_ratio": 0.25},
+        neo4j_connected=False,
+        neo4j_error="connection refused",
+        benchmark_mode=True,
+        dev_minimal_mode=True,
+        telemetry_required=False,
+    )
+
+    assert telemetry["telemetry_mode"] == "mock"
+    assert telemetry["min_parsed_probability_ratio"] == 0.0
+
+
+def test_resolve_telemetry_runtime_uses_configured_ratio_when_neo4j_connected():
+    telemetry = protocol_script._resolve_telemetry_runtime(
+        phase1_cfg={"min_parsed_probability_ratio": 0.25},
+        neo4j_connected=True,
+        neo4j_error=None,
+        benchmark_mode=True,
+        dev_minimal_mode=False,
+        telemetry_required=True,
+    )
+
+    assert telemetry["telemetry_mode"] == "neo4j"
+    assert telemetry["min_parsed_probability_ratio"] == pytest.approx(0.25)
+
+
+def test_resolve_telemetry_required_defaults_to_false_for_dev_minimal(monkeypatch):
+    monkeypatch.delenv("TELEMETRY_REQUIRED", raising=False)
+
+    assert (
+        protocol_script._resolve_telemetry_required(
+            benchmark_mode=False,
+            dev_minimal_mode=True,
+        )
+        is False
+    )
+
+
+def test_resolve_telemetry_required_stays_true_in_benchmark_mode(monkeypatch):
+    monkeypatch.setenv("TELEMETRY_REQUIRED", "false")
+
+    assert (
+        protocol_script._resolve_telemetry_required(
+            benchmark_mode=True,
+            dev_minimal_mode=False,
+        )
+        is True
+    )
+
+
+def test_check_neo4j_connectivity_retries_and_reports_socket_state(monkeypatch):
+    attempts = {"count": 0}
+
+    class _FailingDriver:
+        def verify_connectivity(self):
+            attempts["count"] += 1
+            raise OSError("connection refused")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(protocol_script, "_maybe_start_local_neo4j", lambda: None)
+    monkeypatch.setattr(protocol_script.GraphDatabase, "driver", lambda *_args, **_kwargs: _FailingDriver())
+    monkeypatch.setattr(protocol_script, "_is_socket_open", lambda *_args, **_kwargs: False)
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_RETRIES", "2")
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_INITIAL_DELAY_SECONDS", "0")
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_BACKOFF_FACTOR", "1")
+
+    connected, error = protocol_script._check_neo4j_connectivity()
+
+    assert connected is False
+    assert attempts["count"] == 2
+    assert isinstance(error, str) and "socket" in error and "closed" in error
+
+
+def test_check_neo4j_connectivity_succeeds_on_second_attempt(monkeypatch):
+    attempts = {"count": 0}
+
+    class _FlakyDriver:
+        def verify_connectivity(self):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise OSError("transient failure")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(protocol_script, "_maybe_start_local_neo4j", lambda: None)
+    monkeypatch.setattr(protocol_script.GraphDatabase, "driver", lambda *_args, **_kwargs: _FlakyDriver())
+    monkeypatch.setattr(protocol_script, "_is_socket_open", lambda *_args, **_kwargs: True)
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_RETRIES", "3")
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_INITIAL_DELAY_SECONDS", "0")
+    monkeypatch.setenv("NEO4J_CONNECTIVITY_BACKOFF_FACTOR", "1")
+
+    connected, error = protocol_script._check_neo4j_connectivity()
+
+    assert connected is True
+    assert error is None
+    assert attempts["count"] == 2
 
 
 def test_summarize_event_results_includes_directional_accuracy_block():

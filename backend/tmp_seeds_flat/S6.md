@@ -1,0 +1,158 @@
+# Context: 2024 Austrian Parliamentary Election — Which Party Wins Most Seats?
+
+**Question:** Which party wins the most seats in the 2024 Austrian legislative election?  
+**Market Opened:** August 2024  
+**Information Available Through:** September 28, 2024 (day before the election)
+
+---
+
+## Background: Austrian Political System
+
+Austria uses a proportional representation system for its Nationalrat (National Council, 183 seats). The government is formed through coalition negotiations — the party with the most seats has the strongest claim to lead a coalition, but the Federal President formally tasks a party to form government.
+
+**2021 Coalition (outgoing):**
+- ÖVP (Austrian People's Party, center-right) led a coalition with the Greens
+- Chancellor Karl Nehammer (ÖVP) was in office heading into the election
+
+**Why a New Election:**
+- Scheduled election; term expired in autumn 2024
+- Not a snap vote; a normal parliamentary cycle
+
+**Source:** Austrian Parliament (Parlament.gv.at); Austrian Federal Electoral Authority
+
+---
+
+## Main Parties
+
+**FPÖ — Freiheitliche Partei Österreichs (Freedom Party):**
+- Far-right populist party; led by Herbert Kickl since 2021
+- Historically strong, previously part of governing coalitions
+- Took a hard line on immigration, anti-EU rhetoric, skepticism of COVID vaccine mandates
+- Polling strongly throughout 2024
+
+**ÖVP — Österreichische Volkspartei (People's Party):**
+- Center-right; had governed since 2017 (with brief interruption)
+- Weakened by Ibiza scandal (2019), COVID controversies, corruption investigations involving ex-officials
+- Polling in second or third position by mid-2024
+
+**SPÖ — Sozialdemokratische Partei Österreichs (Social Democrats):**
+- Center-left; had been in opposition
+- New leadership under Andreas Babler (elected 2023), moving party slightly leftward
+- Polling third or in a close three-way contest with ÖVP
+
+**NEOS — Das Neue Österreich:**
+- Liberal pro-EU party; junior partner material
+
+**Greens:**
+- Coalition partner in outgoing government; facing possible threshold exclusion
+
+**Source:** APA (Austria Press Agency); Der Standard (major Austrian newspaper)
+
+---
+
+## Pre-Election Polling (August–September 2024)
+
+**Major Institute Polls (August–September 2024):**
+
+| Pollster | FPÖ | ÖVP | SPÖ | NEOS | Greens |
+|---|---|---|---|---|---|
+| Unique Research (Sep 20) | 28% | 25% | 21% | 11% | 9% |
+| SORA (Sep 18) | 27% | 26% | 22% | 12% | 8% |
+| Lazarsfeld/APA (Sep 12) | 29% | 24% | 20% | 11% | 9% |
+| Market Institut (Sep 5) | 30% | 24% | 21% | 10% | 9% |
+
+**Pattern:** FPÖ consistently first, ÖVP second, SPÖ third. FPÖ leads have been stable at ~3–6 points for months.
+
+**Source:** pollofpolls.eu/Austria; APA polling roundups; Der Standard
+
+---
+
+## The "Cordon Sanitaire" Problem
+
+The most politically significant feature of the Austrian landscape going into this election: **even if FPÖ wins the most seats, it may not form the government.**
+
+**Why:**
+- ÖVP, SPÖ, Greens, and NEOS have all publicly ruled out coalition with Herbert Kickl personally (or with FPÖ more broadly under Kickl's leadership)
+- This is called an informal "Cordon Sanitaire" — a political quarantine of the far-right leader
+- The Federal President (Alexander Van der Bellen, Green-leaning) has broad discretion to task a second-placed party to lead negotiations
+
+**Historical Parallel:**
+- 2022 French legislative election: Marine Le Pen's RN led first round, but a "republican front" consolidated against them in the second round — an analogous dynamic to what Austrian centrist parties aimed for in coalition negotiations
+- Austria 2019–2020: An earlier FPÖ-ÖVP coalition collapsed amid the "Ibiza scandal" (Strache bribery video); the experience deeply scarred centrist attitudes toward governing with FPÖ
+
+**FPÖ Counterclaim:**
+- Herbert Kickl insisted voters who support FPÖ deserve representation in government
+- "A party that places first should lead the government" — Kickl's campaign message
+- Polling showed ~40% of Austrians agreed in principle that cordon sanitaire is undemocratic
+
+**Source:** ECFR (European Council on Foreign Relations), Der Standard, Profil
+
+---
+
+## Market Expectations (Prediction Markets)
+
+**Polymarket — "Which party wins the most seats?"**
+- FPÖ YES: ~78–82% probability in final two weeks of campaign
+- ÖVP: ~12–15%
+- SPÖ: ~5–8%
+
+**Austrian bookmakers:**
+- FPÖ as most seats: odds implied ~79%
+
+**Source:** Polymarket; Oddschecker (European political events)
+
+---
+
+## Key Arguments For and Against FPÖ Winning Most Seats
+
+**For FPÖ winning most seats:**
+- Consistent 5–7 point polling lead
+- Strong on top voter issues: immigration, housing costs, energy prices, anti-establishment sentiment
+- Polling lead stable for 6+ months — not a late surge, a sustained trend
+- Populist wave across Europe in 2024 (French RN near-win, German AfD rise, Italian right governing)
+
+**Against FPÖ winning most seats:**
+- Austria has had "shy Tory"-style voters before who switch away from far-right in the polling booth
+- ÖVP has incumbency, government resources, and regional political networks
+- Late campaigns can consolidate anti-FPÖ voters tactically
+
+**Source:** SORA Institute electoral analysis; Vienna University political science faculty
+
+---
+
+## European Context: Far-Right Electoral Wave in 2024
+
+The Austrian election took place within a broader European political environment in 2024:
+- **June 2024 EU Parliament elections:** Far-right and right-wing populist parties gained significantly across multiple member states
+- **French snap legislative elections (July 2024):** RN led first round with 33%; "republican front" blocked them in the second round
+- **German AfD:** Polling second nationally; won a state election in Thuringia for the first time (September 1, 2024)
+- Analysts watched Austria as a bellwether for whether European far-right parties could cross the threshold from leading polls to actually taking power
+
+**Source:** European Parliament election data (June 2024); Reuters European politics desk
+
+---
+
+## Key Uncertainty: Will the Cordon Sanitaire Hold?
+
+The market question is specifically "most seats" — not "who forms government." But the political significance intertwines:
+- FPÖ winning most seats would be a historic milestone regardless of who governs
+- If cordon sanitaire holds and ÖVP forms a coalition without FPÖ, it creates enormous political tension
+- Some analysts expected Austrian politics to be in extended turmoil if FPÖ won most seats but was frozen out of government
+
+---
+
+## Sources Summary
+
+**Austrian Media:**
+- Der Standard: https://www.derstandard.at/ (liberal Austrian broadsheet)
+- APA (Austria Presse Agentur): https://www.apa.at/
+- Profil: https://www.profil.at/
+
+**Polling:**
+- Unique Research, SORA Institut, Market Institut, Lazarsfeld Society
+- Austria Polls aggregator: https://pollofpolls.eu/Austria
+
+**International Analysis:**
+- European Council on Foreign Relations: https://ecfr.eu/
+- Reuters European politics coverage
+- Politico Europe: https://www.politico.eu/

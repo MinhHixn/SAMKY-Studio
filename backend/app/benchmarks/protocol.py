@@ -1,8 +1,8 @@
 """ECN-BENCH protocol primitives."""
 
 from __future__ import annotations
-
 from copy import deepcopy
+import os
 from typing import Any, Dict, List
 
 
@@ -13,12 +13,34 @@ def _as_int(value: Any, field_name: str) -> int:
         raise ValueError(f"{field_name} must be an integer") from error
 
 
+def _is_dev_minimal_mode_enabled() -> bool:
+    return os.environ.get("DEV_MINIMAL_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dev_minimal_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
 def enforce_protocol_constraints(config: Dict[str, Any]) -> None:
     """Validate the benchmark protocol invariants."""
+    dev_minimal_mode = _is_dev_minimal_mode_enabled()
+    required_agent_count = _dev_minimal_int("DEV_MINIMAL_AGENT_COUNT", 100) if dev_minimal_mode else 3000
+    required_rounds = _dev_minimal_int("DEV_MINIMAL_MAX_STEPS", 30) if dev_minimal_mode else 60
+
     agent_configs = config.get("agent_configs")
     if not isinstance(agent_configs, list):
         raise ValueError("agent_configs must be a list")
-    if len(agent_configs) != 3000:
+    if len(agent_configs) != required_agent_count:
+        if dev_minimal_mode:
+            raise ValueError(
+                f"DEV_MINIMAL_MODE requires exactly {required_agent_count} agents, got {len(agent_configs)}"
+            )
         raise ValueError(f"Protocol requires exactly 3000 agents, got {len(agent_configs)}")
 
     time_config = config.get("time_config", {})
@@ -28,7 +50,11 @@ def enforce_protocol_constraints(config: Dict[str, Any]) -> None:
         raise ValueError("minutes_per_round must be greater than 0")
 
     total_rounds = (total_simulation_hours * 60) // minutes_per_round
-    if total_rounds != 60:
+    if total_rounds != required_rounds:
+        if dev_minimal_mode:
+            raise ValueError(
+                f"DEV_MINIMAL_MODE requires exactly {required_rounds} rounds, got {total_rounds}"
+            )
         raise ValueError(f"Protocol requires exactly 60 rounds, got {total_rounds}")
 
 
@@ -62,13 +88,22 @@ def _extract_usable_text(payload: Dict[str, Any]) -> str:
     return ""
 
 
-def build_step30_scheduled_event(payload: Dict[str, Any], poster_agent_id: int = 0) -> Dict[str, Any]:
+def build_step30_scheduled_event(
+    payload: Dict[str, Any],
+    poster_agent_id: int = 0,
+    *,
+    trigger_round: int = 30,
+) -> Dict[str, Any]:
     """Create the scheduled event used for step-30 injections."""
     content = _extract_usable_text(payload)
     if not content:
         raise ValueError("Injection payload must include body/headline text")
 
-    return {
-        "trigger_round": 30,
+    event: Dict[str, Any] = {
+        "trigger_round": int(trigger_round),
         "posts": [{"poster_agent_id": poster_agent_id, "content": content}],
     }
+    temporal_updates = payload.get("temporal_updates")
+    if isinstance(temporal_updates, list):
+        event["temporal_updates"] = deepcopy(temporal_updates)
+    return event

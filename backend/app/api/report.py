@@ -20,6 +20,10 @@ from ..utils.logger import get_logger
 logger = get_logger('mirofish.api.report')
 
 
+def _is_headless_mode_enabled() -> bool:
+    return bool(getattr(Config, "HEADLESS_MODE", False) or getattr(Config, "BENCHMARK_MODE", False))
+
+
 # ============== Report Generation Interface ==============
 
 @report_bp.route('/generate', methods=['POST'])
@@ -95,6 +99,22 @@ def generate_report():
             except Exception as e:
                 logger.error(f"Report generation failed: {str(e)}")
                 task_manager.fail_task(task_id, str(e))
+
+        if _is_headless_mode_enabled():
+            run_generate()
+            completed_report = ReportManager.get_report(report_id)
+            if completed_report and completed_report.status == ReportStatus.COMPLETED:
+                return jsonify({"success": True, "data": {
+                    "simulation_id": simulation_id,
+                    "report_id": report_id,
+                    "task_id": task_id,
+                    "status": "completed",
+                    "message": "Report generation completed in headless mode",
+                    "already_generated": False
+                }})
+            task = task_manager.get_task(task_id)
+            error = task.error if task else "Report generation failed in headless mode"
+            return jsonify({"success": False, "error": error}), 500
 
         thread = threading.Thread(target=run_generate, daemon=True)
         thread.start()

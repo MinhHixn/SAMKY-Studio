@@ -1,0 +1,44 @@
+# Context: US Government Shutdown in Early 2025
+
+**Question:** Will there be a US government shutdown in early 2025?  
+**Market Opened:** January 2025  
+**Information Available Through:** February 28, 2025
+
+---
+
+## Budget/Funding Setup
+
+- The US fiscal year runs from October 1 to September 30.
+- FY2025 began on October 1, 2024.
+- Congress used continuing resolutions (CRs) rather than full appropriations before early 2025.
+
+## What Was Known by Late February 2025
+
+- A late-2024 funding package extended government funding into March 2025 (through the mid-March deadline).
+- As of February 28, 2025, there was **no confirmed early-2025 shutdown yet**.
+- The key risk window was the March funding deadline.
+
+## Why a Shutdown Was Considered Plausible
+
+- Narrow House majority increased vote fragility.
+- Ongoing disagreements over spending levels and policy riders.
+- Leadership pressure from both fiscal hardliners and moderates.
+
+## Why a Shutdown Could Still Be Avoided
+
+- Historical pattern of last-minute CR deals.
+- Strong political incentive to avoid shutdown blame.
+- Senate and House leadership publicly signaling negotiations.
+
+## Resolution Logic
+
+For markets on this question, outcome depends on whether a **real funding lapse** occurs within the early-2025 resolution window (not just rhetoric or near-misses).
+
+---
+
+## Sources Summary
+
+- US budget process and FY2025 timeline (Congress/OMB coverage)
+- Major congressional reporting desks (AP, Reuters, Politico, The Hill, Roll Call)
+- Public budget explainers and trackers
+

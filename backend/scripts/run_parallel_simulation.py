@@ -68,13 +68,15 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import multiprocessing
 import random
+import re
 import signal
 import sqlite3
 import warnings
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Callable, Dict, Any, List, Mapping, Optional, Tuple
 
 
 # Global variables: for signal handling
@@ -725,6 +727,14 @@ def fetch_new_actions_from_db(
                 simplified_args['like_id'] = action_args['like_id']
             if 'dislike_id' in action_args:
                 simplified_args['dislike_id'] = action_args['dislike_id']
+            if action == ActionType.INTERVIEW.value:
+                if 'prompt' in action_args:
+                    simplified_args['prompt'] = action_args['prompt']
+                if 'response' in action_args:
+                    simplified_args['response'] = action_args['response']
+                interview_probability = _extract_interview_probability(action_args)
+                if interview_probability is not None:
+                    simplified_args['yes_probability'] = interview_probability
             
             # Convert action type names
             action_type = ACTION_TYPE_MAP.get(action, action.upper())
@@ -1005,9 +1015,194 @@ def _apply_benchmark_env(
     if benchmark_mode_enabled:
         os.environ.setdefault("BENCHMARK_TEMPERATURE", "0")
         os.environ.setdefault("BENCHMARK_SEED", "42")
+        os.environ["HEADLESS_MODE"] = "true"
         random.seed(int(os.environ["BENCHMARK_SEED"]))
 
     return llm_model
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_headless_mode_enabled() -> bool:
+    return _env_flag("HEADLESS_MODE") or _env_flag("BENCHMARK_MODE")
+
+
+_PROBABILITY_PATTERN = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+_TELEMETRY_PROBE_PROMPT_TEMPLATE = (
+    "You are tracking a prediction benchmark.\n"
+    "Target question: {question}\n"
+    "Return only valid JSON with one key exactly named yes_probability.\n"
+    "Example: {{\"yes_probability\": 0.63}}\n"
+    "Constraints: no prose, no markdown, number must be between 0 and 1."
+)
+
+
+def _telemetry_probes_enabled() -> bool:
+    raw = os.environ.get("ENABLE_TELEMETRY_PROBES")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return _is_headless_mode_enabled()
+
+
+def _build_telemetry_probe_rounds(total_rounds: int) -> List[int]:
+    if total_rounds <= 0:
+        return []
+    checkpoints: List[int] = []
+    for ratio in (0.2, 0.4, 0.6, 0.8, 1.0):
+        checkpoint = int(round(total_rounds * ratio))
+        checkpoint = max(1, min(total_rounds, checkpoint))
+        checkpoints.append(checkpoint)
+    return sorted(set(checkpoints))
+
+
+def _normalize_probability(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            numeric = float(stripped)
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(numeric):
+        return None
+    if 0.0 <= numeric <= 1.0:
+        return numeric
+    if 1.0 < numeric <= 100.0:
+        scaled = numeric / 100.0
+        if 0.0 <= scaled <= 1.0:
+            return scaled
+    return None
+
+
+def _extract_probability_from_text(text: str) -> Optional[float]:
+    if not isinstance(text, str):
+        return None
+    for match in _PROBABILITY_PATTERN.finditer(text):
+        parsed = _normalize_probability(match.group(0))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_interview_probability(payload: Any) -> Optional[float]:
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping):
+        for key in ("yes_probability", "probability", "prob", "p_yes"):
+            if key in payload:
+                parsed = _normalize_probability(payload.get(key))
+                if parsed is not None:
+                    return parsed
+        response = payload.get("response")
+        if response is not None:
+            parsed = _extract_interview_probability(response)
+            if parsed is not None:
+                return parsed
+        for value in payload.values():
+            parsed = _extract_interview_probability(value)
+            if parsed is not None:
+                return parsed
+        return None
+    if isinstance(payload, list):
+        for item in payload:
+            parsed = _extract_interview_probability(item)
+            if parsed is not None:
+                return parsed
+        return None
+    parsed = _normalize_probability(payload)
+    if parsed is not None:
+        return parsed
+    if isinstance(payload, str):
+        return _extract_probability_from_text(payload)
+    return None
+
+
+def _build_telemetry_probe_prompt(config: Dict[str, Any]) -> str:
+    question = "current event outcome"
+    event_config = config.get("event_config", {})
+    if isinstance(event_config, Mapping):
+        initial_posts = event_config.get("initial_posts", [])
+        if isinstance(initial_posts, list):
+            for post in initial_posts:
+                if not isinstance(post, Mapping):
+                    continue
+                content = post.get("content")
+                if isinstance(content, str) and content.strip():
+                    question = content.strip()
+                    break
+    return _TELEMETRY_PROBE_PROMPT_TEMPLATE.format(question=question)
+
+
+async def _capture_checkpoint_probe(
+    *,
+    env: Any,
+    config: Dict[str, Any],
+    db_path: str,
+    round_num: int,
+    probe_rounds: set[int],
+    last_rowid: int,
+    agent_names: Dict[int, str],
+    action_logger: Optional[PlatformActionLogger],
+    platform_label: str,
+) -> Tuple[int, int]:
+    if not probe_rounds or round_num not in probe_rounds or action_logger is None:
+        return last_rowid, 0
+
+    candidate_agent_id = 0
+    if agent_names:
+        candidate_agent_id = min(agent_names.keys())
+
+    try:
+        probe_agent = env.agent_graph.get_agent(candidate_agent_id)
+    except Exception:
+        logging.warning("Skipping telemetry probe at round %s on %s: probe agent unavailable", round_num, platform_label)
+        return last_rowid, 0
+
+    prompt = _build_telemetry_probe_prompt(config)
+    try:
+        await env.step(
+            {
+                probe_agent: ManualAction(
+                    action_type=ActionType.INTERVIEW,
+                    action_args={"prompt": prompt},
+                )
+            }
+        )
+    except Exception as exc:
+        logging.warning("Telemetry probe interview failed at round %s on %s: %s", round_num, platform_label, exc)
+        if _env_flag("BENCHMARK_MODE"):
+            return last_rowid, 0
+
+    probe_actions, updated_last_rowid = fetch_new_actions_from_db(db_path, last_rowid, agent_names)
+    logged_count = 0
+    for action_data in probe_actions:
+        if action_data.get("action_type") != "INTERVIEW":
+            continue
+        action_args = dict(action_data.get("action_args") or {})
+        probability = _extract_interview_probability(action_args)
+        if probability is None and not _env_flag("BENCHMARK_MODE"):
+            probability = 0.5
+            action_args["telemetry_source"] = "fallback_default"
+        if probability is not None:
+            action_args["yes_probability"] = probability
+        action_logger.log_action(
+            round_num=round_num,
+            agent_id=action_data.get("agent_id", candidate_agent_id),
+            agent_name=action_data.get("agent_name", agent_names.get(candidate_agent_id, f"Agent_{candidate_agent_id}")),
+            action_type="TELEMETRY_PROBE",
+            action_args=action_args,
+        )
+        logged_count += 1
+    return updated_last_rowid, logged_count
 
 
 def create_model(config: Dict[str, Any], use_boost: bool = False):
@@ -1092,6 +1287,18 @@ def get_active_agents_for_round(
         min(target_count, len(candidates))
     ) if candidates else []
     
+    dev_minimal_mode = os.environ.get("DEV_MINIMAL_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    if dev_minimal_mode and os.environ.get("DEV_MINIMAL_SKIP_LLM", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return []
+    dev_minimal_cap = 0
+    if dev_minimal_mode:
+        try:
+            dev_minimal_cap = max(1, int(os.environ.get("DEV_MINIMAL_ACTIVE_AGENTS", "5")))
+        except ValueError:
+            dev_minimal_cap = 5
+        if len(selected_ids) > dev_minimal_cap:
+            selected_ids = selected_ids[:dev_minimal_cap]
+
     active_agents = []
     for agent_id in selected_ids:
         try:
@@ -1149,6 +1356,70 @@ def collect_scheduled_posts_for_round(event_config: Dict[str, Any], round_num: i
     return scheduled_posts
 
 
+def collect_temporal_updates_for_round(event_config: Dict[str, Any], round_num: int) -> List[Dict[str, Any]]:
+    """Collect temporal fact lifecycle updates scheduled for a specific round."""
+    temporal_updates: List[Dict[str, Any]] = []
+    if not isinstance(event_config, dict):
+        return temporal_updates
+
+    for scheduled_event in event_config.get("scheduled_events", []) or []:
+        if not isinstance(scheduled_event, dict):
+            continue
+
+        trigger_round = scheduled_event.get("trigger_round")
+        if not isinstance(trigger_round, int) or isinstance(trigger_round, bool) or trigger_round != round_num:
+            continue
+
+        updates = scheduled_event.get("temporal_updates", [])
+        if not isinstance(updates, list):
+            continue
+
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            fact_id = update.get("fact_id")
+            status = update.get("status")
+            if not isinstance(fact_id, str) or not fact_id.strip():
+                continue
+            if not isinstance(status, str) or not status.strip():
+                continue
+            normalized_update: Dict[str, Any] = {
+                "fact_id": fact_id.strip(),
+                "status": status.strip(),
+            }
+            replacement_fact = update.get("replacement_fact")
+            if isinstance(replacement_fact, dict):
+                normalized_update["replacement_fact"] = dict(replacement_fact)
+            temporal_updates.append(normalized_update)
+    return temporal_updates
+
+
+def apply_temporal_fact_updates_for_round(env, event_config: Dict[str, Any], round_num: int) -> int:
+    """Apply temporal validity updates after a scheduled perturbation is posted."""
+    updates = collect_temporal_updates_for_round(event_config, round_num)
+    if not updates:
+        return 0
+
+    graph_storage = getattr(env, "graph_storage", None)
+    if graph_storage is None or not hasattr(graph_storage, "update_fact_validity"):
+        logging.info(
+            "Temporal updates scheduled for round %s but env.graph_storage.update_fact_validity is unavailable",
+            round_num,
+        )
+        return 0
+
+    applied = 0
+    for update in updates:
+        graph_storage.update_fact_validity(
+            fact_id=update["fact_id"],
+            current_round=round_num,
+            status=update["status"],
+            replacement_fact=update.get("replacement_fact"),
+        )
+        applied += 1
+    return applied
+
+
 async def apply_scheduled_posts_for_round(env, event_config: Dict[str, Any], round_num: int) -> int:
     """Apply scheduled create-post events for the given round."""
     scheduled_posts = collect_scheduled_posts_for_round(event_config, round_num)
@@ -1188,6 +1459,7 @@ async def apply_scheduled_posts_for_round(env, event_config: Dict[str, Any], rou
     if scheduled_actions:
         try:
             await env.step(scheduled_actions)
+            apply_temporal_fact_updates_for_round(env, event_config, round_num)
         except Exception as exc:
             logging.warning(
                 "Failed to apply scheduled posts for round %s: %s",
@@ -1332,6 +1604,14 @@ async def run_twitter_simulation(
         total_rounds = min(total_rounds, max_rounds)
         if total_rounds < original_rounds:
             log_info(f"Rounds truncated: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+
+    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
+    if probe_rounds:
+        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
+
+    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
+    if probe_rounds:
+        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
     
     start_time = datetime.now()
     
@@ -1359,6 +1639,7 @@ async def run_twitter_simulation(
             result.env, event_config, round_num + 1
         )
         if scheduled_action_count:
+            log_info(f"Injection triggered at step {round_num + 1}")
             scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
                 db_path, last_rowid, agent_names
             )
@@ -1394,6 +1675,38 @@ async def run_twitter_simulation(
                     )
                 total_actions += 1
                 round_action_count += 1
+
+        if probe_rounds:
+            last_rowid, probe_count = await _capture_checkpoint_probe(
+                env=result.env,
+                config=config,
+                db_path=db_path,
+                round_num=round_num + 1,
+                probe_rounds=probe_rounds,
+                last_rowid=last_rowid,
+                agent_names=agent_names,
+                action_logger=action_logger,
+                platform_label="reddit",
+            )
+            if probe_count:
+                total_actions += probe_count
+                round_action_count += probe_count
+
+        if probe_rounds:
+            last_rowid, probe_count = await _capture_checkpoint_probe(
+                env=result.env,
+                config=config,
+                db_path=db_path,
+                round_num=round_num + 1,
+                probe_rounds=probe_rounds,
+                last_rowid=last_rowid,
+                agent_names=agent_names,
+                action_logger=action_logger,
+                platform_label="twitter",
+            )
+            if probe_count:
+                total_actions += probe_count
+                round_action_count += probe_count
         
         if action_logger:
             action_logger.log_round_end(round_num + 1, round_action_count)
@@ -1410,6 +1723,7 @@ async def run_twitter_simulation(
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"Simulation loop completed! Time taken: {elapsed:.1f}seconds, Total actions: {total_actions}")
+    log_info(f"Simulation completed at step {total_rounds}")
     
     return result
 
@@ -1572,6 +1886,7 @@ async def run_reddit_simulation(
             result.env, event_config, round_num + 1
         )
         if scheduled_action_count:
+            log_info(f"Injection triggered at step {round_num + 1}")
             scheduled_actions_list, last_rowid = fetch_new_actions_from_db(
                 db_path, last_rowid, agent_names
             )
@@ -1623,6 +1938,7 @@ async def run_reddit_simulation(
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"Simulation loop completed! Time taken: {elapsed:.1f}seconds, Total actions: {total_actions}")
+    log_info(f"Simulation completed at step {total_rounds}")
     
     return result
 
@@ -1670,7 +1986,7 @@ async def main():
     
     config = load_config(args.config)
     simulation_dir = os.path.dirname(args.config) or "."
-    wait_for_commands = not args.no_wait
+    wait_for_commands = not args.no_wait and not _is_headless_mode_enabled()
     
     # Initialize logging configuration (disable OASIS logs, clean up old files)
     init_logging_for_simulation(simulation_dir)

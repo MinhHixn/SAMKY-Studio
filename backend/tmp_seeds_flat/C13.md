@@ -1,0 +1,143 @@
+# Context: 2025 Academy Awards Best Picture
+
+**Question:** Which film will win the Best Picture Oscar at the 97th Academy Awards?  
+**Market Opened:** January 2025  
+**Information Available Through:** March 1, 2025 (ceremony March 2)
+
+---
+
+## The 97th Academy Awards
+
+**Ceremony Date:** March 2, 2025  
+**Venue:** Dolby Theatre, Hollywood, California  
+**Honoring:** Films with qualifying theatrical runs in 2024  
+**Host:** Conan O'Brien  
+**Voting:** Academy of Motion Picture Arts and Sciences members (approximately 9,500 members as of 2025; eligibility expanded since #OscarsSoWhite reforms)
+
+**Source:** Academy of Motion Picture Arts and Sciences (AMPAS): https://www.oscars.org/
+
+---
+
+## Confirmed Nominees (Announced January 17, 2025)
+
+**Best Picture Nominees (10 films):**
+1. **Anora** — Directed by Sean Baker (A24)
+2. **The Brutalist** — Directed by Brady Corbet (Focus Features)
+3. **A Complete Unknown** — Directed by James Mangold (Searchlight)
+4. **Conclave** — Directed by Edward Berger (Focus Features)
+5. **Dune: Part Two** — Directed by Denis Villeneuve (Warner Bros.)
+6. **Emilia Pérez** — Directed by Jacques Audiard (Netflix)
+7. **I'm Still Here** — Directed by Walter Salles (Sony Pictures Classics) [Brazil]
+8. **Nickel Boys** — Directed by RaMell Ross (Amazon MGM)
+9. **The Substance** — Directed by Coralie Fargeat (MUBI)
+10. **Wicked** — Directed by Jon M. Chu (Universal)
+
+**Source:** AMPAS official announcement, January 17, 2025
+
+---
+
+## Awards Season Tracking (January–February 2025)
+
+### Precursor Awards Trail
+
+| Award | Winner | Date | Notes |
+|---|---|---|---|
+| Golden Globes (Best Drama) | The Brutalist | Jan 5 | Brady Corbet also won director |
+| Golden Globes (Best Comedy/Musical) | Emilia Pérez | Jan 5 | Also won 5 awards (record) |
+| Critics Choice Awards | Anora | Jan 12 | Notable shift from Globes |
+| Producers Guild Award (PGA) | Anora | Feb 8 | Strong Oscar predictor |
+| Directors Guild Award (DGA) | Brady Corbet (The Brutalist) | Feb 8 | Split from PGA — significant |
+| Screen Actors Guild (SAG) Ensemble | Anora | Feb 23 | Final major precursor |
+| BAFTA Best Film | Conclave | Feb 16 | UK industry signal |
+| Writers Guild (WGA) | A Complete Unknown | Feb 15 | Less predictive of Best Picture |
+
+**Key Interpretation:** A split between PGA (Anora) and DGA (The Brutalist) is uncommon and indicates genuine two-film competition. PGA winner has matched Oscar Best Picture winner in most recent years.
+
+**Source:** PGA (Producers Guild): https://producersguild.org/; DGA: https://dga.org/; SAG-AFTRA; BAFTA
+
+---
+
+## Frontrunner Analysis
+
+### Anora (A24)
+- **Director:** Sean Baker (known for indie films: Tangerine, Moonlight-era influence)
+- **Cannes:** Won the Palme d'Or (highest prize) at Cannes 2024 — a prestigious but historically mixed predictor for Oscars
+- **Story:** Russian-American sex worker marries son of Russian oligarch; genre blends elements of comedy, tragedy, and social realism
+- **Campaign Strengths:** Strong with Academy's indie/arthouse bloc; excellent reviews; relatable immigrant and class themes
+- **Nominations:** Multiple across major categories
+- **Oscar Prediction Market (late February):** ~50–60% probability for Best Picture
+
+### The Brutalist (Focus Features)
+- **Director:** Brady Corbet
+- **Running Time:** 3.5 hours — epic scope; shot on VistaVision
+- **Story:** Hungarian-Jewish architect emigrates to post-WWII America; chronicles 30 years of his career and struggles
+- **Campaign Strengths:** Sweeping historical epic; Adrien Brody nominated; European art film prestige
+- **DGA Win:** Strong signal — directors' guild vote can predict Best Picture
+- **Oscar Prediction Market (late February):** ~25–35% probability
+
+### Emilia Pérez (Netflix)
+- **Director:** Jacques Audiard (French director)
+- **Country:** French-language film; first Netflix nominee with this profile; Mexican-set musical
+- **Historic:** Most nominated non-English language film in Oscar history (13 nominations)
+- **Controversy:** Social media backlash in January 2025 over old tweets by cast members; some impact on campaign
+- **Oscar Prediction Market:** Declined from ~25% in January to ~10% by late February
+
+### Conclave (Focus Features)
+- **Director:** Edward Berger (German director)
+- **Story:** Vatican political thriller — Catholic cardinals navigate intrigue to select a new Pope
+- **BAFTA Win:** Best Film — UK signal, but BAFTA historically diverges from Oscars ~40% of the time
+- **Oscar Prediction Market:** ~5–10%
+
+---
+
+## Late-Race Dynamics (February 2025)
+
+**The Shift:**
+The race opened in January with The Brutalist as the consensus frontrunner (Golden Globe wins, buzz). Over six weeks, Anora progressively overtook it:
+- Anora's PGA win (Feb 8) was the decisive signal shift
+- SAG ensemble win (Feb 23) confirmed broad industry support (SAG members = largest Academy voting bloc)
+- The Brutalist's DGA win kept it competitive — Brady Corbet's directing was the primary case for it
+
+**Historical Precedent:**
+- In years with a PGA/DGA split, the PGA winner has tended to win Best Picture (~70% of the time in the past decade)
+- SAG ensemble win added further Anora evidence
+- BAFTA choosing Conclave was the outlier signal
+
+**Expert Commentary (February 25–28, 2025):**
+- **Gold Derby:** "We see Anora as front-runner, approximately 64% odds; The Brutalist 28%; others single-digits."
+- **Variety Awards Circuit:** "Anora has assembled the winning coalition — PGA + SAG + critics. The Brutalist would need unprecedented late swing."
+- **IndieWire:** "If Brutalist wins, it would be among the bigger upsets in recent years. Anora is positioned like an Argo or Green Book type winner — broad industry validation."
+
+---
+
+## International Films at the Oscars (Context)
+
+**I'm Still Here** (Brazilian film):
+- Directed by Walter Salles (Central Station, 1998 — nominated)
+- First Brazilian film nominated for Best Picture
+- Also nominated for Best International Film (favorite in that category)
+- ~1–2% Best Picture probability — historic achievement in nomination alone
+
+**Emilia Pérez's French-language nomination:**
+- Represented a new frontier for non-English language Best Picture candidates
+- Combined with *I'm Still Here*, the 2025 nominated field was the most internationally diverse in modern Oscar history
+
+**Source:** AMPAS; IndieWire awards tracker; Variety awards circuit; Gold Derby
+
+---
+
+## Sources Summary
+
+**Awards Tracking:**
+- Gold Derby: https://goldderby.com/
+- IndieWire Awards: https://indiewire.com/awards/
+- Variety Awards Circuit: https://variety.com/awards/
+
+**Guild Organizations:**
+- Producers Guild: https://producersguild.org/
+- Directors Guild: https://dga.org/
+- SAG-AFTRA: https://sagaftra.org/
+- BAFTA: https://bafta.org/
+
+**Official:**
+- AMPAS (The Academy): https://www.oscars.org/

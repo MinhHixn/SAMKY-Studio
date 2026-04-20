@@ -1,0 +1,51 @@
+# Context: French Snap Legislative Election 2024
+
+**Question:** Which party wins the most seats in the 2024 French snap legislative election?  
+**Information Available Through:** July 7, 2024 (election day, second round)
+
+---
+
+## Background
+
+**Election Type:** French National Assembly (577 seats)
+**System:** Two-round voting (June 30 and July 7, 2024)
+**Trigger:** Macron dissolved Assembly after EU election losses (June 9)
+
+**Source:** French Interior Ministry, BBC
+
+## Main Parties
+
+**Rassemblement National (RN):** Far-right, led by Marine Le Pen/Jordan Bardella
+**Nouveau Front Populaire (NFP):** Left alliance (formed June 2024) - LFI, PS, Greens, Communists  
+**Ensemble:** Macron's centrist coalition
+**Les Republicains (LR):** Center-right conservatives
+
+**Source:** Le Monde, France 24
+
+## First Round Results (June 30)
+
+- RN & allies: 33.1%
+- NFP: 28.0%
+- Ensemble: 20.0%
+- LR: 10.2%
+
+RN led first round decisively.
+
+**Source:** French Interior Ministry
+
+## Second Round Dynamics
+
+**"Republican Front":** Over 200 NFP/Ensemble candidates withdrew to block RN in runoffs
+
+**Polling (July 1-6):**
+- Ipsos: RN 175-205 seats, NFP 145-175, Ensemble 118-148
+- Ifop: RN 210-240, NFP 145-175, Ensemble 118-143
+- OpinionWay: RN 205-230, NFP 145-165, Ensemble 130-150
+
+Polls showed RN likely to win most seats but possibly short of 289-seat majority.
+
+**Source:** Ipsos, Ifop, OpinionWay
+
+## Sources
+
+French Interior Ministry, Le Monde, France 24, BBC, Reuters

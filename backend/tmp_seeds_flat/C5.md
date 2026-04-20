@@ -1,0 +1,128 @@
+# Context: Balance of Power After the 2024 US Election
+
+**Question:** What will be the balance of power after the 2024 US election?  
+**Market Opened:** April 2024  
+**Information Available Through:** November 7, 2024
+
+---
+
+## Outcome Categories
+
+**The Polymarket market offered five outcomes:**
+1. Republican President + Republican Congress (full red sweep)
+2. Republican President + Split Congress
+3. Democratic President + Democratic Congress (full blue sweep)
+4. Democratic President + Split Congress
+5. Other
+
+**Congressional definition:** "Republican Congress" = Republicans control both House AND Senate; "Split" = at least one chamber goes to each party.
+
+---
+
+## Presidential Race (See C1 for Full Detail)
+
+**Summary as of Nov 5–7:**
+- Trump (R) vs Harris (D)
+- Polling dead heat nationally; slight Trump edge in models ~52–58%
+- FiveThirtyEight: Trump 52%, Harris 48%
+- Polymarket (presidential): Trump 58¢, Harris 42¢
+
+---
+
+## Senate Race (See S2 for Full Detail)
+
+**Structural advantage to Republicans:**
+- Democrats defending 23 seats vs Republicans' 11
+- Three key seats in red-trending states: WV (near-certain R flip), MT (likely R), OH (toss-up)
+- West Virginia alone shifts control if Democrats need 51
+
+**Consensus probability (Senate control):**
+- Republican control: ~85–88%
+- Democratic control: ~12–15%
+
+**Source:** FiveThirtyEight Senate model; The Economist; Polymarket Senate contract
+
+---
+
+## House Race
+
+**Composition heading into the election:**
+- Republicans: 222 seats (pre-election)
+- Democrats: 213 seats
+- **Required for majority:** 218
+
+**Expert Assessments:**
+- FiveThirtyEight: Republicans ~55%, Democrats ~45% probability of control
+- The Economist: Republicans ~52%
+- Cook Political Report: "Tilt Republican" — Republicans slight favorites, but House is the most contested chamber
+
+**Why the House is Uncertain:**
+- Thin 4-seat buffer for Republicans; losing net 5 seats means losing the gavel
+- ~45 genuinely competitive districts
+- Many Republican incumbents holding Biden +5 districts
+- Democratic strength in suburban California, New York, and Virginia districts
+
+**Source:** Cook Political House ratings (Nov 2024); FiveThirtyEight; Sabato
+
+---
+
+## Composite Scenario Probabilities (Nov 5, 2024)
+
+**Method:** Combining presidential, Senate, and House probabilities with correlation adjustments for coattail effects.
+
+| Outcome | Est. Probability |
+|---|---|
+| Red Sweep (R Pres + R Congress) | ~38–42% |
+| R Pres + Split Congress | ~14–18% |
+| Blue Sweep (D Pres + D Congress) | ~12–16% |
+| D Pres + Split Congress | ~25–30% |
+| Other | ~3–5% |
+
+**Key Insight:** Senate going Republican is the most likely single outcome (~85%); the biggest uncertainty is the presidency and House.
+
+**Correlation effect:** If Trump wins the presidency, it significantly boosts Republican House probability (coattail effect) — moving the "red sweep" probability higher within that scenario (~55–65% chance of House if Trump wins).
+
+**Source:** Composite model estimates from FiveThirtyEight, The Economist, and market-implied probabilities
+
+---
+
+## Coattail Effects in Modern Elections
+
+**Historical pattern:**
+- Ticket-splitting has declined dramatically since 2010
+- 2016: Republicans won presidency and retained Congress
+- 2020: Democrats won presidency; Senate flipped (50-50); lost House seats (net)
+- 2022: Democrats held Senate despite expectations; Republicans narrowly took House
+
+**2024 Coattail Dynamics:**
+- Presidential race extremely tight → coattails weaker than in a blowout scenario
+- Senate structurally Republican regardless of presidential outcome
+- House most likely to follow presidential outcome given low ticket-splitting rates
+
+**Source:** MIT Election Data and Science Lab (split-ticket tracking 2000–2022)
+
+---
+
+## Why This Market Has High Value for Social Simulation
+
+**This is a compound categorical market** (3 races combined), making it ideal for:
+- Testing how simulated agents balance uncertainty across correlated events
+- Exploring whether agents correctly understand conditional probability (if Trump wins, Senate and House follow)
+- Measuring belief update speed when election night results arrive sequentially (Senate called first, House takes days, presidency takes hours to days)
+
+---
+
+## Sources
+
+**Polling Aggregators:**
+- RealClearPolitics: https://realclearpolitics.com/
+- FiveThirtyEight: https://projects.fivethirtyeight.com/
+
+**Forecasters:**
+- Cook Political Report: https://cookpolitical.com/
+- Sabato's Crystal Ball: https://centerforpolitics.org/crystalball/
+- The Economist model: https://elections.economist.com/
+
+**Prediction Markets:**
+- Polymarket: https://polymarket.com/ (balance of power contract, $80M volume)
+- PredictIt senate + house + president individual contracts

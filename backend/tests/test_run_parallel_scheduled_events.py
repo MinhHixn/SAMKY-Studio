@@ -26,6 +26,7 @@ class _FakeEnv:
     def __init__(self):
         self.agent_graph = _FakeAgentGraph()
         self.step_calls = []
+        self.graph_storage = None
 
     async def step(self, actions):
         self.step_calls.append(actions)
@@ -201,6 +202,49 @@ def test_apply_scheduled_posts_for_round_fails_fast_in_benchmark_mode_on_bad_age
         asyncio.run(parallel_script.apply_scheduled_posts_for_round(env, event_config, 30))
 
     assert env.step_calls == []
+
+
+class _FakeGraphStorage:
+    def __init__(self):
+        self.calls = []
+
+    def update_fact_validity(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_apply_scheduled_posts_for_round_triggers_temporal_fact_updates():
+    env = _FakeEnv()
+    storage = _FakeGraphStorage()
+    env.graph_storage = storage
+    event_config = {
+        "scheduled_events": [
+            {
+                "trigger_round": 30,
+                "posts": [{"poster_agent_id": 7, "content": "Injected update"}],
+                "temporal_updates": [
+                    {
+                        "fact_id": "fact-1",
+                        "status": "superseded",
+                        "replacement_fact": {
+                            "graph_id": "graph-1",
+                            "source_uuid": "src-1",
+                            "target_uuid": "tgt-1",
+                            "name": "RELATION",
+                            "fact": "updated relation",
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+    count = asyncio.run(parallel_script.apply_scheduled_posts_for_round(env, event_config, 30))
+
+    assert count == 1
+    assert len(storage.calls) == 1
+    assert storage.calls[0]["fact_id"] == "fact-1"
+    assert storage.calls[0]["current_round"] == 30
+    assert storage.calls[0]["status"] == "superseded"
 
 
 @pytest.mark.parametrize(

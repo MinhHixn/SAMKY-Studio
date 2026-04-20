@@ -105,3 +105,27 @@ def test_build_step30_scheduled_event_uses_body_or_headline():
 def test_build_step30_scheduled_event_rejects_empty_payload():
     with pytest.raises(ValueError, match=r"body/headline"):
         build_step30_scheduled_event({"body": "   "})
+
+
+def test_build_step30_scheduled_event_preserves_temporal_updates_when_present():
+    event = build_step30_scheduled_event(
+        {
+            "body": "Injected update",
+            "temporal_updates": [
+                {
+                    "fact_id": "fact-1",
+                    "status": "superseded",
+                    "replacement_fact": {"graph_id": "g-1"},
+                }
+            ],
+        }
+    )
+
+    assert event["trigger_round"] == 30
+    assert event["temporal_updates"] == [
+        {
+            "fact_id": "fact-1",
+            "status": "superseded",
+            "replacement_fact": {"graph_id": "g-1"},
+        }
+    ]

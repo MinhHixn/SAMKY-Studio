@@ -1,0 +1,65 @@
+# Context: UEFA Euro 2024 Championship
+
+**Question:** Which country will win Euro 2024?  
+**Information Available Through:** July 14, 2024 (final)
+
+---
+
+## Tournament Details
+
+**Host:** Germany
+**Dates:** June 14 - July 14, 2024
+**Format:** 24 teams, knockout after group stage
+**Final:** July 14 at Berlin's Olympiastadion
+
+**Source:** UEFA: https://www.uefa.com/
+
+## Pre-Tournament Favorites
+
+**Betting Odds (June):**
+- France: ~11/2 (co-favorite)
+- England: ~13/2 (co-favorite)  
+- Germany: 6/1 (host advantage)
+- Spain: 13/2
+- Portugal: 8/1
+
+**Source:** Betting markets, ESPN
+
+## Group Stage (June 14-26)
+
+**Group Winners:** Spain, Germany, Portugal, England advanced strong
+**Surprises:** Some favorites struggled, upsets occurred
+
+## Knockout Stage Path
+
+**Round of 16:** (June 29-July 2)
+**Quarter-finals:** (July 5-6)
+**Semi-finals:** (July 9-10)
+**Final:** July 14
+
+## Key Teams
+
+**Spain:** Young squad, impressive performances, Lamine Yamal (16-year-old sensation)
+**England:** Talent-rich but struggled to click, Southgate tactical questions
+**France:** Mbappé-led, strong but not dominant
+**Germany:** Host nation, resurgent under Nagelsmann
+
+**Source:** Match results, tournament coverage
+
+## Historical Context
+
+**Previous Winners:** Germany/Spain most successful (3 titles each)
+**England:** Never won Euros (lost 2020 final on penalties to Italy)
+**Home Advantage:** Mixed record for hosts
+
+## Tournament Dynamics
+
+**Well-Distributed:** No clear dominant team pre-final
+**Knockout Uncertainty:** Single-elimination creates upsets
+**Form:** Teams peaking at right time matter
+
+---
+
+**Sources:** UEFA, BBC Sport, ESPN, match statistics
+
+**Note:** Final on July 14 determines winner. Pre-tournament spread across France, England, Germany, Spain as main contenders.

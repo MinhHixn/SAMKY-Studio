@@ -50,6 +50,17 @@ CREATE FULLTEXT INDEX fact_fulltext IF NOT EXISTS
 FOR ()-[r:RELATION]-() ON EACH [r.fact, r.name]
 """
 
+CREATE_RELATION_VALIDITY_INDEX = """
+CREATE INDEX relation_validity_idx IF NOT EXISTS
+FOR ()-[r:RELATION]-() ON (r.valid_at, r.invalid_at)
+"""
+
+# Temporal lifecycle index recommendations (canonical relation model):
+# NOTE: Deprecated node-model recommendation `:Fact(valid_at, invalid_at)` removed.
+TEMPORAL_INDEX_RECOMMENDATIONS = [
+    "CREATE INDEX relation_validity_idx IF NOT EXISTS FOR ()-[r:RELATION]-() ON (r.valid_at, r.invalid_at)",
+]
+
 # All schema queries to run on startup
 ALL_SCHEMA_QUERIES = [
     CREATE_GRAPH_UUID_CONSTRAINT,
@@ -59,4 +70,5 @@ ALL_SCHEMA_QUERIES = [
     CREATE_RELATION_VECTOR_INDEX,
     CREATE_ENTITY_FULLTEXT_INDEX,
     CREATE_FACT_FULLTEXT_INDEX,
+    CREATE_RELATION_VALIDITY_INDEX,
 ]

@@ -138,7 +138,62 @@ def test_benchmark_mode_forces_temperature_seed(monkeypatch):
     client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.9)
 
     assert store["create_kwargs"]["temperature"] == 0.0
-    assert store["create_kwargs"]["seed"] == 2025
+    assert store["create_kwargs"]["seed"] == 42
+
+
+def test_benchmark_mode_logs_warning_when_call_temperature_conflicts(monkeypatch):
+    store = {}
+    warnings = []
+    _install_fake_openai(monkeypatch, store)
+
+    def capture_warning(message, *args, **kwargs):
+        warnings.append(message % args if args else message)
+
+    monkeypatch.setattr(llm_client_module.logger, "warning", capture_warning)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", 0.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", 42, raising=False)
+
+    client = llm_client_module.LLMClient()
+    client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.9)
+
+    assert any("overriding requested temperature=0.9" in warning for warning in warnings)
+
+
+def test_benchmark_mode_enforces_dispatch_kwargs_even_on_internal_calls(monkeypatch):
+    store = {}
+    warnings = []
+    _install_fake_openai(monkeypatch, store)
+
+    def capture_warning(message, *args, **kwargs):
+        warnings.append(message % args if args else message)
+
+    monkeypatch.setattr(llm_client_module.logger, "warning", capture_warning)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", True, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", 0.0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", 42, raising=False)
+
+    client = llm_client_module.LLMClient()
+    client._chat_create_with_retry(
+        {
+            "model": "openrouter/test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.9,
+            "seed": 999,
+            "max_tokens": 64,
+        }
+    )
+
+    assert store["create_kwargs"]["temperature"] == 0.0
+    assert store["create_kwargs"]["seed"] == 42
+    assert any("overriding requested temperature=0.9" in warning for warning in warnings)
+    assert any("overriding requested seed=999" in warning for warning in warnings)
 
 
 def test_negative_retry_max_retries_is_clamped(monkeypatch):
@@ -425,10 +480,15 @@ def test_invalid_jitter_config_raises_clear_error(monkeypatch):
         llm_client_module.LLMClient()
 
 
-def test_invalid_benchmark_config_raises_clear_error(monkeypatch):
+def test_invalid_benchmark_config_is_overridden_with_enforced_defaults(monkeypatch):
     store = {}
+    warnings = []
     _install_fake_openai(monkeypatch, store)
 
+    def capture_warning(message, *args, **kwargs):
+        warnings.append(message % args if args else message)
+
+    monkeypatch.setattr(llm_client_module.logger, "warning", capture_warning)
     monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
     monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
@@ -436,14 +496,24 @@ def test_invalid_benchmark_config_raises_clear_error(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", "invalid", raising=False)
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", 2025, raising=False)
 
-    with pytest.raises(ValueError, match="BENCHMARK_TEMPERATURE must be a number"):
-        llm_client_module.LLMClient()
+    client = llm_client_module.LLMClient()
+    client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.1)
+
+    assert store["create_kwargs"]["temperature"] == 0.0
+    assert store["create_kwargs"]["seed"] == 42
+    assert any("overriding BENCHMARK_TEMPERATURE='invalid'" in warning for warning in warnings)
+    assert any("overriding BENCHMARK_SEED=2025" in warning for warning in warnings)
 
 
-def test_invalid_benchmark_seed_raises_clear_error(monkeypatch):
+def test_invalid_benchmark_seed_is_overridden_with_enforced_defaults(monkeypatch):
     store = {}
+    warnings = []
     _install_fake_openai(monkeypatch, store)
 
+    def capture_warning(message, *args, **kwargs):
+        warnings.append(message % args if args else message)
+
+    monkeypatch.setattr(llm_client_module.logger, "warning", capture_warning)
     monkeypatch.setattr(llm_client_module.Config, "LLM_API_KEY", "test-key")
     monkeypatch.setattr(llm_client_module.Config, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setattr(llm_client_module.Config, "LLM_MODEL_NAME", "openrouter/test-model")
@@ -451,8 +521,12 @@ def test_invalid_benchmark_seed_raises_clear_error(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_TEMPERATURE", 0.0, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_SEED", "invalid-seed", raising=False)
 
-    with pytest.raises(ValueError, match="BENCHMARK_SEED must be an integer"):
-        llm_client_module.LLMClient()
+    client = llm_client_module.LLMClient()
+    client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.1)
+
+    assert store["create_kwargs"]["temperature"] == 0.0
+    assert store["create_kwargs"]["seed"] == 42
+    assert any("overriding BENCHMARK_SEED='invalid-seed'" in warning for warning in warnings)
 
 
 def test_chat_json_repairs_truncated_payload_when_opted_in(monkeypatch):

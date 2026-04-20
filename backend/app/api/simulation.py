@@ -19,6 +19,10 @@ from ..models.project import ProjectManager
 logger = get_logger('mirofish.api.simulation')
 
 
+def _is_headless_mode_enabled() -> bool:
+    return bool(getattr(Config, "HEADLESS_MODE", False) or getattr(Config, "BENCHMARK_MODE", False))
+
+
 # Interview prompt optimization prefix
 # Adding this prefix can prevent agents from calling tools and reply directly with text
 INTERVIEW_PROMPT_PREFIX = "Based on your persona, all your past memories and actions, reply directly to me with text without calling any tools:"
@@ -599,6 +603,26 @@ def prepare_simulation():
                     state.error = str(e)
                     manager._save_simulation_state(state)
         
+        if _is_headless_mode_enabled():
+            run_prepare()
+            final_state = manager.get_simulation(simulation_id)
+            if final_state and final_state.status == SimulationStatus.READY:
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "task_id": task_id,
+                        "status": "ready",
+                        "message": "Preparation completed in headless mode",
+                        "already_prepared": False,
+                        "expected_entities_count": final_state.entities_count,
+                        "entity_types": final_state.entity_types,
+                    }
+                })
+            task = task_manager.get_task(task_id)
+            error = task.error if task else "Preparation failed in headless mode"
+            return jsonify({"success": False, "error": error}), 500
+
         # Start background thread
         thread = threading.Thread(target=run_prepare, daemon=True)
         thread.start()

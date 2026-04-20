@@ -1,0 +1,148 @@
+# Context: US Senate Control After 2024 Election
+
+**Question:** Which party will control the US Senate after the 2024 elections?  
+**Market Opened:** February 2024  
+**Information Available Through:** November 5, 2024
+
+---
+
+## Current Senate Composition (Heading Into 2024)
+
+**117th/118th Congress Senate (pre-election):**
+- **Democrats:** 48 seats (including 3 Independents caucusing with Democrats: Bernie Sanders VT, Angus King ME, Joe Manchin WV)
+- **Republicans:** 49 seats
+- **Democratic functional majority:** 51 votes with VP Harris as tiebreaker (50+1)
+
+**Key structural fact:** The filibuster means 60 votes typically needed for legislation, but majority control determines committee chairs, floor scheduling, and confirmation of executive/judicial nominees.
+
+**Source:** US Senate official roster; CQ Roll Call
+
+---
+
+## Why the 2024 Map Heavily Favors Republicans
+
+**The "Class 1" Senate seats up in 2024**: 34 seats total (33 regular + 1 special), overwhelmingly disadvantageous for Democrats.
+
+**Key structural imbalances:**
+- Democrats defending **23 seats**; Republicans defending only **11**
+- Several Democratic-held seats are in states Trump won decisively in 2020
+
+**Most Vulnerable Democratic Seats:**
+
+| State | Incumbent | Biden Margin 2020 | Assessment |
+|---|---|---|---|
+| **West Virginia** | Joe Manchin | Trump +38.9% | Near-certain D→R flip; Manchin NOT running |
+| **Montana** | Jon Tester | Trump +16.5% | Strong lean R — Tester running but state shifted |
+| **Ohio** | Sherrod Brown | Trump +8.0% | Lean R — Brown has outrun ticket before |
+| **Pennsylvania** | Bob Casey | Biden +1.2% | True toss-up |
+| **Wisconsin** | Tammy Baldwin | Biden +0.6% | Toss-up |
+| **Michigan** | Elissa Slotkin | Biden +2.8% | Lean D but competitive |
+| **Nevada** | Jacky Rosen | Biden +2.4% | Lean D — competitive |
+| **Arizona** | Ruben Gallego | Biden +0.3% | Toss-up (open seat; Sinema not running) |
+
+**Simple math:** If Republicans flip West Virginia alone (near-certain), the path to majority is within reach.
+
+**Source:** Cook Political Report Senate ratings (updated October 2024); Sabato's Crystal Ball
+
+---
+
+## Republican Seats at Risk
+
+**Seats that could flip D:**
+
+| State | Incumbent | Assessment |
+|---|---|---|
+| **Texas** | Ted Cruz | Lean R; Democrat Colin Allred ran strong campaign |
+| **Florida** | Rick Scott | Likely R; weak incumbent but state leans R |
+
+**Structural advantage:** No Republican seats were rated "toss-up" by major forecasters. Democrats had to win defense AND go on offense to retain control.
+
+---
+
+## Expert and Model Ratings (October–November 2024)
+
+| Forecaster | Republican Control | Democratic Control |
+|---|---|---|
+| FiveThirtyEight Senate Model | ~85% | ~15% |
+| The Economist | ~83% | ~17% |
+| Cook Political Report | "Lean Republican Majority" | — |
+| Sabato's Crystal Ball | "Lean Republican" | — |
+| Polymarket (Senate control) | ~86¢ | ~14¢ |
+| Metaculus crowd | ~85% | ~15% |
+
+**Consensus:** Republican Senate control was the strong favorite — but not a certainty. Democrats could theoretically hold if they swept all toss-ups and Montana/Ohio incumbents dramatically outperformed the top of the ticket.
+
+---
+
+## Key Toss-Up Race Analysis
+
+### Montana (Tester vs. Tim Sheehy)
+- Jon Tester is one of the most skilled campaigners in the Democratic Party; won in 2018 despite Trump winning Montana by +20
+- **But:** The state has shifted further right; Tester's "independent" brand has worn thinner
+- **October 2024 polling average:** Sheehy (R) +4 to +7
+
+### Ohio (Brown vs. Bernie Moreno)
+- Sherrod Brown has won Ohio 3 times despite its rightward drift — a remarkable political achievement
+- Brown accumulated a unique cross-partisan brand (labor populism, union endorsements, pro-worker brand)
+- **But:** Ohio went Trump by +8 in 2020; Brown needs to massively outrun Harris
+- **October 2024 polling average:** Brown (D) +1 to +2 — within margin, genuinely competitive
+
+### Pennsylvania (Casey vs. Dave McCormick)
+- Biden won Pennsylvania by only 1.2 points in 2020; Harris polling at ~+0 to +2 in state
+- Casey is a known brand (father was governor); McCormick ran in 2022 primary, lost to Oz
+- **True toss-up:** ~50/50 in forecaster models
+
+### Arizona (Gallego vs. Kari Lake)
+- Open seat (Sinema did not run)
+- Ruben Gallego (Dem) vs. Kari Lake (R) — Lake is a Trump-endorsed election denier with high name recognition
+- **October polling:** Gallego +3 to +5 — lean D
+
+---
+
+## Trump-Senate Relationship
+
+A key modeling insight: Senate races increasingly follow presidential vote at the top of the ticket.
+
+**If Trump wins the presidency** (probability ~52–58% in models): Coattail effects typically deliver Senate seats. A Trump win would likely guarantee WV, MT, OH flips — giving Republicans easy majority.
+
+**If Harris wins the presidency:** Democratic coattails might hold Montana and Ohio, but the WV flip (Manchin retirement) still delivers one seat to Republicans, making the math tight.
+
+**Source:** CCES (Cooperative Congressional Election Study) ticket-splitting analysis; MIT Election Lab
+
+---
+
+## Prediction Market Detail
+
+**Polymarket Senate Control Market:**
+- Volume: ~$45 million traded as of November 1, 2024
+- Republican control: ~86¢ (86% implied probability)
+- Democratic control: ~14¢
+
+**Why not 100% Republican?**
+- Ohio and Montana genuine toss-ups
+- Ticket-splitting historically non-zero even in polarized era
+- Scenarios exist where Harris wins presidency and Democrats hold
+
+---
+
+## Sources
+
+**Current Senate Composition:**
+- US Senate official: https://senate.gov
+- CQ Roll Call: https://rollcall.com
+
+**Senate Ratings:**
+- Cook Political Report: https://cookpolitical.com/senate
+- Sabato's Crystal Ball: https://centerforpolitics.org/crystalball/
+- Politico Senate race tracker
+
+**Models:**
+- FiveThirtyEight Senate model: https://projects.fivethirtyeight.com/
+- The Economist Senate model
+
+**Prediction Markets:**
+- Polymarket: https://polymarket.com/
+- PredictIt Senate markets
+
+**Academic:**
+- MIT Election Data and Science Lab: https://electionlab.mit.edu/

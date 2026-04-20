@@ -1,15 +1,20 @@
 import argparse
 import csv
+import inspect
 import json
+import logging
 import math
 import os
+import socket
 import subprocess
 import sys
+import time
 from functools import lru_cache
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol, Sequence
+from urllib.parse import urlparse
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SCRIPTS_DIR.parent
@@ -59,6 +64,8 @@ from app.benchmarks.phase1_telemetry import (
 )
 from app.benchmarks.topology import compute_delta_conformity, extract_topology_metadata
 from app.utils.benchmark_trace import BenchmarkTraceWriter
+from neo4j import GraphDatabase
+from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
 
 def _default_injection_bank_candidates() -> List[Path]:
@@ -102,6 +109,9 @@ _RUNTIME_POWER_TARGET_DELTA_BRIER = DEFAULT_POWER_TARGET_DELTA_BRIER
 _RUNTIME_POWER_ASSUMED_SIGMA = DEFAULT_POWER_ASSUMED_SIGMA
 _RUNTIME_POWER_TARGET = DEFAULT_POWER_TARGET
 _RUNTIME_CALIBRATION_BRACKETS = DEFAULT_CALIBRATION_BRACKETS
+ENFORCED_BENCHMARK_TEMPERATURE = 0.0
+ENFORCED_BENCHMARK_SEED = 42
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _DECLARED_TOPOLOGY_PARAMETERS = {
     "graph_generator": {
         "twitter": "generate_twitter_agent_graph",
@@ -128,6 +138,7 @@ _SCORING_DIMENSION_ALIASES = {
 EventRecord = Mapping[str, Any]
 SimulationConfigBuilder = Callable[[EventRecord, str], Dict[str, Any]]
 ConditionEvaluator = Callable[[EventRecord, str, str, BenchmarkRoleRouter], Dict[str, Any]]
+logger = logging.getLogger(__name__)
 
 
 class TraceWriterAdapter(Protocol):
@@ -475,19 +486,26 @@ def build_simulation_config(
     injection_loader: Step30InjectionLoader,
     *,
     llm_model: str | None = None,
+    injection_trigger_round: int = 30,
+    total_simulation_hours: int = TOTAL_SIMULATION_HOURS,
 ) -> Dict[str, Any]:
     question = _first_text(event, ("question", "prompt", "text", "title"))
     scheduled_events: List[Dict[str, Any]] = []
     if condition in ("B", "C"):
         payload = injection_loader.get_payload(str(event["event_id"]), condition)
-        scheduled_events.append(build_step30_scheduled_event(payload, poster_agent_id=0))
+        scheduled_event = build_step30_scheduled_event(
+            payload,
+            poster_agent_id=0,
+            trigger_round=injection_trigger_round,
+        )
+        scheduled_events.append(scheduled_event)
 
     config = {
         "event_id": str(event["event_id"]),
         "event_question": question,
         "truth": event.get("outcome") or event.get("answer", ""),
         "time_config": {
-            "total_simulation_hours": TOTAL_SIMULATION_HOURS,
+            "total_simulation_hours": int(total_simulation_hours),
             "minutes_per_round": MINUTES_PER_ROUND,
         },
         "agent_configs": [
@@ -527,6 +545,31 @@ def write_simulation_config(run_dir: Path, config: Dict[str, Any]) -> Path:
     config_path = run_dir / "simulation_config.json"
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     return config_path
+
+
+def _build_simulation_config_with_runtime(
+    event: Mapping[str, Any],
+    condition: str,
+    profiles: List[Dict[str, Any]],
+    injection_loader: Step30InjectionLoader,
+    *,
+    llm_model: str | None,
+    injection_trigger_round: int,
+    total_simulation_hours: int,
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {"llm_model": llm_model}
+    signature = inspect.signature(build_simulation_config)
+    if "injection_trigger_round" in signature.parameters:
+        kwargs["injection_trigger_round"] = injection_trigger_round
+    if "total_simulation_hours" in signature.parameters:
+        kwargs["total_simulation_hours"] = total_simulation_hours
+    return build_simulation_config(
+        event,
+        condition,
+        profiles,
+        injection_loader,
+        **kwargs,
+    )
 
 
 def _extract_tail_text(path: Path, max_chars: int = 6000) -> str:
@@ -609,12 +652,18 @@ def _compute_convergence_telemetry(
     phase1_cfg: Mapping[str, Any],
     *,
     resolved_label: str | None,
+    min_parsed_probability_ratio: float | None = None,
 ) -> tuple[list[float], bool]:
     checkpoints = [int(checkpoint) for checkpoint in phase1_cfg["telemetry_checkpoints"]]
+    parsed_probability_ratio = (
+        float(phase1_cfg["min_parsed_probability_ratio"])
+        if min_parsed_probability_ratio is None
+        else float(min_parsed_probability_ratio)
+    )
     trace = compute_round_jsd_trace(
         unit_dir,
         checkpoints=checkpoints,
-        min_parsed_probability_ratio=float(phase1_cfg["min_parsed_probability_ratio"]),
+        min_parsed_probability_ratio=parsed_probability_ratio,
         resolved_label=resolved_label,
     )
     epsilon = float(phase1_cfg["jsd_monotonic_tolerance_epsilon"])
@@ -809,12 +858,216 @@ def _format_exception(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
-def _deterministic_mode_config() -> Dict[str, Any]:
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return bool(default)
+    return raw_value.strip().lower() in _TRUTHY_VALUES
+
+
+def _is_dev_minimal_mode_enabled() -> bool:
+    return _env_flag("DEV_MINIMAL_MODE", default=False)
+
+
+def _dev_minimal_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+def _resolve_runtime_protocol_parameters(dev_minimal_mode: bool) -> Dict[str, Any]:
+    if not dev_minimal_mode:
+        return {
+            "agent_count": TARGET_AGENT_COUNT,
+            "total_simulation_hours": TOTAL_SIMULATION_HOURS,
+            "injection_round": 30,
+            "telemetry_checkpoints": None,
+        }
     return {
-        "benchmark_mode": Config.BENCHMARK_MODE,
-        "temperature": Config.BENCHMARK_TEMPERATURE,
-        "seed": Config.BENCHMARK_SEED,
+        "agent_count": _dev_minimal_int("DEV_MINIMAL_AGENT_COUNT", 100),
+        "total_simulation_hours": _dev_minimal_int("DEV_MINIMAL_MAX_STEPS", 30),
+        "injection_round": _dev_minimal_int("DEV_MINIMAL_INJECTION_STEP", 15),
+        "telemetry_checkpoints": [6, 12, 18, 24, 30],
     }
+
+
+def _resolve_telemetry_required(*, benchmark_mode: bool, dev_minimal_mode: bool) -> bool:
+    configured = os.environ.get("TELEMETRY_REQUIRED")
+    if benchmark_mode and not dev_minimal_mode:
+        if configured is not None and not _env_flag("TELEMETRY_REQUIRED", default=True):
+            logger.warning("TELEMETRY_REQUIRED=false ignored because benchmark mode requires strict telemetry coverage.")
+        return True
+    return _env_flag("TELEMETRY_REQUIRED", default=not dev_minimal_mode)
+
+
+def _neo4j_host_port(uri: str) -> tuple[str, int]:
+    parsed = urlparse(uri)
+    host = parsed.hostname or "localhost"
+    port = int(parsed.port or 7687)
+    return host, port
+
+
+def _is_socket_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _maybe_start_local_neo4j() -> None:
+    if not _env_flag("AUTO_START_NEO4J_LOCAL", default=False):
+        return
+    command = [
+        sys.executable,
+        "scripts/start_neo4j_local.py",
+        "--container-name",
+        os.environ.get("NEO4J_DOCKER_CONTAINER_NAME", "mirofish-neo4j"),
+        "--image",
+        os.environ.get("NEO4J_DOCKER_IMAGE", "neo4j:5.15-community"),
+        "--auth",
+        f"{Config.NEO4J_USER}/{Config.NEO4J_PASSWORD}",
+        "--wait-seconds",
+        str(_dev_minimal_int("NEO4J_AUTO_START_WAIT_SECONDS", 180)),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(_BACKEND_DIR),
+            text=True,
+            capture_output=True,
+            timeout=max(60, _dev_minimal_int("NEO4J_AUTO_START_TIMEOUT_SECONDS", 240)),
+        )
+    except Exception as exc:
+        logger.warning("AUTO_START_NEO4J_LOCAL failed to launch helper: %s", _format_exception(exc))
+        return
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode == 0:
+        if stdout:
+            logger.warning("AUTO_START_NEO4J_LOCAL helper output: %s", stdout.splitlines()[-1])
+        return
+    tail = stderr or stdout or f"exit_code={completed.returncode}"
+    logger.warning("AUTO_START_NEO4J_LOCAL helper failed: %s", tail)
+
+
+def _check_neo4j_connectivity() -> tuple[bool, str | None]:
+    _maybe_start_local_neo4j()
+    host, port = _neo4j_host_port(Config.NEO4J_URI)
+    attempts = max(1, _dev_minimal_int("NEO4J_CONNECTIVITY_RETRIES", 3))
+    initial_delay = float(os.environ.get("NEO4J_CONNECTIVITY_INITIAL_DELAY_SECONDS", "1.0"))
+    backoff = max(1.0, float(os.environ.get("NEO4J_CONNECTIVITY_BACKOFF_FACTOR", "2.0")))
+    last_error: BaseException | None = None
+
+    for attempt in range(1, attempts + 1):
+        driver = GraphDatabase.driver(
+            Config.NEO4J_URI,
+            auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD),
+        )
+        try:
+            driver.verify_connectivity()
+            return True, None
+        except (Neo4jError, ServiceUnavailable, OSError, ValueError) as exc:
+            last_error = exc
+            socket_state = "open" if _is_socket_open(host, port) else "closed"
+            logger.warning(
+                "Neo4j connectivity attempt %s/%s failed (%s). Socket %s:%s is %s.",
+                attempt,
+                attempts,
+                _format_exception(exc),
+                host,
+                port,
+                socket_state,
+            )
+            if attempt < attempts:
+                delay = max(0.0, initial_delay * (backoff ** (attempt - 1)))
+                if delay > 0:
+                    time.sleep(delay)
+        finally:
+            driver.close()
+
+    final_socket_state = "open" if _is_socket_open(host, port) else "closed"
+    if last_error is None:
+        return False, f"Connectivity check failed with unknown error; socket {host}:{port} is {final_socket_state}"
+    return (
+        False,
+        f"{_format_exception(last_error)} (socket {host}:{port} is {final_socket_state})",
+    )
+
+
+def _resolve_telemetry_runtime(
+    *,
+    phase1_cfg: Mapping[str, Any],
+    neo4j_connected: bool,
+    neo4j_error: str | None,
+    benchmark_mode: bool,
+    dev_minimal_mode: bool,
+    telemetry_required: bool,
+) -> Dict[str, Any]:
+    configured_ratio = float(phase1_cfg["min_parsed_probability_ratio"])
+    if neo4j_connected:
+        if telemetry_required:
+            logger.warning("Neo4j connected — strict telemetry enabled.")
+        else:
+            logger.warning("Neo4j connected — telemetry mode uses live graph data.")
+        return {
+            "telemetry_mode": "neo4j",
+            "min_parsed_probability_ratio": configured_ratio,
+            "neo4j_connected": True,
+            "neo4j_error": None,
+            "benchmark_mode": benchmark_mode,
+            "dev_minimal_mode": dev_minimal_mode,
+            "telemetry_required": telemetry_required,
+        }
+
+    error_detail = neo4j_error or "connectivity check failed"
+    message = (
+        f"Neo4j is unreachable at {Config.NEO4J_URI}: {error_detail}. "
+        "Start Neo4j before benchmark runs, or use DEV_MINIMAL_MODE=true with "
+        "TELEMETRY_REQUIRED=false for architecture validation."
+    )
+    if telemetry_required:
+        raise RuntimeError(message)
+
+    telemetry_mode = "mock" if dev_minimal_mode else "skipped"
+    logger.warning(
+        "%s Falling back to telemetry_mode=%s with min_parsed_probability_ratio forced to 0.0.",
+        message,
+        telemetry_mode,
+    )
+    return {
+        "telemetry_mode": telemetry_mode,
+        "min_parsed_probability_ratio": 0.0,
+        "neo4j_connected": False,
+        "neo4j_error": error_detail,
+        "benchmark_mode": benchmark_mode,
+        "dev_minimal_mode": dev_minimal_mode,
+        "telemetry_required": telemetry_required,
+    }
+
+
+def _deterministic_mode_config() -> Dict[str, Any]:
+    benchmark_mode = bool(Config.BENCHMARK_MODE)
+    payload: Dict[str, Any] = {
+        "deterministic_mode": benchmark_mode,
+        "deterministic_mode_snapshot": {
+            "benchmark_mode": benchmark_mode,
+            "temperature": Config.BENCHMARK_TEMPERATURE,
+            "seed": Config.BENCHMARK_SEED,
+        },
+    }
+    if benchmark_mode:
+        payload["enforced_temperature"] = ENFORCED_BENCHMARK_TEMPERATURE
+        payload["enforced_seed"] = ENFORCED_BENCHMARK_SEED
+    return payload
+
+
+def _is_headless_mode_enabled() -> bool:
+    return bool(getattr(Config, "HEADLESS_MODE", False) or Config.BENCHMARK_MODE)
 
 
 def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
@@ -822,9 +1075,16 @@ def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
     env["LLM_API_KEY"] = router.api_key
     env["LLM_BASE_URL"] = router.base_url
     env["LLM_MODEL_NAME"] = router.model_for("benchmark")
-    env["BENCHMARK_MODE"] = "true" if Config.BENCHMARK_MODE else "false"
-    env["BENCHMARK_TEMPERATURE"] = str(Config.BENCHMARK_TEMPERATURE)
-    env["BENCHMARK_SEED"] = str(Config.BENCHMARK_SEED)
+    benchmark_mode = bool(Config.BENCHMARK_MODE)
+    env["BENCHMARK_MODE"] = "true" if benchmark_mode else "false"
+    if benchmark_mode:
+        env["BENCHMARK_TEMPERATURE"] = str(ENFORCED_BENCHMARK_TEMPERATURE)
+        env["BENCHMARK_SEED"] = str(ENFORCED_BENCHMARK_SEED)
+        env["HEADLESS_MODE"] = "true"
+    else:
+        env["BENCHMARK_TEMPERATURE"] = str(Config.BENCHMARK_TEMPERATURE)
+        env["BENCHMARK_SEED"] = str(Config.BENCHMARK_SEED)
+        env["HEADLESS_MODE"] = "true" if _is_headless_mode_enabled() else "false"
     return env
 
 
@@ -834,6 +1094,7 @@ def _run_simulation_subprocess(
     router: BenchmarkRoleRouter,
     *,
     log_path: Path | None = None,
+    max_rounds: int = TOTAL_SIMULATION_HOURS,
 ) -> subprocess.CompletedProcess[str]:
     run_kwargs = {
         "cwd": str(_BACKEND_DIR),
@@ -851,7 +1112,7 @@ def _run_simulation_subprocess(
                 "--config",
                 str(config_path),
                 "--max-rounds",
-                str(TOTAL_SIMULATION_HOURS),
+                str(max_rounds),
                 "--no-wait",
             ],
             **run_kwargs,
@@ -868,7 +1129,7 @@ def _run_simulation_subprocess(
                 "--config",
                 str(config_path),
                 "--max-rounds",
-                str(TOTAL_SIMULATION_HOURS),
+                str(max_rounds),
                 "--no-wait",
             ],
             **run_kwargs,
@@ -881,12 +1142,53 @@ def _evaluate_row(
     evidence_text: str,
     router: BenchmarkRoleRouter,
 ) -> Dict[str, Any]:
+    if (
+        condition == "A"
+        and _is_dev_minimal_mode_enabled()
+        and _env_flag("DEV_MINIMAL_SKIP_A_EVALUATION", default=True)
+    ):
+        options = [str(option) for option in event.get("options", []) if str(option).strip()]
+        prior_payload = event.get("polymarket_opening_prior")
+        probabilities: Dict[str, float] = {}
+        if isinstance(prior_payload, Mapping):
+            for label, value in prior_payload.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                probabilities[str(label)] = float(value)
+        if not probabilities and options:
+            uniform = 1.0 / len(options)
+            probabilities = {label: uniform for label in options}
+        ground_truth = str(event.get("outcome") or event.get("answer") or "")
+        return probabilities, brier_score(probabilities, ground_truth)
+
+    if _is_dev_minimal_mode_enabled() and _env_flag("DEV_MINIMAL_SKIP_EVALUATOR", default=False):
+        options = [str(option) for option in event.get("options", []) if str(option).strip()]
+        prior_payload = event.get("polymarket_opening_prior")
+        probabilities: Dict[str, float] = {}
+        if isinstance(prior_payload, Mapping):
+            for label, value in prior_payload.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                probabilities[str(label)] = float(value)
+        if not probabilities and options:
+            uniform = 1.0 / len(options)
+            probabilities = {label: uniform for label in options}
+        ground_truth = str(event.get("outcome") or event.get("answer") or "")
+        return probabilities, brier_score(probabilities, ground_truth)
+
     evaluator = ProbabilityEvaluator(router)
     evaluation_run1 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
-    try:
-        evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
-    except Exception:  # noqa: BLE001 - run2 is reliability-only, keep run1 scoring if it fails
+    single_pass_reliability = _is_dev_minimal_mode_enabled() and _env_flag(
+        "DEV_MINIMAL_EVALUATOR_SINGLE_PASS",
+        default=True,
+    )
+    if single_pass_reliability:
         evaluation_run2 = None
+    else:
+        try:
+            evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+        except Exception:  # noqa: BLE001 - run2 is reliability-only, keep run1 scoring if it fails
+            evaluation_run2 = None
     probabilities = evaluation_run1.get("normalized_probabilities") or evaluation_run1.get("probabilities")
     if not isinstance(probabilities, Mapping):
         raise ValueError("Evaluator did not return probabilities")
@@ -1368,11 +1670,17 @@ def main() -> None:
     if args.repeats <= 0:
         raise ValueError("--repeats must be > 0")
 
+    dev_minimal_mode = _is_dev_minimal_mode_enabled()
+    runtime_protocol = _resolve_runtime_protocol_parameters(dev_minimal_mode)
+    runtime_agent_count = int(runtime_protocol["agent_count"])
+    runtime_total_simulation_hours = int(runtime_protocol["total_simulation_hours"])
+    runtime_injection_round = int(runtime_protocol["injection_round"])
+
     router = BenchmarkRoleRouter.from_config()
     benchmark_model = router.model_for("benchmark")
     events = load_events_from_raw(args.events_raw, limit=args.events)
     seed_files = load_seed_files(args.seeds_dir)
-    profiles = build_profiles(args.seeds_dir, target_count=TARGET_AGENT_COUNT)
+    profiles = build_profiles(args.seeds_dir, target_count=runtime_agent_count)
     injection_loader = Step30InjectionLoader(args.injection_bank)
     validate_injection_coverage(events, injection_loader)
     layer23_cfg = load_layer23_config(DEFAULT_LAYER23_CONFIG_PATH)
@@ -1395,11 +1703,28 @@ def main() -> None:
     else:
         _RUNTIME_CALIBRATION_BRACKETS = list(DEFAULT_CALIBRATION_BRACKETS)
     phase1_cfg = load_phase1_config(DEFAULT_PHASE1_CONFIG_PATH)
-    for event in events:
-        validate_polymarket_opening_prior(
-            event,
-            prior_sum_tolerance=float(phase1_cfg["prior_sum_tolerance"]),
-        )
+    runtime_telemetry_checkpoints = runtime_protocol.get("telemetry_checkpoints")
+    if isinstance(runtime_telemetry_checkpoints, list) and runtime_telemetry_checkpoints:
+        phase1_cfg = dict(phase1_cfg)
+        phase1_cfg["telemetry_checkpoints"] = list(runtime_telemetry_checkpoints)
+    if dev_minimal_mode:
+        for event in events:
+            options = [str(option) for option in event.get("options", [])]
+            if not options:
+                continue
+            prior = event.get("polymarket_opening_prior")
+            if not isinstance(prior, Mapping):
+                uniform = round(1.0 / len(options), 6)
+                normalized = {label: uniform for label in options}
+                normalized[options[-1]] = round(1.0 - sum(normalized[opt] for opt in options[:-1]), 6)
+                event["polymarket_opening_prior"] = normalized
+        logger.warning("DEV_MINIMAL_MODE enabled: polymarket_opening_prior validation relaxed for architecture run.")
+    else:
+        for event in events:
+            validate_polymarket_opening_prior(
+                event,
+                prior_sum_tolerance=float(phase1_cfg["prior_sum_tolerance"]),
+            )
     baseline_agent_ids = list(phase1_cfg["baseline_agents"])
     implemented_baseline_agent_ids = list(BASELINE_AGENT_IDS)
     if baseline_agent_ids != implemented_baseline_agent_ids:
@@ -1408,11 +1733,28 @@ def main() -> None:
             f"expected {implemented_baseline_agent_ids}, got {baseline_agent_ids}"
         )
 
-    validate_leakage_preflight(
-        events,
-        seed_files,
-        layer23_cfg,
-        seed_base_dir=args.seeds_dir,
+    if dev_minimal_mode:
+        logger.warning("DEV_MINIMAL_MODE enabled: leakage preflight skipped for architecture run.")
+    else:
+        validate_leakage_preflight(
+            events,
+            seed_files,
+            layer23_cfg,
+            seed_base_dir=args.seeds_dir,
+        )
+    benchmark_mode = bool(Config.BENCHMARK_MODE)
+    telemetry_required = _resolve_telemetry_required(
+        benchmark_mode=benchmark_mode,
+        dev_minimal_mode=dev_minimal_mode,
+    )
+    neo4j_connected, neo4j_error = _check_neo4j_connectivity()
+    telemetry_runtime = _resolve_telemetry_runtime(
+        phase1_cfg=phase1_cfg,
+        neo4j_connected=neo4j_connected,
+        neo4j_error=neo4j_error,
+        benchmark_mode=benchmark_mode,
+        dev_minimal_mode=dev_minimal_mode,
+        telemetry_required=telemetry_required,
     )
 
     output_root = Path(args.output_dir)
@@ -1434,12 +1776,14 @@ def main() -> None:
         first_condition = str(first_row.get("condition"))
         sample_event = event_lookup.get(first_event_id)
         if sample_event is not None:
-            sampled_config = build_simulation_config(
+            sampled_config = _build_simulation_config_with_runtime(
                 sample_event,
                 first_condition,
                 profiles,
                 injection_loader,
                 llm_model=benchmark_model,
+                injection_trigger_round=runtime_injection_round,
+                total_simulation_hours=runtime_total_simulation_hours,
             )
             cached_config_by_unit[(first_event_id, first_condition)] = sampled_config
             topology_sample_config = sampled_config
@@ -1449,12 +1793,14 @@ def main() -> None:
         cached = cached_config_by_unit.pop(cache_key, None)
         if cached is not None:
             return json.loads(json.dumps(cached, ensure_ascii=False))
-        return build_simulation_config(
+        return _build_simulation_config_with_runtime(
             event,
             condition,
             profiles,
             injection_loader,
             llm_model=benchmark_model,
+            injection_trigger_round=runtime_injection_round,
+            total_simulation_hours=runtime_total_simulation_hours,
         )
 
     manifest = {
@@ -1469,8 +1815,8 @@ def main() -> None:
         "repeats": args.repeats,
         "conditions": list(CONDITIONS),
         "python_exe": args.python_exe,
-        "total_agents": TARGET_AGENT_COUNT,
-        "total_simulation_hours": TOTAL_SIMULATION_HOURS,
+        "total_agents": runtime_agent_count,
+        "total_simulation_hours": runtime_total_simulation_hours,
         "minutes_per_round": MINUTES_PER_ROUND,
         "trace_out": str(trace_path),
         "seed_files": [str(path) for path in seed_files],
@@ -1480,7 +1826,8 @@ def main() -> None:
         "expected_run_units": expected_run_units,
         "weights_schema_version": "v1",
         "mcq_prompt_version": "v1",
-        "deterministic_mode": _deterministic_mode_config(),
+        **_deterministic_mode_config(),
+        "headless_mode": _is_headless_mode_enabled(),
         "phase1_config_version": phase1_cfg["version"],
         "layer23_config_version": layer23_cfg["version"],
         "telemetry_checkpoints": list(phase1_cfg["telemetry_checkpoints"]),
@@ -1488,6 +1835,10 @@ def main() -> None:
         "baseline_agents": list(baseline_agent_ids),
         "preflight_market_prior_check": "pass",
         "leakage_check": "pass",
+        "telemetry_mode": str(telemetry_runtime["telemetry_mode"]),
+        "telemetry_required": bool(telemetry_runtime["telemetry_required"]),
+        "neo4j_connected": bool(telemetry_runtime["neo4j_connected"]),
+        "neo4j_error": telemetry_runtime["neo4j_error"],
         "topology": extract_topology_metadata(
             {
                 "simulation_config": topology_sample_config,
@@ -1503,7 +1854,13 @@ def main() -> None:
         event_index_lookup=event_index_lookup,
         trace_writer=trace_writer,
         simulation_timeout_seconds=SIMULATION_SUBPROCESS_TIMEOUT_SECONDS,
-        simulation_runner=_run_simulation_subprocess,
+        simulation_runner=lambda python_exe, config_path, router, *, log_path=None: _run_simulation_subprocess(
+            python_exe,
+            config_path,
+            router,
+            log_path=log_path,
+            max_rounds=runtime_total_simulation_hours,
+        ),
         simulation_failure_error_builder=_simulation_failure_error,
         config_writer=write_simulation_config,
         profile_writer=write_profiles,
@@ -1513,6 +1870,7 @@ def main() -> None:
             unit_dir,
             phase1_cfg,
             resolved_label=_resolve_event_label(event),
+            min_parsed_probability_ratio=float(telemetry_runtime["min_parsed_probability_ratio"]),
         ),
         delta_conformity_builder=lambda unit_dir, _event: compute_delta_conformity(unit_dir),
         baseline_scores_builder=build_baseline_scores,

@@ -1,0 +1,67 @@
+# Context: 2024 Nobel Peace Prize
+
+**Question:** Who will win the 2024 Nobel Peace Prize?  
+**Information Available Through:** October 11, 2024 (announcement day)
+
+---
+
+## Announcement
+
+**Date:** October 11, 2024
+**Committee:** Norwegian Nobel Committee
+**Prize:** Awarded annually since 1901
+
+**Source:** Nobel Prize: https://www.nobelprize.org/
+
+## Nomination Process
+
+**Secret:** Nominations not revealed for 50 years
+**Nominators:** Lawmakers, academics, previous laureates, others
+**Deadline:** January 31, 2024 (for 2024 prize)
+
+**Speculation:** Based on global events, advocacy
+
+**Source:** Nobel Committee procedures
+
+## 2024 Context
+
+**Global Issues:**
+- Ukraine war (ongoing since 2022)
+- Gaza conflict (Oct 2023 onwards)
+- Climate change
+- Democracy/human rights
+
+## Speculated Candidates
+
+**Nihon Hidankyo:** Japanese atomic bomb survivors organization
+**Pope Francis:** Catholic leader, peace advocacy
+**UN Agencies:** UNRWA, UNHCR (refugee/humanitarian work)
+**Individual Activists:** Various human rights defenders
+**Climate Activists:** Greta Thunberg, others
+
+**Source:** Betting markets, expert predictions
+
+## Historical Patterns
+
+**Variety:** Individuals, organizations, groups
+**Surprise Factor:** Often unexpected winners
+**Low Prediction Success:** Nobel Peace Prize notoriously hard to predict
+
+## Recent Winners
+
+**2023:** Narges Mohammadi (Iranian activist)
+**2022:** Human rights groups (Belarus, Russia, Ukraine)
+**2021:** Journalists (Ressa, Muratov)
+
+## Betting Odds (Pre-Announcement)
+
+**No Clear Favorite:** Spread across many candidates
+**Low Confidence:** Even favorites <20-30% implied probability
+
+**Source:** Betting markets (Ladbrokes, Betfair)
+
+---
+
+**Sources:** Nobel Prize, betting markets, expert analysis
+
+**Note:** Nobel Peace Prize among hardest to predict. Announcement October 11, 2024 provides definitive answer. Low-confidence market with surprise outcomes common.

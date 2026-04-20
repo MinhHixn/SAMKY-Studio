@@ -400,6 +400,7 @@ def _apply_benchmark_env(config: Optional[Dict[str, Any]] = None) -> str:
     if benchmark_mode_enabled:
         os.environ.setdefault("BENCHMARK_TEMPERATURE", "0")
         os.environ.setdefault("BENCHMARK_SEED", "42")
+        os.environ["HEADLESS_MODE"] = "true"
         random.seed(int(os.environ["BENCHMARK_SEED"]))
 
     return llm_model

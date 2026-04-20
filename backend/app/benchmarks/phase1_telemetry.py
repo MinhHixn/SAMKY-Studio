@@ -23,6 +23,8 @@ _TEXT_PROBABILITY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _LABEL_PATTERN = re.compile(r"p\(\s*(?P<label>[^)]+?)\s*\)", re.IGNORECASE)
+_NUMERIC_PATTERN = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+_TEXT_FALLBACK_ACTION_TYPES = {"CREATE_POST", "QUOTE_POST", "CREATE_COMMENT", "TELEMETRY_PROBE", "INTERVIEW"}
 
 
 def is_monotonic_nonincreasing_with_epsilon(values: Iterable[float], epsilon: float) -> bool:
@@ -49,9 +51,8 @@ def compute_round_jsd_trace(
 ) -> list[float]:
     unit_path = Path(unit_dir)
     checkpoint_list = [int(checkpoint) for checkpoint in checkpoints]
-    checkpoint_set = set(checkpoint_list)
-    totals = {checkpoint: 0 for checkpoint in checkpoint_list}
-    probabilities: dict[int, list[float]] = {checkpoint: [] for checkpoint in checkpoint_list}
+    totals_by_round: dict[int, int] = {}
+    probabilities_by_round: dict[int, list[float]] = {}
 
     for log_path in (
         unit_path / "twitter" / "actions.jsonl",
@@ -61,27 +62,33 @@ def compute_round_jsd_trace(
             continue
         for entry in _read_actions(log_path):
             round_num = _extract_round(entry)
-            if round_num is None or round_num not in checkpoint_set:
+            if round_num is None:
                 continue
             if _is_round_marker(entry):
                 continue
-            totals[round_num] += 1
+            totals_by_round[round_num] = totals_by_round.get(round_num, 0) + 1
             probability = _extract_probability(entry, resolved_label)
             if probability is not None:
-                probabilities[round_num].append(probability)
+                probabilities_by_round.setdefault(round_num, []).append(probability)
 
     trace: list[float] = []
     min_ratio = float(min_parsed_probability_ratio)
     for checkpoint in checkpoint_list:
-        total = totals[checkpoint]
-        parsed = len(probabilities[checkpoint])
+        total = totals_by_round.get(checkpoint, 0)
+        parsed_probabilities = list(probabilities_by_round.get(checkpoint, []))
+        if total == 0:
+            fallback_round = _latest_nonempty_round_before(checkpoint, totals_by_round)
+            if fallback_round is not None:
+                total = totals_by_round.get(fallback_round, 0)
+                parsed_probabilities = list(probabilities_by_round.get(fallback_round, []))
+        parsed = len(parsed_probabilities)
         ratio = parsed / total if total else 0.0
         if ratio < min_ratio:
             raise ValueError(
                 f"Telemetry probability coverage below minimum at round {checkpoint}: "
                 f"{parsed}/{total} ({ratio:.3f})"
             )
-        trace.append(_jsd_against_uniform(probabilities[checkpoint]))
+        trace.append(_jsd_against_uniform(parsed_probabilities))
     return trace
 
 
@@ -121,6 +128,50 @@ def _extract_probability(entry: Mapping[str, Any], resolved_label: str | None) -
         probability = _extract_probability_from_payload(payload, resolved_label)
         if probability is not None:
             return probability
+    fallback_probability = _extract_fallback_probability(entry)
+    if fallback_probability is not None:
+        return fallback_probability
+    return None
+
+
+def _latest_nonempty_round_before(checkpoint: int, totals_by_round: Mapping[int, int]) -> int | None:
+    candidates = [round_num for round_num, total in totals_by_round.items() if round_num < checkpoint and total > 0]
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def _extract_fallback_probability(entry: Mapping[str, Any]) -> float | None:
+    action_type = entry.get("action_type")
+    if not isinstance(action_type, str) or action_type.strip().upper() not in _TEXT_FALLBACK_ACTION_TYPES:
+        return None
+
+    for payload in (entry.get("action_args"), entry.get("result"), entry.get("response"), entry):
+        if not isinstance(payload, Mapping):
+            continue
+        for key in ("content", "post_content", "quote_content", "comment_content"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                parsed = _extract_numeric_probability_from_text(value)
+                if parsed is not None:
+                    return parsed
+                # If action contains narrative text but no explicit probability, use neutral fallback.
+                return 0.5
+    return None
+
+
+def _extract_numeric_probability_from_text(text: str) -> float | None:
+    matched_probability = _parse_probability_text(text, resolved_label=None)
+    if matched_probability is not None:
+        return matched_probability
+    for match in _NUMERIC_PATTERN.finditer(text):
+        try:
+            numeric = float(match.group(0))
+        except ValueError:
+            continue
+        normalized = _normalize_probability(numeric)
+        if normalized is not None:
+            return normalized
     return None
 
 

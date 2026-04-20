@@ -472,6 +472,161 @@ class Neo4jStorage(GraphStorage):
         with self._driver.session() as session:
             return self._call_with_retry(session.execute_read, _read)
 
+    def update_fact_validity(
+        self,
+        fact_id: str,
+        current_round: int,
+        status: str,
+        replacement_fact: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(fact_id, str) or not fact_id.strip():
+            raise ValueError("fact_id must be a non-empty string")
+        if isinstance(current_round, bool) or not isinstance(current_round, int) or current_round <= 0:
+            raise ValueError("current_round must be a positive integer")
+        if not isinstance(status, str) or not status.strip():
+            raise ValueError("status must be a non-empty string")
+
+        normalized_status = status.strip().lower()
+        if normalized_status not in {"superseded", "contradicted"}:
+            raise ValueError("status must be one of: superseded, contradicted")
+
+        now = datetime.now(timezone.utc).isoformat()
+        fact_id = fact_id.strip()
+
+        def _write(tx):
+            current = tx.run(
+                """
+                MATCH (src:Entity)-[r:RELATION {uuid: $fact_id}]->(tgt:Entity)
+                RETURN
+                    r.uuid AS fact_id,
+                    r.graph_id AS graph_id,
+                    r.name AS relation_name,
+                    r.fact AS fact_text,
+                    src.uuid AS source_uuid,
+                    tgt.uuid AS target_uuid
+                """,
+                fact_id=fact_id,
+            ).single()
+            if current is None:
+                raise ValueError(f"Fact not found: {fact_id}")
+
+            tx.run(
+                """
+                MATCH ()-[r:RELATION {uuid: $fact_id}]->()
+                SET
+                    r.invalid_at = CASE
+                        WHEN r.invalid_at IS NULL OR r.invalid_at > $current_round THEN $current_round
+                        ELSE r.invalid_at
+                    END,
+                    r.expired_at = $now,
+                    r.validity_status = $status
+                """,
+                fact_id=fact_id,
+                current_round=current_round,
+                now=now,
+                status=normalized_status,
+            )
+
+            replacement_fact_id: str | None = None
+            if replacement_fact:
+                if not isinstance(replacement_fact, dict):
+                    raise ValueError("replacement_fact must be a mapping when provided")
+
+                source_uuid = str(replacement_fact.get("source_uuid") or current["source_uuid"])
+                target_uuid = str(replacement_fact.get("target_uuid") or current["target_uuid"])
+                relation_name = str(replacement_fact.get("name") or current["relation_name"] or "RELATION")
+                fact_text = str(replacement_fact.get("fact") or current["fact_text"] or relation_name)
+                replacement_graph_id = str(replacement_fact.get("graph_id") or current["graph_id"] or "")
+
+                if not source_uuid or not target_uuid:
+                    raise ValueError("replacement_fact requires source_uuid and target_uuid")
+                if not replacement_graph_id:
+                    raise ValueError("replacement_fact requires graph_id")
+
+                replacement_fact_id = str(replacement_fact.get("uuid") or uuid.uuid4())
+                tx.run(
+                    """
+                    MATCH (src:Entity {uuid: $source_uuid})
+                    MATCH (tgt:Entity {uuid: $target_uuid})
+                    CREATE (src)-[r:RELATION {
+                        uuid: $uuid,
+                        graph_id: $graph_id,
+                        name: $name,
+                        fact: $fact,
+                        fact_embedding: [],
+                        attributes_json: '{}',
+                        episode_ids: [],
+                        created_at: $now,
+                        valid_at: $current_round,
+                        invalid_at: null,
+                        expired_at: null,
+                        validity_status: 'active'
+                    }]->(tgt)
+                    """,
+                    source_uuid=source_uuid,
+                    target_uuid=target_uuid,
+                    uuid=replacement_fact_id,
+                    graph_id=replacement_graph_id,
+                    name=relation_name,
+                    fact=fact_text,
+                    now=now,
+                    current_round=current_round,
+                )
+
+            return {
+                "fact_id": fact_id,
+                "status": normalized_status,
+                "invalid_at": current_round,
+                "replacement_fact_id": replacement_fact_id,
+            }
+
+        with self._driver.session() as session:
+            return self._call_with_retry(session.execute_write, _write)
+
+    def get_graph_snapshot(self, graph_id: str, round_num: int) -> Dict[str, Any]:
+        if isinstance(round_num, bool) or not isinstance(round_num, int) or round_num <= 0:
+            raise ValueError("round_num must be a positive integer")
+
+        def _read(tx):
+            node_result = tx.run(
+                """
+                MATCH (n:Entity {graph_id: $gid})
+                WHERE (n.valid_at IS NOT NULL AND n.valid_at <= $round_num)
+                  AND (n.invalid_at IS NULL OR n.invalid_at > $round_num)
+                RETURN n, labels(n) AS labels
+                """,
+                gid=graph_id,
+                round_num=round_num,
+            )
+            nodes = [self._node_to_dict(record["n"], record["labels"]) for record in node_result]
+
+            edge_result = tx.run(
+                """
+                MATCH (src:Entity)-[r:RELATION {graph_id: $gid}]->(tgt:Entity)
+                WHERE (r.valid_at IS NOT NULL AND r.valid_at <= $round_num)
+                  AND (r.invalid_at IS NULL OR r.invalid_at > $round_num)
+                RETURN r, src.uuid AS src_uuid, tgt.uuid AS tgt_uuid
+                ORDER BY r.created_at DESC
+                """,
+                gid=graph_id,
+                round_num=round_num,
+            )
+            edges = [
+                self._edge_to_dict(record["r"], record["src_uuid"], record["tgt_uuid"])
+                for record in edge_result
+            ]
+            return {
+                "graph_id": graph_id,
+                "round": round_num,
+                "nodes": nodes,
+                "edges": edges,
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+            }
+
+        with self._driver.session() as session:
+            return self._call_with_retry(session.execute_read, _read)
+
     # ----------------------------------------------------------------
     # Search
     # ----------------------------------------------------------------

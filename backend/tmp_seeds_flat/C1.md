@@ -1,0 +1,146 @@
+# Context: 2024 US Presidential Election — Which Party Wins?
+
+**Question:** Which party will win the 2024 US Presidential Election?  
+**Market Opened:** January 2024  
+**Information Available Through:** November 5, 2024
+
+---
+
+## Candidates
+
+**Republican:** Donald Trump (45th President, 2017–2021)  
+**Democrat:** Kamala Harris (current Vice President; replaced Joe Biden as nominee in July 2024 after Biden withdrew)
+
+*Note: Biden was the expected nominee until his June 27 debate performance triggered party-wide concern; he formally withdrew July 21, 2024 and endorsed Harris. She was nominated at the August DNC without a contested convention.*
+
+**Third Parties:**
+- Chase Oliver (Libertarian) — on most state ballots, polling <1%
+- Jill Stein (Green) — on many ballots, polling <1%
+- Robert F. Kennedy Jr. — withdrew August 2024; endorsed Trump; still on some state ballots
+
+---
+
+## National Polling (Final Week, Nov 1–5, 2024)
+
+**Major National Polls:**
+
+| Pollster | Harris | Trump | Date |
+|---|---|---|---|
+| NYT/Siena | 48% | 48% | Nov 3 |
+| ABC/Ipsos | 49% | 46% | Nov 3 |
+| AtlasIntel | 48% | 50% | Nov 4 |
+| Emerson | 49% | 49% | Nov 3 |
+| Morning Consult | 50% | 47% | Nov 4 |
+| Fox News | 50% | 48% | Nov 3 |
+| Economist/YouGov | 49% | 46% | Nov 3 |
+
+**Polling Averages (Nov 5, 2024):**
+- RealClearPolitics: Harris +0.1 to +1.2 (varies by cutoff)
+- FiveThirtyEight: Harris +1.0
+- Silver Bulletin: Harris +1.2
+- Essentially a statistical tie within margin of error
+
+**Source:** RealClearPolitics aggregate; FiveThirtyEight final average; Silver Bulletin
+
+---
+
+## Swing State Polling (Final Averages, Nov 5)
+
+| State | EV | RCP Avg | Assessment |
+|---|---|---|---|
+| Pennsylvania | 19 | Harris +0.3 | True toss-up |
+| Georgia | 16 | Trump +1.2 | Lean R |
+| North Carolina | 16 | Trump +1.4 | Lean R |
+| Michigan | 15 | Harris +0.8 | Lean D |
+| Wisconsin | 10 | Harris +0.4 | Toss-up |
+| Arizona | 11 | Trump +2.1 | Lean R |
+| Nevada | 6 | Trump +0.6 | Toss-up |
+
+All major swing states within 1–2 points — historically consistent with genuine uncertainty.
+
+**Source:** RealClearPolitics state averages; FiveThirtyEight state models
+
+---
+
+## Electoral College Math
+
+**Baseline Safe/Likely (pre-swing states):**
+- Republicans: ~219 safely or likely
+- Democrats: ~226 safely or likely
+- **Undecided pool:** ~93 electoral votes across 7 swing states
+- **Threshold to win:** 270
+
+**Analysts' Paths to 270:**
+- Trump's clearest path: Win PA or (GA + NC + AZ)
+- Harris's clearest path: Win PA + MI + WI (the "Blue Wall")
+- Both paths ran through Pennsylvania — the most watched state
+
+**Source:** Electoral-vote.com; Sabato's Crystal Ball; Cook Political Report
+
+---
+
+## Model and Market Forecasts (Nov 5)
+
+| Source | Harris Win Prob | Trump Win Prob |
+|---|---|---|
+| FiveThirtyEight | 48% | 52% |
+| The Economist | 46% | 54% |
+| Polymarket | 42¢ | 58¢ |
+| PredictIt | 45¢ | 56¢ |
+| Metaculus crowd | 42% | 58% |
+
+**Consensus:** Slight Trump edge in models and markets, but within range of genuine uncertainty.
+
+**Polling error risk:** In 2020, national polls overestimated Democrats by ~3.5 points. If a similar error occurred in 2024, it would substantially favor Trump.
+
+**Source:** Model pages (accessed Nov 5); Polymarket real-time contract prices
+
+---
+
+## Key Uncertainty Factors
+
+1. **Polling accuracy:** Systematic polling errors have favored one party or another in recent cycles
+2. **Turnout composition:** Republican vs Democratic voter enthusiasm; early vs Election Day split
+3. **Late-deciding voters:** Approximately 3–5% still undecided in swing states as of Nov 3
+4. **Third-party vote share:** Where RFK Jr. voters landed on ballot (still on some state ballots despite withdrawal)
+5. **Candidate quality:** Harris pivot from incumbent VP vs Trump as "change" candidate dynamic
+
+---
+
+## Expert Commentary (Pre-Election)
+
+**Nate Silver (Silver Bulletin, Nov 4):**
+"This is genuinely close. I'd say Trump is a slight favorite — maybe 55–45 — but Harris has a real path. Anyone telling you this is a sure thing for either side is wrong."
+
+**Larry Sabato (UVA Center for Politics, Nov 3):**
+"We have this at Trump having more paths to 270, but the race is clearly within the margin of polling error. Could go either way."
+
+**Amy Walter (Cook Political Report, Nov 5):**
+"Pennsylvania looks like the tipping-point state. Whoever wins it likely wins the presidency."
+
+---
+
+## Historical Context
+
+- **Trump:** Won 2016 (Electoral College); lost 2020; won 2024 Republican primary decisively
+- **Harris:** Ran briefly in 2019–2020 primary (dropped out before Iowa); VP since January 2021
+- **Republican popular vote record:** Last won popular vote before 2024: George W. Bush in 2004
+
+---
+
+## Sources
+
+**Polling Aggregators:**
+- RealClearPolitics: https://realclearpolitics.com/
+- FiveThirtyEight: https://projects.fivethirtyeight.com/
+- Silver Bulletin: https://natesilver.net/
+
+**Election Analytics:**
+- Cook Political Report: https://cookpolitical.com/
+- Sabato's Crystal Ball: https://centerforpolitics.org/crystalball/
+- Electoral-vote.com
+
+**Markets:**
+- Polymarket: https://polymarket.com/
+- PredictIt: https://predictit.org/
+- Metaculus: https://metaculus.com/

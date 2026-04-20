@@ -1,0 +1,156 @@
+# Context: US Trade Deals Before July 2025
+
+**Question:** Which countries will the US agree trade deals with before July 2025?  
+**Market Opened:** April 14, 2025  
+**Information Available Through:** June 25, 2025
+
+---
+
+## Background: Trump 2.0 Trade Policy Architecture
+
+Donald Trump's second administration (inaugurated January 20, 2025) came to power with an explicit mandate to reshape global trade. Key policy pillars:
+
+**"Liberation Day" Tariffs (April 2, 2025):**
+- Trump announced sweeping universal tariffs on all imports: a baseline 10% on all trading partners
+- Country-specific higher rates: China 34% additional (total effective ~80–100%+), EU 20%, Japan 24%, Vietnam 46%, India 26%, Cambodia 49%
+- The announcement immediately triggered a sharp global market selloff (S&P 500 dropped ~4.8% in two days)
+- **Key effect:** Tariffs simultaneously created pressure for trading partners to negotiate AND created leverage for the US to offer relief in exchange for concessions
+
+**Response: 90-Day Pause (April 9, 2025):**
+- Trump announced a 90-day pause for most countries (except China) within a week
+- Countries that did not retaliate were paused at 10% baseline; China rates escalated further
+- Pause was framed explicitly as creating a negotiation window
+- Official White House language: "We want to reach deals. The tariffs are the starting point."
+
+**Source:** White House press releases; USTR; Wall Street Journal (Liberation Day coverage)
+
+---
+
+## The Negotiation Environment (April–June 2025)
+
+**Countries Actively Seeking Deals:**
+
+**United Kingdom:**
+- Most advanced negotiations entering 2025 — longest track record of post-Brexit US deal discussions
+- UK not targeted by high-rate tariffs (paused at 10% baseline)
+- UK Prime Minister Keir Starmer visited Washington (February 2025); personal rapport with Trump reported
+- US-UK deal focus: Financial services, NHS access (major UK red line), agriculture, digital trade
+- Timeline: Most advanced; UK officials expressed hope for "framework deal" within months
+
+**India:**
+- Modi government engaged immediately; Commerce Minister visited Washington in March 2025
+- US interest: Reducing India's pharmaceutical tariffs, market access for agriculture
+- India interest: H-1B visa concerns, manufacturing capacity recognition
+- Challenge: India-US trade complexity; India's domestic political constraints on agriculture concessions
+
+**Japan:**
+- Japan facing 24% tariff threat; urgency high
+- Trump-Japan summit at Mar-a-Lago (April 2025) — described as productive by White House
+- Japan sought exemption for auto exports; US sought Japan to increase US food imports
+- No formal framework announced as of late April, but talks described as "substantive"
+
+**Vietnam:**
+- Among highest tariff rates (46%); significant US manufacturing hub for Apple, Nike, etc.
+- Vietnam offered to increase US agricultural imports and open capital markets
+- Talks ongoing; US concern about Chinese goods routed through Vietnam ("transshipment")
+
+**European Union:**
+- Most complex: EU required to negotiate collectively; internal coordination takes time
+- EU threatened retaliatory tariffs on $28B of US goods (put on hold during 90-day pause)
+- European Commission lead negotiator Valdis Dombrovskis held technical-level talks
+- Formal deal: Very unlikely within 90-day window given EU's institutional pace
+
+**Source:** Reuters global trade desk; Financial Times trade tracker; Bloomberg Economics
+
+---
+
+## What Counts as a "Trade Deal"?
+
+The Polymarket market resolution criteria were specific: **any formal bilateral trade agreement, framework agreement, or comparable commitment** signed or announced before July 2025.
+
+**Types of Possible Agreements:**
+- **Full FTA (Free Trade Agreement):** Comprehensive, covers most goods/services — requires Congressional approval (Fast Track). Timeline: Years, not months.
+- **Framework Agreement / MoU:** Non-binding or partially binding — establishes negotiating principles. Can be done in weeks.
+- **Sectoral Deal:** Covers specific industries (e.g., steel, agriculture, pharmaceuticals). Can be done faster.
+- **Tariff Suspension:** Temporary pause in exchange for specific concessions (not traditionally a "deal" but could qualify depending on interpretation).
+
+**Market Interpretation Challenge:** The question "trade deal" was interpreted by traders as any significant bilateral commitment. This broadened the field of potential YES outcomes.
+
+**Source:** USTR definitions of trade agreement types; Congressional Research Service (Fast Track authority)
+
+---
+
+## Economic and Political Analysis
+
+**Why Deals Were Possible in 5 Months (for some countries):**
+- 90-day pause created a real deadline and strong incentive for trading partners
+- Trump team indicated willingness to offer tariff relief in exchange for concessions
+- For smaller, more agile partners (UK, Vietnam), a framework deal was achievable
+- US political calendar: Republicans wanted visible wins before any pause expired
+
+**Why Most Countries Unlikely to Achieve "Deal":**
+- International trade negotiations typically take 1–3+ years for comprehensive agreements
+- Legal review, domestic legislative approvals, stakeholder consultations all take time
+- China: Full retaliatory escalation underway; formal deal very unlikely in 90-day window
+- EU: Governance structure requires supranational consensus; ~5–8 months minimum for even a framework
+- India, Japan: Progress possible but political sensitivities around agriculture and autos created obstacles
+
+**Scenario Probability Assessment (Polymarket mid-April 2025):**
+- UK: ~60% probability of some deal qualification
+- Japan: ~35%
+- India: ~20%
+- Vietnam: ~25%
+- EU: ~10%
+- Canada / Mexico: Near zero (existing USMCA; tariff dispute framed differently)
+- South Korea: ~15%
+
+**Source:** Polymarket contract prices by country; academic trade economists' Twitter/public commentary
+
+---
+
+## Historical Context: Speed of US Trade Agreements
+
+| Agreement | Timeline | Type |
+|---|---|---|
+| US-China Phase One | ~18 months | Narrow sectoral ("phase one") |
+| USMCA | ~18 months | Full renegotiation |
+| US-South Korea FTA | ~15 months | Full FTA |
+| Japan trade deal (Trump 1.0) | ~14 months | Limited sectoral |
+| Singapore FTA | ~30 months | Comprehensive |
+
+**Implication:** No comprehensive FTA possible by July 2025. Any qualifying deal would need to be a framework, sectoral, or tariff-adjustment MoU.
+
+---
+
+## International Perspectives
+
+**WTO Context:**
+- Some trading partners filed WTO dispute challenges against US tariffs (parallel to negotiation)
+- WTO Director-General Ngozi Okonjo-Iweala called for "restraint and dialogue"
+- WTO dispute panels operate on multi-year timescales — not relevant to short-term deal dynamics
+
+**G7 Coordination:**
+- G7 finance ministers met in mid-May 2025; communiqué urged "de-escalation"
+- UK, Japan, Germany all G7 members facing tariffs but navigating individually
+
+**Source:** WTO: https://wto.org; G7 communiqués; Reuters international trade coverage
+
+---
+
+## Sources Summary
+
+**US Trade Policy:**
+- USTR (US Trade Representative): https://ustr.gov/
+- White House fact sheets on trade
+- Congressional Research Service trade reports
+
+**International Coverage:**
+- Reuters trade desk: https://reuters.com
+- Financial Times (FT): https://ft.com
+- Nikkei Asia (Japan perspective): https://asia.nikkei.com/
+- The Hindu BusinessLine (India perspective): https://thehindubusinessline.com/
+
+**Analysis:**
+- Peterson Institute for International Economics: https://piie.com/
+- Chatham House (UK-US trade analysis): https://chathamhouse.org/
+- Council on Foreign Relations trade tracker

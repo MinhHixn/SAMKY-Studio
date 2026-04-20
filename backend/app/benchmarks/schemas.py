@@ -3,8 +3,14 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping, Sequence
 
+
+class ValidationError(ValueError):
+    """Raised when benchmark payloads violate required schema contracts."""
+
+
 REQUIRED_EVENT_RESULT_KEYS: tuple[str, ...] = (
     "event_id",
+    "unit_id",
     "condition",
     "repeat",
     "simulation_status",
@@ -16,6 +22,9 @@ REQUIRED_EVENT_RESULT_KEYS: tuple[str, ...] = (
     "rps",
     "calibration_bracket",
     "delta_conformity",
+    "signed_delta",
+    "belief_update_failure",
+    "yes_probability",
 )
 
 REQUIRED_SUMMARY_BLOCKS: tuple[str, ...] = (
@@ -72,7 +81,7 @@ def validate_event_result_row(row: Mapping[str, Any]) -> None:
 
     missing_keys = [key for key in REQUIRED_EVENT_RESULT_KEYS if key not in row]
     if missing_keys:
-        raise ValueError(f"missing required keys: {', '.join(missing_keys)}")
+        raise ValidationError(f"missing required keys: {', '.join(missing_keys)}")
 
     event_id = row.get("event_id")
     if not isinstance(event_id, str) or not event_id.strip():
@@ -150,6 +159,8 @@ def validate_event_results(rows: Sequence[Mapping[str, Any]]) -> None:
     for index, row in enumerate(rows):
         try:
             validate_event_result_row(row)
+        except ValidationError as exc:
+            raise ValidationError(f"rows[{index}] {exc}") from exc
         except ValueError as exc:
             raise ValueError(f"rows[{index}] {exc}") from exc
 

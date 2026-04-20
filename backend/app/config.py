@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
 
 if os.path.exists(project_root_env):
-    load_dotenv(project_root_env, override=True)
+    load_dotenv(project_root_env, override=False)
 else:
     # If no .env in root, try to load environment variables (for production)
-    load_dotenv(override=True)
+    load_dotenv(override=False)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -62,6 +62,8 @@ class Config:
     BENCHMARK_MODE = _env_bool('BENCHMARK_MODE', False)
     BENCHMARK_TEMPERATURE = _env_float_or_raw('BENCHMARK_TEMPERATURE', 0.0)
     BENCHMARK_SEED = _env_int_or_raw('BENCHMARK_SEED', 42)
+    HEADLESS_MODE = _env_bool('HEADLESS_MODE', False)
+    LLM_TIMEOUT_SECONDS = _env_float_or_raw('LLM_TIMEOUT_SECONDS', 300.0)
     LLM_RETRY_MAX_RETRIES = _env_int_or_raw('LLM_RETRY_MAX_RETRIES', 3)
     LLM_RETRY_INITIAL_DELAY = _env_float_or_raw('LLM_RETRY_INITIAL_DELAY', 1.0)
     LLM_RETRY_MAX_DELAY = _env_float_or_raw('LLM_RETRY_MAX_DELAY', 30.0)

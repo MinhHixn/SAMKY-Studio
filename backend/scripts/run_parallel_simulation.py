@@ -535,6 +535,7 @@ class ParallelIPCHandler:
         
         try:
             conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA encoding = \'UTF-8\';")
             cursor = conn.cursor()
             
             # Query the latest Interview record
@@ -686,6 +687,7 @@ def fetch_new_actions_from_db(
     
     try:
         conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA encoding = \'UTF-8\';")
         cursor = conn.cursor()
         
         # Use rowid to track processed records (rowid is SQLite's built-in auto-increment field)
@@ -1047,7 +1049,7 @@ TASK: Based STRICTLY on your persona's worldview and the recent events you have 
 _TELEMETRY_PROBE_BINARY_PROMPT_FOOTER = (
     "\nTarget question: {question}\n"
     "Return only valid JSON with one key exactly named yes_probability.\n"
-    "Example: {\"yes_probability\": 0.63}\n"
+    "Example: {{\"yes_probability\": 0.63}}\n"
     "Constraints: JSON only, no prose, no markdown, no persona-based refusals. Value must be between 0 and 1."
 )
 
@@ -1422,6 +1424,7 @@ def _get_agent_recent_memory_summary(db_path: str, agent_id: int, limit: int = 5
     
     try:
         conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA encoding = \'UTF-8\';")
         cursor = conn.cursor()
         
         # Get standard actions and potentially observations if tracked
@@ -1479,6 +1482,9 @@ def _get_agent_profile_data(config: Dict[str, Any], agent_id: int) -> Dict[str, 
     return {"bio": "Generic citizen.", "persona": "Neutral observer."}
 
 
+_TELEMETRY_SAMPLE_SIZE = 100
+_TELEMETRY_CONCURRENCY = 15
+
 async def _capture_checkpoint_probe(
     *,
     env: Any,
@@ -1494,84 +1500,88 @@ async def _capture_checkpoint_probe(
     if not probe_rounds or round_num not in probe_rounds or action_logger is None:
         return last_rowid, 0
 
-    candidate_agent_id = 0
-    if agent_names:
-        candidate_agent_id = min(agent_names.keys())
+    # Representative Stratified Sampling (Fix for Statistical Flaw)
+    # Following CLT, we need N=30+ for valid distribution; N=100 provides stable swarm measurement.
+    sample_size = min(len(agent_names), _TELEMETRY_SAMPLE_SIZE) if agent_names else 1
+    candidate_agent_ids = random.sample(list(agent_names.keys()), sample_size) if agent_names else [0]
 
-    try:
-        probe_agent = env.agent_graph.get_agent(candidate_agent_id)
-    except Exception:
-        logging.warning("Skipping telemetry probe at round %s on %s: probe agent unavailable", round_num, platform_label)
-        return last_rowid, 0
-
+    # Strict Concurrency Throttling (Fix for Scalability Bottleneck)
+    sem = asyncio.Semaphore(_TELEMETRY_CONCURRENCY)
+    client = LLMClient()
+    
     event_options = _extract_event_options(config)
     preferred_label = _resolve_probe_target_label(config, event_options)
-    
-    # Contextual Reconstruction (Fix for Frozen JSD / Context Amnesia)
-    profile = _get_agent_profile_data(config, candidate_agent_id)
-    memory_summary = _get_agent_recent_memory_summary(db_path, candidate_agent_id)
-    
-    system_prompt = _TELEMETRY_PROBE_CONTEXTUAL_SYSTEM_PROMPT.format(
-        bio=profile["bio"],
-        persona=profile["persona"],
-        memory=memory_summary
-    )
-    
     question = _extract_event_question(config)
-    user_prompt = ""
-    schema = None
+
+    async def _probe_agent_task(agent_id: int):
+        async with sem:
+            try:
+                # Contextual Reconstruction (Fix for Frozen JSD / Context Amnesia)
+                profile = _get_agent_profile_data(config, agent_id)
+                memory_summary = _get_agent_recent_memory_summary(db_path, agent_id)
+                
+                system_prompt = _TELEMETRY_PROBE_CONTEXTUAL_SYSTEM_PROMPT.format(
+                    bio=profile["bio"],
+                    persona=profile["persona"],
+                    memory=memory_summary
+                )
+                
+                user_prompt = ""
+                schema = None
+                
+                if len(event_options) > 1 and not _is_yes_no_options(event_options):
+                    options_json = json.dumps(event_options, ensure_ascii=False)
+                    example_json = json.dumps(_build_distribution_example(event_options), ensure_ascii=False)
+                    user_prompt = _TELEMETRY_PROBE_CATEGORICAL_PROMPT_FOOTER.format(
+                        question=question,
+                        options_json=options_json,
+                        example_json=example_json
+                    )
+                    schema = _get_telemetry_categorical_schema(event_options)
+                else:
+                    user_prompt = _TELEMETRY_PROBE_BINARY_PROMPT_FOOTER.format(question=question)
+                    schema = _TELEMETRY_BINARY_SCHEMA
+
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+
+                response = await asyncio.to_thread(client.chat_json, messages, temperature=0.0, json_schema=schema)
+                
+                # Manually log into SQLite (thread-safe for simple inserts in this async loop)
+                def _write_to_db():
+                    conn = sqlite3.connect(db_path)
+                    conn.execute("PRAGMA encoding = \'UTF-8\';")
+                    cursor = conn.cursor()
+                    db_prompt = f"SYSTEM: {system_prompt}\n\nUSER: {user_prompt}"
+                    info_json = json.dumps({"prompt": db_prompt, "response": response}, ensure_ascii=False)
+                    created_at = datetime.now().isoformat()
+                    cursor.execute(
+                        "INSERT INTO trace (user_id, action, info, created_at) VALUES (?, ?, ?, ?)",
+                        (agent_id, ActionType.INTERVIEW.value, info_json, created_at)
+                    )
+                    conn.commit()
+                    conn.close()
+                
+                await asyncio.to_thread(_write_to_db)
+                return True
+            except Exception as exc:
+                logging.warning("Telemetry probe failed for agent %s on %s: %s", agent_id, platform_label, exc)
+                return False
+
+    # Execute all probes concurrently with throttling
+    await asyncio.gather(*(_probe_agent_task(aid) for aid in candidate_agent_ids))
+
+    # Batch process the results from DB
+    current_last_rowid = last_rowid
+    total_logged_count = 0
+    probe_actions, current_last_rowid = fetch_new_actions_from_db(db_path, current_last_rowid, agent_names)
     
-    if len(event_options) > 1 and not _is_yes_no_options(event_options):
-        options_json = json.dumps(event_options, ensure_ascii=False)
-        example_json = json.dumps(_build_distribution_example(event_options), ensure_ascii=False)
-        user_prompt = _TELEMETRY_PROBE_CATEGORICAL_PROMPT_FOOTER.format(
-            question=question,
-            options_json=options_json,
-            example_json=example_json
-        )
-        schema = _get_telemetry_categorical_schema(event_options)
-    else:
-        user_prompt = _TELEMETRY_PROBE_BINARY_PROMPT_FOOTER.format(question=question)
-        schema = _TELEMETRY_BINARY_SCHEMA
-
-    # Use a direct chat_json call with enforced schema AND injected context
-    client = LLMClient()
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    try:
-        response = client.chat_json(messages, temperature=0.0, json_schema=schema)
-        
-        # Manually log this into the SQLite database as an INTERVIEW action to maintain 
-        # compatibility with fetch_new_actions_from_db logic.
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            # Note: prompt in DB now includes the full contextual override for audit
-            db_prompt = f"SYSTEM: {system_prompt}\n\nUSER: {user_prompt}"
-            info_json = json.dumps({"prompt": db_prompt, "response": response}, ensure_ascii=False)
-            created_at = datetime.now().isoformat()
-            cursor.execute(
-                "INSERT INTO trace (user_id, action, info, created_at) VALUES (?, ?, ?, ?)",
-                (candidate_agent_id, ActionType.INTERVIEW.value, info_json, created_at)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as db_exc:
-             logging.error("Failed to manually log telemetry probe to DB: %s", db_exc)
-
-    except Exception as exc:
-        logging.warning("Telemetry probe interview failed at round %s on %s: %s", round_num, platform_label, exc)
-        if _env_flag("BENCHMARK_MODE"):
-            return last_rowid, 0
-
-    probe_actions, updated_last_rowid = fetch_new_actions_from_db(db_path, last_rowid, agent_names)
-    logged_count = 0
     for action_data in probe_actions:
         if action_data.get("action_type") != "INTERVIEW":
             continue
+            
         action_args = dict(action_data.get("action_args") or {})
         extraction_meta: Dict[str, Any] = {}
         probability = _extract_interview_probability(
@@ -1580,30 +1590,23 @@ async def _capture_checkpoint_probe(
             preferred_label=preferred_label,
             metadata=extraction_meta,
         )
-        telemetry_source = extraction_meta.get("telemetry_source")
-        if isinstance(telemetry_source, str) and telemetry_source.strip():
-            action_args["telemetry_source"] = telemetry_source.strip()
+        
         if probability is None:
             action_args["yes_probability"] = None
             action_args["telemetry_fallback"] = "extraction_failed"
-            response_snippet = _serialize_probe_response_snippet(action_args.get("response", action_args))
-            logging.warning(
-                "Telemetry probe extraction failed at round %s on %s; raw_response=%s",
-                round_num,
-                platform_label,
-                response_snippet,
-            )
         else:
             action_args["yes_probability"] = probability
+            
         action_logger.log_action(
             round_num=round_num,
-            agent_id=action_data.get("agent_id", candidate_agent_id),
-            agent_name=action_data.get("agent_name", agent_names.get(candidate_agent_id, f"Agent_{candidate_agent_id}")),
+            agent_id=action_data.get("agent_id"),
+            agent_name=action_data.get("agent_name"),
             action_type="TELEMETRY_PROBE",
             action_args=action_args,
         )
-        logged_count += 1
-    return updated_last_rowid, logged_count
+        total_logged_count += 1
+            
+    return current_last_rowid, total_logged_count
 
 
 def create_model(config: Dict[str, Any], use_boost: bool = False):
@@ -1948,19 +1951,6 @@ async def run_twitter_simulation(
     if action_logger:
         action_logger.log_simulation_start(config)
     
-    # Calculate telemetry probe schedule
-    time_config = config.get("time_config", {})
-    total_hours = time_config.get("total_hours", 24)
-    minutes_per_round = time_config.get("minutes_per_round", 30)
-    total_rounds = (total_hours * 60) // minutes_per_round
-
-    if max_rounds is not None and max_rounds > 0:
-        total_rounds = min(total_rounds, max_rounds)
-    
-    probe_rounds = set(_build_telemetry_probe_rounds(total_rounds)) if _telemetry_probes_enabled() else set()
-    if probe_rounds:
-        log_info(f"Telemetry probes scheduled at rounds: {sorted(probe_rounds)}")
-
     total_actions = 0
     last_rowid = 0  # Track last processed row in Database (use rowid to avoid created_at format differences)
     
@@ -2113,6 +2103,9 @@ async def run_twitter_simulation(
     
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
+    
+    # Small safety delay to allow any pending background writes or OS buffers to flush
+    await asyncio.sleep(1.0)
     
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
@@ -2348,6 +2341,9 @@ async def run_reddit_simulation(
     
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
+    
+    # Small safety delay to allow any pending background writes or OS buffers to flush
+    await asyncio.sleep(1.0)
     
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()

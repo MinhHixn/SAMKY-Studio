@@ -2041,6 +2041,7 @@ def get_simulation_posts(simulation_id: str):
         
         import sqlite3
         conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA encoding = \'UTF-8\';")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -2114,6 +2115,7 @@ def get_simulation_comments(simulation_id: str):
         
         import sqlite3
         conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA encoding = \'UTF-8\';")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         

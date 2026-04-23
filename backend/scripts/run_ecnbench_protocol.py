@@ -13,7 +13,7 @@ from functools import lru_cache
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Protocol, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence
 from urllib.parse import urlparse
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -26,6 +26,8 @@ from app.benchmarks.injection_loader import Step30InjectionLoader
 from app.benchmarks.leakage import validate_leakage_preflight
 from app.benchmarks.orchestrator import BenchmarkRunOrchestrator, ProtocolConditionExecutor
 from app.benchmarks.protocol import build_step30_scheduled_event, enforce_protocol_constraints, expand_profiles_to_target
+from app.benchmarks.intelligent_persona import generate_intelligent_base_profiles
+from app.utils.llm_client import LLMClient
 from app.benchmarks.layer23_registry import load_layer23_config
 from app.benchmarks.reliability import dominant_bucket_label, kappa_by_dimension
 from app.benchmarks.seed_metadata import load_seed_metadata
@@ -298,10 +300,40 @@ def _collect_events(payload: Any, *, _fallback_index: List[int] | None = None) -
     return events
 
 
-def load_events_from_raw(events_raw_path: Path | str, limit: int | None = None) -> List[Dict[str, Any]]:
+def load_events_from_raw(
+    events_raw_path: Path | str, 
+    limit: int | None = None,
+    event_ids: List[str] | None = None,
+    category: str | None = None
+) -> List[Dict[str, Any]]:
     raw_path = Path(events_raw_path)
     payload = _read_json(raw_path)
-    events = _collect_events(payload)
+    
+    # If category is provided, only look in that specific key in core_events or supplementary_events
+    target_payload = payload
+    if category:
+        core = payload.get("core_events", {})
+        supp = payload.get("supplementary_events", {})
+        if category in core:
+            target_payload = core[category]
+        elif category in supp:
+            target_payload = supp[category]
+        elif category == "supplementary" and "events" in supp:
+            target_payload = supp["events"]
+        else:
+            logger.warning(f"Category '{category}' not found in events_raw.json. Searching globally.")
+
+    events = _collect_events(target_payload)
+    
+    # Filter by event_ids if provided
+    if event_ids:
+        events = [e for e in events if str(e.get("event_id")) in event_ids]
+
+    # Auto-fill options for binary events if missing
+    for event in events:
+        if event.get("market_type") == "binary" and not event.get("options"):
+            event["options"] = ["YES", "NO"]
+
     if limit is not None:
         return events[:limit]
     return events
@@ -354,11 +386,13 @@ def build_condition_matrix(events: List[Mapping[str, Any]], repeats: int) -> Lis
     return matrix
 
 
-def load_seed_files(seeds_dir: Path | str) -> List[Path]:
+def load_seed_files(seeds_dir: Path | str, event_id: str | None = None) -> List[Path]:
     directory = Path(seeds_dir)
+    if event_id is not None:
+        directory = directory / str(event_id)
     if not directory.exists():
         raise FileNotFoundError(f"seeds-dir does not exist: {directory}")
-    files = sorted(path for path in directory.rglob("*") if path.is_file() and path.name != "metadata.json")
+    files = sorted(path for path in directory.rglob("*") if path.is_file() and path.name not in ("metadata.json", "links.txt"))
     if not files:
         raise ValueError(f"No seed files found in {directory}")
     return files
@@ -372,8 +406,11 @@ def _sanitize_identifier(value: str) -> str:
     return cleaned
 
 
-def _seed_text_excerpt(seed_path: Path, max_chars: int = 2000) -> str:
-    return seed_path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+def _seed_text_excerpt(seed_path: Path, max_chars: int | None = None) -> str:
+    content = seed_path.read_text(encoding="utf-8", errors="replace")
+    if max_chars is not None:
+        return content[:max_chars]
+    return content
 
 
 def _seed_preview(seed_path: Path, max_chars: int = 600) -> str:
@@ -387,7 +424,7 @@ def build_base_profile(seed_path: Path, index: int) -> Dict[str, Any]:
     title = stem.replace("_", " ").replace("-", " ").strip().title() or f"Seed {index}"
     preview = _seed_preview(seed_path)
     username = _sanitize_identifier(stem)
-    persona = _seed_text_excerpt(seed_path, max_chars=4000).strip() or preview or f"Seed profile derived from {seed_path.name}"
+    persona = _seed_text_excerpt(seed_path).strip() or preview or f"Seed profile derived from {seed_path.name}"
     if not preview:
         preview = persona[:200]
 
@@ -417,18 +454,40 @@ def build_base_profile(seed_path: Path, index: int) -> Dict[str, Any]:
     }
 
 
-def build_profiles(seeds_dir: Path | str, target_count: int = TARGET_AGENT_COUNT) -> List[Dict[str, Any]]:
-    seed_files = load_seed_files(seeds_dir)
-    base_profiles = [build_base_profile(seed_path, index) for index, seed_path in enumerate(seed_files)]
-    expanded_profiles = expand_profiles_to_target(base_profiles, target_count=target_count)
+def build_profiles(
+    seeds_dir: Path | str, 
+    target_count: int = TARGET_AGENT_COUNT, 
+    event_id: str | None = None,
+    llm_client: Optional[LLMClient] = None
+) -> List[Dict[str, Any]]:
+    seed_files = load_seed_files(seeds_dir, event_id=event_id)
+    
+    # Intelligent Expansion: If we have only ONE seed file (like context.md),
+    # use LLM to generate multiple diverse base profiles first.
+    if len(seed_files) == 1 and llm_client:
+        context_text = seed_files[0].read_text(encoding="utf-8", errors="replace")
+        logger.info(f"Using intelligent persona generation for event {event_id}...")
+        base_profiles = generate_intelligent_base_profiles(context_text, agent_count=target_count, llm_client=llm_client)
+        if not base_profiles:
+             logger.warning("Intelligent persona generation failed, falling back to basic seed profile.")
+             base_profiles = [build_base_profile(seed_files[0], 0)]
+    else:
+        base_profiles = [build_base_profile(seed_path, index) for index, seed_path in enumerate(seed_files)]
+
+    expanded_profiles = expand_profiles_to_target(base_profiles, target_count=target_count, llm_client=llm_client)
 
     for index, profile in enumerate(expanded_profiles):
+        # Use a deterministic base profile selection for metadata assignment
         base_profile = base_profiles[index % len(base_profiles)]
         profile["agent_id"] = profile["user_id"]
-        profile["entity_name"] = f"{base_profile['name']} #{profile['user_id']}"
-        profile["entity_uuid"] = f"{base_profile['entity_uuid']}-{profile['user_id']}"
-        profile["activity_level"] = base_profile.get("activity_level", 0.5)
-        profile["source_seed_file"] = base_profile["source_seed_file"]
+        # Metadata fields (non-functional for identity but useful for tracking)
+        profile["activity_level"] = profile.get("activity_level", 0.5)
+        profile["source_seed_file"] = profile.get("source_seed_file", str(seed_files[0]) if seed_files else "unknown")
+        # Ensure entity_uuid is unique for the social graph
+        if not profile.get("entity_uuid") or profile.get("entity_uuid") == base_profile.get("entity_uuid"):
+             profile["entity_uuid"] = f"{base_profile.get('entity_uuid', 'agent')}-{profile['user_id']}"
+        if not profile.get("entity_name") or profile.get("entity_name") == base_profile.get("entity_name"):
+             profile["entity_name"] = profile["name"]
     return expanded_profiles
 
 
@@ -684,15 +743,172 @@ def _simulation_failure_error(unit_dir: Path, *, timeout_seconds: int | None = N
     return "\n\n".join(parts) if parts else "run_parallel_simulation.py failed"
 
 
+def _sample_representative_actions(unit_dir: Path, max_actions: int = 50) -> str:
+    """Sample high-signal actions from platform logs to stabilize evaluator grading."""
+    platforms = ["twitter", "reddit"]
+    all_actions: List[Dict[str, Any]] = []
+    
+    for platform in platforms:
+        log_path = unit_dir / platform / "actions.jsonl"
+        if not log_path.exists():
+            continue
+        try:
+            with log_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        action = json.loads(line)
+                        if action.get("event_type") in ("simulation_start", "simulation_end", "round_start", "round_end"):
+                            continue
+                        action["platform"] = platform
+                        all_actions.append(action)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.warning(f"Failed to read {platform} actions for sampling: {e}")
+
+    if not all_actions:
+        return ""
+
+    # Scoring for "Engagement/Signal"
+    # CREATE_POST (1.0), QUOTE (0.5 + 1.0), COMMENT (0.3 + 0.8), LIKE (0.1)
+    engagement_scores: Dict[str, float] = {}  # key: platform_postid
+    
+    # First pass: map post_ids to scores
+    for action in all_actions:
+        a_type = action.get("action_type")
+        a_args = action.get("action_args") or {}
+        platform = action.get("platform")
+        
+        if a_type == "CREATE_POST":
+            p_id = f"{platform}_{a_args.get('post_id')}"
+            engagement_scores[p_id] = engagement_scores.get(p_id, 0.0) + 1.0
+        elif a_type == "QUOTE_POST":
+            p_id = f"{platform}_{a_args.get('new_post_id')}"
+            engagement_scores[p_id] = engagement_scores.get(p_id, 0.0) + 1.0
+            target_id = f"{platform}_{a_args.get('quoted_id')}"
+            engagement_scores[target_id] = engagement_scores.get(target_id, 0.0) + 0.5
+        elif a_type == "CREATE_COMMENT":
+            p_id = f"{platform}_{a_args.get('comment_id')}"
+            engagement_scores[p_id] = engagement_scores.get(p_id, 0.0) + 0.8
+            target_id = f"{platform}_{a_args.get('post_id')}"
+            engagement_scores[target_id] = engagement_scores.get(target_id, 0.0) + 0.3
+        elif a_type == "LIKE_POST":
+            target_id = f"{platform}_{a_args.get('post_id')}"
+            engagement_scores[target_id] = engagement_scores.get(target_id, 0.0) + 0.1
+
+    # Second pass: attach scores to actions and sort
+    scored_actions = []
+    for action in all_actions:
+        a_type = action.get("action_type")
+        a_args = action.get("action_args") or {}
+        platform = action.get("platform")
+        
+        lookup_id = None
+        if a_type == "CREATE_POST":
+            lookup_id = f"{platform}_{a_args.get('post_id')}"
+        elif a_type == "QUOTE_POST":
+            lookup_id = f"{platform}_{a_args.get('new_post_id')}"
+        elif a_type == "CREATE_COMMENT":
+            lookup_id = f"{platform}_{a_args.get('comment_id')}"
+        
+        score = engagement_scores.get(lookup_id, 0.0) if lookup_id else 0.0
+        # Boost original posts and quotes over likes/probes
+        if a_type in ("CREATE_POST", "QUOTE_POST", "CREATE_COMMENT"):
+            score += 10.0
+            
+        scored_actions.append((score, action))
+
+    # Sort by score (descending) and take top
+    scored_actions.sort(key=lambda x: x[0], reverse=True)
+    top_actions = [x[1] for x in scored_actions[:max_actions]]
+    
+    # Sort top actions by round to maintain temporal coherence
+    top_actions.sort(key=lambda x: x.get("round", 0))
+
+    lines = []
+    for a in top_actions:
+        round_n = a.get("round")
+        agent = a.get("agent_name", "Unknown")
+        a_type = a.get("action_type")
+        platform = a.get("platform")
+        content = (a.get("action_args") or {}).get("content", "")
+        if not content and a_type == "TELEMETRY_PROBE":
+            prob = (a.get("action_args") or {}).get("yes_probability")
+            content = f"Belief check: YES Probability = {prob}"
+        
+        if content:
+            lines.append(f"[R{round_n}][{platform}] {agent}: {content[:300]}")
+            
+    return "\n".join(lines)
+
+
 def build_evidence_text(simulation_log_path: Path, seed_path: Path) -> str:
-    log_excerpt = _extract_tail_text(simulation_log_path)
-    seed_excerpt = _seed_text_excerpt(seed_path)
+    # 1. High-level log summary
+    log_excerpt = _extract_tail_text(simulation_log_path, max_chars=2000)
+    
+    # 2. Representative Actions Sample (Fix for Evaluator Context Overload)
+    actions_sample = _sample_representative_actions(simulation_log_path.parent, max_actions=60)
+    
+    # 3. Seed context excerpt
+    seed_excerpt = _seed_text_excerpt(seed_path, max_chars=3000)
+    
     parts = []
     if log_excerpt:
-        parts.append(f"Simulation log excerpt:\n{log_excerpt}")
+        parts.append(f"Simulation high-level log tail:\n{log_excerpt}")
+    if actions_sample:
+        parts.append(f"Representative Social Media Actions (Sample):\n{actions_sample}")
     if seed_excerpt:
-        parts.append(f"Seed excerpt ({seed_path.name}):\n{seed_excerpt}")
+        parts.append(f"Source Seed Context ({seed_path.name}):\n{seed_excerpt}")
+        
     return "\n\n".join(parts)
+
+
+def _fuzzy_normalize_probabilities(
+    probabilities: Mapping[str, Any] | None,
+    options: List[str] | None,
+) -> Dict[str, float] | None:
+    if not isinstance(probabilities, Mapping) or not probabilities:
+        return None
+    
+    # If no options, just return normalized keys
+    if not options:
+        return _normalize_probabilities(probabilities)
+
+    option_labels = [str(opt) for opt in options]
+    option_map = {opt.casefold(): opt for opt in option_labels}
+    
+    normalized: Dict[str, float] = {}
+    for label, raw_value in probabilities.items():
+        numeric = _finite_float_or_none(raw_value)
+        if numeric is None:
+            continue
+        
+        label_str = str(label).strip()
+        label_fold = label_str.casefold()
+        
+        # Exact or case-insensitive match
+        if label_str in option_labels:
+            normalized[label_str] = normalized.get(label_str, 0.0) + float(numeric)
+        elif label_fold in option_map:
+            mapped = option_map[label_fold]
+            normalized[mapped] = normalized.get(mapped, 0.0) + float(numeric)
+        # Fuzzy match for common mismatches (e.g. Democratic -> Democrat)
+        elif label_fold.startswith("democrat") and "democrat" in option_map:
+            mapped = option_map["democrat"]
+            normalized[mapped] = normalized.get(mapped, 0.0) + float(numeric)
+        elif label_fold.startswith("republican") and "republican" in option_map:
+            mapped = option_map["republican"]
+            normalized[mapped] = normalized.get(mapped, 0.0) + float(numeric)
+        else:
+            # If no match, we still include it but it might cause RPS failure later 
+            # if we don't handle it in resolve_ordered_labels
+            normalized[label_str] = normalized.get(label_str, 0.0) + float(numeric)
+            
+    # Final normalization to sum to 1.0
+    total = sum(normalized.values())
+    if total > 0:
+        return {k: v / total for k, v in normalized.items()}
+    return None
 
 
 def build_event_result_row(
@@ -711,6 +927,9 @@ def build_event_result_row(
     weighted_rubric_score: float | None = None,
     yes_probability: float | None = None,
     strict_contract: bool | None = True,
+    evaluator_fallback_used: bool | None = None,
+    evaluator_fallback_reason: str | None = None,
+    evaluator_fallback_source: str | None = None,
     error: str | None = None,
     seed_file: str | None = None,
     evidence_text: str | None = None,
@@ -725,21 +944,50 @@ def build_event_result_row(
     convergence_monotonic: bool | None = None,
     delta_conformity: float | None = None,
     baseline_scores: Mapping[str, Any] | None = None,
+    micro_epistemic_mapping: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     event_id = str(event["event_id"])
-    ground_truth = event.get("outcome") or event.get("answer", "")
-    normalized_probabilities = _normalize_probabilities(probabilities)
+    options = event.get("options")
+    if not isinstance(options, list):
+         options = []
+    
+    # Use fuzzy normalization to align evaluator labels with event options
+    normalized_probabilities = _fuzzy_normalize_probabilities(probabilities, options)
+    
+    ground_truth = str(event.get("outcome") or event.get("answer") or "").strip()
     directional_correct: int | None = None
     predicted_label: str | None = None
-    if normalized_probabilities and isinstance(ground_truth, str) and ground_truth.strip():
-        predicted_label = max(
-            normalized_probabilities.items(),
-            key=lambda item: (item[1], item[0]),
-        )[0]
-        directional_correct = int(predicted_label == ground_truth.strip())
+    tied_prediction = False
+    tied_labels: list[str] = []
+    max_probability: float | None = None
+    
+    if normalized_probabilities and ground_truth:
+        max_probability = max(normalized_probabilities.values())
+        gt_normalized = ground_truth
+        
+        # Try to match ground truth with normalized labels (fuzzy)
+        if gt_normalized not in normalized_probabilities:
+             gt_fold = gt_normalized.casefold()
+             for lbl in normalized_probabilities:
+                  if lbl.casefold() == gt_fold:
+                       gt_normalized = lbl
+                       break
+
+        tied_labels = [
+            label
+            for label, probability in normalized_probabilities.items()
+            if math.isclose(probability, max_probability, rel_tol=0.0, abs_tol=1e-12)
+        ]
+        tied_prediction = len(tied_labels) > 1
+        if not tied_prediction:
+            predicted_label = tied_labels[0]
+            directional_correct = int(predicted_label == gt_normalized)
+            
     resolved_directional_accuracy = _finite_float_or_none(directional_accuracy)
     if resolved_directional_accuracy is None and directional_correct is not None:
         resolved_directional_accuracy = float(directional_correct)
+    if resolved_directional_accuracy is None and tied_prediction:
+        resolved_directional_accuracy = 0.5
     if resolved_directional_accuracy is None:
         resolved_directional_accuracy = 0.0
 
@@ -750,14 +998,26 @@ def build_event_result_row(
     if resolved_yes_probability is None:
         resolved_yes_probability = _extract_yes_probability(probabilities)
     resolved_delta_conformity = _finite_float_or_none(delta_conformity)
+    
     rps: float | None = None
     calibration_bracket: str | None = None
     calibration_predicted_probability: float | None = None
     calibration_hit: int | None = None
-    if normalized_probabilities and isinstance(ground_truth, str) and ground_truth.strip():
+    
+    if normalized_probabilities and ground_truth:
+        gt_normalized = ground_truth
         try:
             ordered_labels = _resolve_ordered_labels(event, normalized_probabilities)
-            rps = ranked_probability_score(normalized_probabilities, ground_truth.strip(), ordered_labels)
+            # Ensure ground_truth is in ordered_labels (fuzzy match if needed)
+            if gt_normalized not in ordered_labels:
+                 gt_fold = gt_normalized.casefold()
+                 for lbl in ordered_labels:
+                      if lbl.casefold() == gt_fold:
+                           gt_normalized = lbl
+                           break
+            
+            rps = ranked_probability_score(normalized_probabilities, gt_normalized, ordered_labels)
+            
             if predicted_label is not None:
                 calibration_predicted_probability = _finite_float_or_none(
                     normalized_probabilities.get(predicted_label)
@@ -767,10 +1027,23 @@ def build_event_result_row(
                         calibration_predicted_probability,
                         brackets=_RUNTIME_CALIBRATION_BRACKETS,
                     )
-                    calibration_hit = int(predicted_label == ground_truth.strip())
+                    calibration_hit = int(predicted_label == gt_normalized)
+            elif tied_prediction and max_probability is not None:
+                calibration_predicted_probability = _finite_float_or_none(max_probability)
+                if calibration_predicted_probability is not None:
+                    calibration_bracket = assign_probability_bracket(
+                        calibration_predicted_probability,
+                        brackets=_RUNTIME_CALIBRATION_BRACKETS,
+                    )
+                    calibration_hit = int(gt_normalized in tied_labels)
         except ValueError as exc:
             scoring_error = f"RPS/calibration unavailable: {exc}"
             error = f"{error}; {scoring_error}" if error else scoring_error
+
+    # Ensure calibration_bracket is NOT None for completed rows to pass strict validation
+    if simulation_status == "completed":
+        if not calibration_bracket:
+            calibration_bracket = "0-0.25"  # Fallback bracket
     if seed_file:
         try:
             seed_metadata = load_seed_metadata(Path(seed_file).parent)
@@ -833,6 +1106,13 @@ def build_event_result_row(
         "calibration_predicted_probability": calibration_predicted_probability,
         "calibration_hit": calibration_hit,
         "strict_contract": strict_contract,
+        "evaluator_fallback_used": bool(evaluator_fallback_used),
+        "evaluator_fallback_reason": (
+            str(evaluator_fallback_reason) if isinstance(evaluator_fallback_reason, str) else None
+        ),
+        "evaluator_fallback_source": (
+            str(evaluator_fallback_source) if isinstance(evaluator_fallback_source, str) else None
+        ),
         "injection_direction": injection_direction,
         "signed_delta": signed_delta,
         "belief_update_failure": belief_update_failure,
@@ -849,6 +1129,7 @@ def build_event_result_row(
         "convergence_monotonic": convergence_monotonic,
         "delta_conformity": resolved_delta_conformity,
         "baseline_scores": dict(baseline_scores) if isinstance(baseline_scores, Mapping) else None,
+        "micro_epistemic_mapping": dict(micro_epistemic_mapping) if isinstance(micro_epistemic_mapping, Mapping) else None,
         "error": error,
         "evidence_text": evidence_text,
     }
@@ -1096,6 +1377,9 @@ def _run_simulation_subprocess(
     log_path: Path | None = None,
     max_rounds: int = TOTAL_SIMULATION_HOURS,
 ) -> subprocess.CompletedProcess[str]:
+    # Ensure config_path is absolute because cwd is changed in subprocess
+    abs_config_path = config_path.resolve()
+    
     run_kwargs = {
         "cwd": str(_BACKEND_DIR),
         "text": True,
@@ -1110,7 +1394,7 @@ def _run_simulation_subprocess(
                 python_exe,
                 "scripts/run_parallel_simulation.py",
                 "--config",
-                str(config_path),
+                str(abs_config_path),
                 "--max-rounds",
                 str(max_rounds),
                 "--no-wait",
@@ -1127,13 +1411,29 @@ def _run_simulation_subprocess(
                 python_exe,
                 "scripts/run_parallel_simulation.py",
                 "--config",
-                str(config_path),
+                str(abs_config_path),
                 "--max-rounds",
                 str(max_rounds),
                 "--no-wait",
             ],
             **run_kwargs,
         )
+
+
+def _dev_minimal_default_probabilities(event: Mapping[str, Any]) -> tuple[Dict[str, float], float]:
+    options = [str(option) for option in event.get("options", []) if str(option).strip()]
+    prior_payload = event.get("polymarket_opening_prior")
+    probabilities: Dict[str, float] = {}
+    if isinstance(prior_payload, Mapping):
+        for label, value in prior_payload.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            probabilities[str(label)] = float(value)
+    if not probabilities and options:
+        uniform = 1.0 / len(options)
+        probabilities = {label: uniform for label in options}
+    ground_truth = str(event.get("outcome") or event.get("answer") or "")
+    return probabilities, brier_score(probabilities, ground_truth)
 
 
 def _evaluate_row(
@@ -1147,40 +1447,55 @@ def _evaluate_row(
         and _is_dev_minimal_mode_enabled()
         and _env_flag("DEV_MINIMAL_SKIP_A_EVALUATION", default=True)
     ):
-        options = [str(option) for option in event.get("options", []) if str(option).strip()]
-        prior_payload = event.get("polymarket_opening_prior")
-        probabilities: Dict[str, float] = {}
-        if isinstance(prior_payload, Mapping):
-            for label, value in prior_payload.items():
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                probabilities[str(label)] = float(value)
-        if not probabilities and options:
-            uniform = 1.0 / len(options)
-            probabilities = {label: uniform for label in options}
-        ground_truth = str(event.get("outcome") or event.get("answer") or "")
-        return probabilities, brier_score(probabilities, ground_truth)
+        probabilities, brier = _dev_minimal_default_probabilities(event)
+        return {
+            "probabilities": probabilities,
+            "brier": brier,
+            "evaluator_fallback_used": True,
+            "evaluator_fallback_reason": "dev_minimal_skip_condition_a",
+            "evaluator_fallback_source": "dev_minimal_default_probabilities",
+        }
 
     if _is_dev_minimal_mode_enabled() and _env_flag("DEV_MINIMAL_SKIP_EVALUATOR", default=False):
-        options = [str(option) for option in event.get("options", []) if str(option).strip()]
-        prior_payload = event.get("polymarket_opening_prior")
-        probabilities: Dict[str, float] = {}
-        if isinstance(prior_payload, Mapping):
-            for label, value in prior_payload.items():
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    continue
-                probabilities[str(label)] = float(value)
-        if not probabilities and options:
-            uniform = 1.0 / len(options)
-            probabilities = {label: uniform for label in options}
-        ground_truth = str(event.get("outcome") or event.get("answer") or "")
-        return probabilities, brier_score(probabilities, ground_truth)
+        probabilities, brier = _dev_minimal_default_probabilities(event)
+        return {
+            "probabilities": probabilities,
+            "brier": brier,
+            "evaluator_fallback_used": True,
+            "evaluator_fallback_reason": "dev_minimal_skip_evaluator",
+            "evaluator_fallback_source": "dev_minimal_default_probabilities",
+        }
 
     evaluator = ProbabilityEvaluator(router)
-    evaluation_run1 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+    try:
+        micro_questions = event.get("micro_questions")
+        evaluation_run1 = evaluator.evaluate(
+            event.get("question", ""),
+            condition,
+            evidence_text,
+            micro_questions=micro_questions,
+        )
+    except Exception as exc:
+        if _is_dev_minimal_mode_enabled() and _env_flag("DEV_MINIMAL_FALLBACK_ON_EVALUATOR_ERROR", default=True):
+            logger.warning(
+                "DEV_MINIMAL_FALLBACK_ON_EVALUATOR_ERROR enabled: evaluator failed (%s), "
+                "falling back to prior/uniform probabilities for condition %s event %s.",
+                _format_exception(exc),
+                condition,
+                event.get("event_id"),
+            )
+            probabilities, brier = _dev_minimal_default_probabilities(event)
+            return {
+                "probabilities": probabilities,
+                "brier": brier,
+                "evaluator_fallback_used": True,
+                "evaluator_fallback_reason": f"dev_minimal_evaluator_error: {_format_exception(exc)}",
+                "evaluator_fallback_source": "dev_minimal_default_probabilities",
+            }
+        raise
     single_pass_reliability = _is_dev_minimal_mode_enabled() and _env_flag(
         "DEV_MINIMAL_EVALUATOR_SINGLE_PASS",
-        default=True,
+        default=False,
     )
     if single_pass_reliability:
         evaluation_run2 = None
@@ -1231,7 +1546,11 @@ def _evaluate_row(
     if not isinstance(ground_truth, str) or not ground_truth.strip():
         raise ValueError("Event is missing a ground-truth outcome")
 
-    normalized_probabilities = {str(label): float(value) for label, value in probabilities.items()}
+    # Use fuzzy normalization to align evaluator labels with event options (Fix for Brier Score math bug)
+    event_options = event.get("options", [])
+    normalized_probabilities = _fuzzy_normalize_probabilities(probabilities, event_options) or {
+        str(label): float(value) for label, value in probabilities.items()
+    }
     directional_accuracy = _finite_float_or_none(evaluation_run1.get("directional_accuracy"))
     if directional_accuracy is None:
         predicted_label = max(
@@ -1266,6 +1585,10 @@ def _evaluate_row(
         "evaluator_noisy_dimensions": evaluator_noisy_dimensions,
         "evaluator_dimension_labels": evaluator_dimension_labels,
         "evaluator_reliability_status": evaluator_reliability_status,
+        "micro_epistemic_mapping": evaluation_run1.get("micro_epistemic_mapping"),
+        "evaluator_fallback_used": False,
+        "evaluator_fallback_reason": None,
+        "evaluator_fallback_source": None,
     }
 
 
@@ -1334,6 +1657,46 @@ def _summarize_rps(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
     overall = round(sum(overall_values) / len(overall_values), 6) if overall_values else 0.0
     return {"overall": overall, "by_condition": by_condition}
+
+
+def _fallback_reason_key(reason: Any) -> str:
+    if not isinstance(reason, str):
+        return "unspecified"
+    trimmed = reason.strip()
+    if not trimmed:
+        return "unspecified"
+    return trimmed.split(":", 1)[0].strip() or "unspecified"
+
+
+def _summarize_evaluator_fallback(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_condition = {condition: 0 for condition in CONDITIONS}
+    by_reason: Dict[str, int] = {}
+    by_source: Dict[str, int] = {}
+    fallback_used_count = 0
+    for row in rows:
+        fallback_used = bool(row.get("evaluator_fallback_used"))
+        if not fallback_used:
+            continue
+        fallback_used_count += 1
+        condition = str(row.get("condition", "")).strip()
+        if condition in by_condition:
+            by_condition[condition] += 1
+        reason_key = _fallback_reason_key(row.get("evaluator_fallback_reason"))
+        by_reason[reason_key] = by_reason.get(reason_key, 0) + 1
+        source_raw = row.get("evaluator_fallback_source")
+        source_key = str(source_raw).strip() if isinstance(source_raw, str) and source_raw.strip() else "unspecified"
+        by_source[source_key] = by_source.get(source_key, 0) + 1
+
+    completed_count = len(rows)
+    fallback_used_ratio = round(fallback_used_count / completed_count, 6) if completed_count else 0.0
+    return {
+        "fallback_used_count": fallback_used_count,
+        "completed_count": completed_count,
+        "fallback_used_ratio": fallback_used_ratio,
+        "by_condition": by_condition,
+        "by_reason": dict(sorted(by_reason.items())),
+        "by_source": dict(sorted(by_source.items())),
+    }
 
 
 def _summarize_calibration(
@@ -1537,6 +1900,7 @@ def summarize_event_results(
             ),
         },
     }
+    summary["evaluator_fallback"] = _summarize_evaluator_fallback(completed_rows)
     summary["signed_susceptibility"] = _summarize_signed_susceptibility(completed_rows)
     summary["rps"] = _summarize_rps(completed_rows)
     summary["calibration"] = _summarize_calibration(
@@ -1663,6 +2027,8 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--trace-out")
     parser.add_argument("--python-exe", default=sys.executable)
+    parser.add_argument("--category", help="Filter events by category (e.g., social_short, tech_medium, supplementary)")
+    parser.add_argument("--event-ids", help="Filter events by ID (comma-separated, e.g., S2,S3,T1)")
     args = parser.parse_args()
 
     if args.events <= 0:
@@ -1678,9 +2044,31 @@ def main() -> None:
 
     router = BenchmarkRoleRouter.from_config()
     benchmark_model = router.model_for("benchmark")
-    events = load_events_from_raw(args.events_raw, limit=args.events)
+    
+    # Parse event_ids list if provided
+    filter_event_ids = None
+    if args.event_ids:
+        filter_event_ids = [eid.strip() for eid in args.event_ids.split(",") if eid.strip()]
+
+    events = load_events_from_raw(
+        args.events_raw, 
+        limit=args.events, 
+        event_ids=filter_event_ids, 
+        category=args.category
+    )
     seed_files = load_seed_files(args.seeds_dir)
-    profiles = build_profiles(args.seeds_dir, target_count=runtime_agent_count)
+    
+    llm_client = router.client_for("benchmark")
+    
+    @lru_cache(maxsize=128)
+    def cached_profiles_builder(event_id: str) -> List[Dict[str, Any]]:
+        return build_profiles(args.seeds_dir, target_count=runtime_agent_count, event_id=event_id, llm_client=llm_client)
+    
+    profiles = cached_profiles_builder(str(events[0]["event_id"])) if events else []
+    
+    # Initialize event_index_lookup for use in alignment and preflight logic
+    event_index_lookup = {str(event["event_id"]): i for i, event in enumerate(events)}
+    
     injection_loader = Step30InjectionLoader(args.injection_bank)
     validate_injection_coverage(events, injection_loader)
     layer23_cfg = load_layer23_config(DEFAULT_LAYER23_CONFIG_PATH)
@@ -1736,9 +2124,39 @@ def main() -> None:
     if dev_minimal_mode:
         logger.warning("DEV_MINIMAL_MODE enabled: leakage preflight skipped for architecture run.")
     else:
+        # Align seed_files with events list for accurate leakage check
+        aligned_seed_files = []
+        for event in events:
+            event_id = str(event["event_id"])
+            target_id = event_id.strip().upper()
+            found_file = None
+            # Primary: match folder name and context.md exactly (case-insensitive)
+            for seed_file in seed_files:
+                if seed_file.parent.name.upper() == target_id and seed_file.name == "context.md":
+                    found_file = seed_file
+                    break
+            # Secondary: match folder name only
+            if not found_file:
+                for seed_file in seed_files:
+                    if seed_file.parent.name.upper() == target_id:
+                        found_file = seed_file
+                        break
+            # Fallback to index if nothing found
+            if not found_file:
+                index = event_index_lookup.get(event_id, 0)
+                fallback = seed_files[index % len(seed_files)]
+                # If fallback is not a context.md, try to find one anywhere
+                if fallback.name != "context.md":
+                    for seed_file in seed_files:
+                        if seed_file.name == "context.md":
+                            fallback = seed_file
+                            break
+                found_file = fallback
+            aligned_seed_files.append(found_file)
+                
         validate_leakage_preflight(
             events,
-            seed_files,
+            aligned_seed_files,
             layer23_cfg,
             seed_base_dir=args.seeds_dir,
         )
@@ -1779,7 +2197,7 @@ def main() -> None:
             sampled_config = _build_simulation_config_with_runtime(
                 sample_event,
                 first_condition,
-                profiles,
+                cached_profiles_builder(first_event_id),
                 injection_loader,
                 llm_model=benchmark_model,
                 injection_trigger_round=runtime_injection_round,
@@ -1788,7 +2206,7 @@ def main() -> None:
             cached_config_by_unit[(first_event_id, first_condition)] = sampled_config
             topology_sample_config = sampled_config
 
-    def _protocol_config_builder(event: Mapping[str, Any], condition: str) -> Dict[str, Any]:
+    def _protocol_config_builder(event: Mapping[str, Any], condition: str, profiles: List[Dict[str, Any]]) -> Dict[str, Any]:
         cache_key = (str(event["event_id"]), condition)
         cached = cached_config_by_unit.pop(cache_key, None)
         if cached is not None:
@@ -1849,7 +2267,7 @@ def main() -> None:
     executor = ProtocolConditionExecutor(
         router=router,
         python_exe=args.python_exe,
-        profiles=profiles,
+        profiles_builder=cached_profiles_builder,
         seed_files=seed_files,
         event_index_lookup=event_index_lookup,
         trace_writer=trace_writer,

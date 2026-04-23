@@ -1,0 +1,21 @@
+{
+  "study": {
+    "title": "Minimal Simulation — S6 Only"
+  },
+  "core_events": {
+    "social_medium": [
+      {
+        "id": "S6",
+        "question": "Which party wins the most seats in the 2024 Austrian legislative election?",
+        "market_type": "categorical",
+        "options": ["FPÖ", "ÖVP", "SPÖ", "Other"],
+        "opened": "2024-08",
+        "resolved": "2024-09-29",
+        "outcome": "FPÖ",
+        "url": "https://polymarket.com/event/which-party-wins-the-most-seats-austrian-legislative-election",
+        "information_type": "Social/Behavioral",
+        "horizon": "medium"
+      }
+    ]
+  }
+}

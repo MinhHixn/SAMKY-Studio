@@ -17,6 +17,8 @@ _PROBABILITY_KEYS = (
     "prediction",
     "belief",
 )
+_DISTRIBUTION_SUM_MIN = 0.95
+_DISTRIBUTION_SUM_MAX = 1.05
 
 _TEXT_PROBABILITY_PATTERN = re.compile(
     r"p\(\s*(?P<label>[^)]+?)\s*\)\s*=\s*(?P<value>[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)",
@@ -65,6 +67,8 @@ def compute_round_jsd_trace(
             if round_num is None:
                 continue
             if _is_round_marker(entry):
+                continue
+            if not _counts_toward_probability_coverage(entry):
                 continue
             totals_by_round[round_num] = totals_by_round.get(round_num, 0) + 1
             probability = _extract_probability(entry, resolved_label)
@@ -134,6 +138,13 @@ def _extract_probability(entry: Mapping[str, Any], resolved_label: str | None) -
     return None
 
 
+def _counts_toward_probability_coverage(entry: Mapping[str, Any]) -> bool:
+    action_type = entry.get("action_type")
+    if not isinstance(action_type, str):
+        return False
+    return action_type.strip().upper() in _TEXT_FALLBACK_ACTION_TYPES
+
+
 def _latest_nonempty_round_before(checkpoint: int, totals_by_round: Mapping[int, int]) -> int | None:
     candidates = [round_num for round_num, total in totals_by_round.items() if round_num < checkpoint and total > 0]
     if not candidates:
@@ -181,12 +192,16 @@ def _extract_probability_from_payload(payload: Any, resolved_label: str | None) 
     if isinstance(payload, Mapping):
         for key in _PROBABILITY_KEYS:
             if key in payload:
-                return _extract_probability_from_payload(payload[key], resolved_label)
+                parsed = _extract_probability_from_payload(payload[key], resolved_label)
+                if parsed is not None:
+                    return parsed
         for key in ("probabilities", "normalized_probabilities"):
             if key in payload:
                 mapping = payload.get(key)
                 if isinstance(mapping, Mapping):
-                    return _extract_probability_from_mapping(mapping, resolved_label)
+                    parsed = _extract_probability_from_mapping(mapping, resolved_label)
+                    if parsed is not None:
+                        return parsed
         return _extract_probability_from_mapping(payload, resolved_label)
     return _as_probability(payload, resolved_label)
 
@@ -218,6 +233,37 @@ def _extract_probability_from_mapping(mapping: Mapping[str, Any], resolved_label
     numeric_values = [value for value in numeric_values if value is not None]
     if len(numeric_values) == 1:
         return numeric_values[0]
+    distribution_probability = _extract_probability_from_distribution(mapping, resolved_label)
+    if distribution_probability is not None:
+        return distribution_probability
+    return None
+
+
+def _extract_probability_from_distribution(mapping: Mapping[str, Any], resolved_label: str | None) -> float | None:
+    """Extract probability from distribution-like mappings with tolerant sum validation."""
+    distribution: dict[str, float] = {}
+    for key, value in mapping.items():
+        label = _extract_label_from_key(key)
+        if label is None:
+            continue
+        numeric = _as_probability(value, resolved_label)
+        if numeric is None:
+            continue
+        distribution[label] = numeric
+    if len(distribution) < 2:
+        return None
+    total = sum(distribution.values())
+    if total < _DISTRIBUTION_SUM_MIN or total > _DISTRIBUTION_SUM_MAX:
+        return None
+
+    resolved_norm = _normalize_label(resolved_label)
+    if resolved_norm and resolved_norm in distribution:
+        return distribution[resolved_norm]
+    for yes_label in ("yes", "true"):
+        if yes_label in distribution:
+            return distribution[yes_label]
+    for value in distribution.values():
+        return value
     return None
 
 
@@ -284,17 +330,17 @@ def _as_probability(value: Any, resolved_label: str | None) -> float | None:
 
 
 def _jsd_against_uniform(probabilities: Iterable[float]) -> float:
-    counts = [0, 0, 0, 0]
+    # Use 10 bins for higher resolution (0.1 increments)
+    counts = [0] * 10
     for probability in probabilities:
-        index = _bin_index(probability)
-        if index is None:
-            continue
+        # Map 0.0-1.0 to 0-9
+        index = min(int(probability * 10), 9)
         counts[index] += 1
     total = sum(counts)
     if total <= 0:
         return 0.0
     distribution = [count / total for count in counts]
-    uniform = [0.25, 0.25, 0.25, 0.25]
+    uniform = [0.1] * 10
     mixture = [(p + u) / 2.0 for p, u in zip(distribution, uniform)]
     jsd = 0.0
     for p, u, m in zip(distribution, uniform, mixture):

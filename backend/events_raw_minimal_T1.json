@@ -1,0 +1,21 @@
+{
+  "study": {
+    "title": "Minimal Simulation — T1 Only"
+  },
+  "core_events": {
+    "tech_short": [
+      {
+        "id": "T1",
+        "question": "Will the Fed cut rates by 25bps at its November 2024 meeting?",
+        "market_type": "binary",
+        "options": ["YES", "NO"],
+        "opened": "2024-10",
+        "resolved": "2024-11-07",
+        "outcome": "YES",
+        "url": "https://polymarket.com/event/fed-rate-decision-november-2024",
+        "information_type": "Technical/Economic",
+        "horizon": "short"
+      }
+    ]
+  }
+}

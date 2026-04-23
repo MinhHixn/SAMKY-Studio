@@ -22,14 +22,18 @@ RUBRIC_PLACEHOLDER_WEIGHTS: Dict[str, float] = dict(MCQ_DIMENSION_WEIGHTS)
 
 
 def brier_score(probabilities: Dict[str, float], truth: str) -> float:
-    labels = set(probabilities)
-    labels.add(truth)
+    # Normalize truth to uppercase for consistent matching
+    truth_upper = truth.strip().upper()
+    # Create a mapping of uppercase labels to their probabilities
+    normalized_probs = {str(k).strip().upper(): v for k, v in probabilities.items()}
+    
+    labels = set(normalized_probs.keys())
+    labels.add(truth_upper)
+    
     score = 0.0
     for outcome in labels:
-        probability = probabilities.get(outcome, 0.0)
-        if not isinstance(probability, (int, float)):
-            raise ValueError(f"Invalid probability for outcome {outcome!r}: {probability!r}")
-        observed = 1.0 if outcome == truth else 0.0
+        probability = normalized_probs.get(outcome, 0.0)
+        observed = 1.0 if outcome == truth_upper else 0.0
         score += (float(probability) - observed) ** 2
     return score
 

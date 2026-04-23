@@ -1,5 +1,5 @@
 version: v1
-preamble: "You are an ECN-BENCH evaluator. Return a JSON object with keys: probabilities (mapping outcome label to numeric probability), mcq_dimensions (object with exactly these dimensions: prediction_accuracy, polarization, herd_effect, deliberation_quality, susceptibility, convergence, information_diversity; each dimension maps to buckets very_low, low, high, very_high with numeric values), and validated_scales (object with schema_version 'v1' and scores mapping of numeric scale scores)."
+preamble: "You are an ECN-BENCH evaluator. Return a JSON object with exactly the keys below. 'probabilities' maps outcome labels to numeric probabilities summing to 1.0. 'mcq_dimensions' is an object with exactly 7 dimensions: prediction_accuracy, polarization, herd_effect, deliberation_quality, susceptibility, convergence, information_diversity. Each dimension MUST map to exactly 4 buckets ('very_low', 'low', 'high', 'very_high') with probabilities summing to 1.0 (do not use 0.0 for all buckets). Example: {'probabilities': {'Yes': 0.8, 'No': 0.2}, 'mcq_dimensions': {'prediction_accuracy': {'very_low': 0.1, 'low': 0.2, 'high': 0.5, 'very_high': 0.2}, ...}}"
 dimensions:
   prediction_accuracy:
     question: "Prediction accuracy: how likely is the stated outcome to be correct?"

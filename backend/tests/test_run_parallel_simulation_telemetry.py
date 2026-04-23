@@ -24,6 +24,7 @@ def test_extract_interview_probability_from_nested_response() -> None:
 def test_fetch_new_actions_from_db_keeps_interview_probability(tmp_path: Path) -> None:
     db_path = tmp_path / "telemetry.db"
     conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA encoding = \'UTF-8\';")
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE trace (user_id INTEGER, action TEXT, info TEXT)")
     cursor.execute(

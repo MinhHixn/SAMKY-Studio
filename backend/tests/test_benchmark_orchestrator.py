@@ -472,6 +472,38 @@ def test_protocol_condition_executor_execute_supports_legacy_tuple_payload(tmp_p
     assert row["validated_scales"] is None
 
 
+def test_protocol_condition_executor_execute_supports_fallback_mapping_payload(tmp_path):
+    executor, _trace_entries = _build_protocol_executor(tmp_path)
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="A",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "E1_A_r1",
+        seed_file=tmp_path / "ignored-seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: {
+            "probabilities": {"A": 0.7, "B": 0.3},
+            "brier": 0.09,
+            "evaluator_fallback_used": True,
+            "evaluator_fallback_reason": "dev_minimal_evaluator_error: ValueError: bad payload",
+            "evaluator_fallback_source": "dev_minimal_default_probabilities",
+        },
+    )
+
+    assert row["simulation_status"] == "completed"
+    assert row["evaluation_completed"] is True
+    assert row["probabilities"] == {"A": 0.7, "B": 0.3}
+    assert row["brier"] == 0.09
+    assert row["strict_contract"] is False
+    assert row["mcq_dimensions"] is None
+    assert row["validated_scales"] is None
+    assert row["evaluator_fallback_used"] is True
+    assert row["evaluator_fallback_reason"] == "dev_minimal_evaluator_error: ValueError: bad payload"
+    assert row["evaluator_fallback_source"] == "dev_minimal_default_probabilities"
+
+
 def test_protocol_condition_executor_execute_unsupported_payload_falls_back_to_evaluation_failed(tmp_path):
     executor, trace_entries = _build_protocol_executor(tmp_path)
 

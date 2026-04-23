@@ -15,9 +15,15 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
+try:
+    import json_repair
+except ImportError:
+    json_repair = None
+
 from openai import OpenAI
 
 from ..config import Config
+from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from .entity_reader import EntityNode
 from ..storage import GraphStorage
@@ -183,11 +189,13 @@ class OasisProfileGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         storage: Optional[GraphStorage] = None,
-        graph_id: Optional[str] = None
+        graph_id: Optional[str] = None,
+        llm_client: Optional[LLMClient] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model_name = model_name or Config.LLM_MODEL_NAME
+        self.llm_client = llm_client
+        self.api_key = api_key or (llm_client.api_key if llm_client else None) or Config.LLM_API_KEY
+        self.base_url = base_url or (llm_client.base_url if llm_client else None) or Config.LLM_BASE_URL
+        self.model_name = model_name or (llm_client.model if llm_client else None) or Config.LLM_MODEL_NAME
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
@@ -471,47 +479,52 @@ class OasisProfileGenerator:
 
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": self._get_system_prompt(is_individual)},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
-                )
+                if self.llm_client:
+                    # Preferred: Use LLMClient wrapper to support enforce_benchmark_params=False
+                    result = self.llm_client.chat_json(
+                        messages=[
+                            {"role": "system", "content": self._get_system_prompt(is_individual)},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.7 - (attempt * 0.1),
+                        enforce_benchmark_params=False
+                    )
+                else:
+                    # Fallback: Direct OpenAI client
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[
+                            {"role": "system", "content": self._get_system_prompt(is_individual)},
+                            {"role": "user", "content": prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.7 - (attempt * 0.1)
+                    )
 
-                content = response.choices[0].message.content
+                    if not hasattr(response, 'choices') or not response.choices:
+                        error_msg = f"LLM returned no choices (attempt {attempt+1}). Model: {self.model_name}. Response: {response}"
+                        logger.warning(error_msg)
+                        if attempt < max_attempts - 1:
+                            continue
+                        else:
+                            raise ValueError(error_msg)
 
-                # Check if output was truncated (finish_reason is not 'stop')
-                finish_reason = response.choices[0].finish_reason
-                if finish_reason == 'length':
-                    logger.warning(f"LLM output truncated (attempt {attempt+1}), attempting to fix...")
-                    content = self._fix_truncated_json(content)
+                    content = response.choices[0].message.content
+                    if response.choices[0].finish_reason == 'length':
+                        content = self._fix_truncated_json(content)
+                    
+                    if json_repair:
+                        result = json_repair.loads(content)
+                    else:
+                        result = json.loads(content)
 
-                # Try to parse JSON
-                try:
-                    result = json.loads(content)
+                # Validate required fields
+                if "bio" not in result or not result["bio"]:
+                    result["bio"] = entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}"
+                if "persona" not in result or not result["persona"]:
+                    result["persona"] = entity_summary or f"{entity_name} is a {entity_type}."
 
-                    # Validate required fields
-                    if "bio" not in result or not result["bio"]:
-                        result["bio"] = entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}"
-                    if "persona" not in result or not result["persona"]:
-                        result["persona"] = entity_summary or f"{entity_name} is a {entity_type}."
-
-                    return result
-
-                except json.JSONDecodeError as je:
-                    logger.warning(f"JSON parsing failed (attempt {attempt+1}): {str(je)[:80]}")
-
-                    # Try to fix JSON
-                    result = self._try_fix_json(content, entity_name, entity_type, entity_summary)
-                    if result.get("_fixed"):
-                        del result["_fixed"]
-                        return result
-
-                    last_error = je
+                return result
 
             except Exception as e:
                 logger.warning(f"LLM call failed (attempt {attempt+1}): {str(e)[:80]}")
@@ -570,11 +583,14 @@ class OasisProfileGenerator:
                 return s
 
             # Match JSON string values
-            json_str = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', fix_string_newlines, json_str)
+            json_str = re.sub(r'"(?:\\.|[^"\\])*"', fix_string_newlines, json_str)
 
             # 4. Try to parse
             try:
-                result = json.loads(json_str)
+                if json_repair:
+                    result = json_repair.loads(json_str)
+                else:
+                    result = json.loads(json_str)
                 result["_fixed"] = True
                 return result
             except json.JSONDecodeError as e:
@@ -584,7 +600,10 @@ class OasisProfileGenerator:
                     json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', json_str)
                     # Replace all consecutive whitespace
                     json_str = re.sub(r'\s+', ' ', json_str)
-                    result = json.loads(json_str)
+                    if json_repair:
+                        result = json_repair.loads(json_str)
+                    else:
+                        result = json.loads(json_str)
                     result["_fixed"] = True
                     return result
                 except:
@@ -614,9 +633,20 @@ class OasisProfileGenerator:
         }
     
     def _get_system_prompt(self, is_individual: bool) -> str:
-        """Get system prompt"""
-        base_prompt = "You are an expert in generating social media user profiles. Generate detailed, realistic personas for opinion simulation that maximize restoration of existing reality. Must return valid JSON format with all string values containing no unescaped newlines. Use English."
-        return base_prompt
+        """Get system prompt for character design with strict 4-Axis DNA enforcement."""
+        role = "master character designer" if is_individual else "institutional communication expert"
+        entity_desc = "an individual" if is_individual else "an organization or institutional group"
+        
+        return f"""You are a {role}. 
+Your task is to create a highly realistic, nuanced, and detailed persona representing {entity_desc} for a social media simulation.
+
+The persona MUST follow a strict 4-Axis DNA Cognitive Architecture:
+1. Worldview & Epistemology: How they filter truth and view the system.
+2. Primary Motivation: Their core objective for participating in social media discussions.
+3. Communication Style: Their textual fingerprint (syntax, jargon, emojis).
+4. Biases & Action Triggers (CRITICAL): You MUST start this bullet point with 'Triggered by...' or 'Biased against...'. Define the specific concepts or rhetoric that force this agent to react aggressively or dismissively.
+
+Must return strictly valid JSON format. Use English."""
     
     def _build_individual_persona_prompt(
         self,
@@ -644,7 +674,7 @@ Context Information:
 Please generate JSON containing the following fields:
 
 1. bio: Social media bio, 200 characters
-2. persona: Detailed persona description (2000 words of pure text), must include:
+2. persona: Detailed persona description (1500-2000 words of pure text), must include:
    - Basic information (age, profession, educational background, location)
    - Personal background (important experiences, event associations, social relationships)
    - Personality traits (MBTI type, core personality, emotional expression)
@@ -1065,7 +1095,7 @@ Important:
         OASIS requires: male, female, other
         """
         if not gender:
-            return "other"
+            raise ValueError("Gender cannot be empty")
 
         gender_lower = gender.lower().strip()
 
@@ -1076,45 +1106,40 @@ Important:
             "other": "other",
         }
 
-        return gender_map.get(gender_lower, "other")
+        if gender_lower not in gender_map:
+            raise ValueError(f"Unrecognized gender: {gender}")
+
+        return gender_map[gender_lower]
     
     def _save_reddit_json(self, profiles: List[OasisAgentProfile], file_path: str):
         """
         Save Reddit Profile as JSON format
-
-        Use format consistent with to_reddit_format() to ensure OASIS can read correctly.
-        Must include user_id field, which is the key for OASIS agent_graph.get_agent() matching!
-
-        Required fields:
-        - user_id: User ID (integer, used to match poster_agent_id in initial_posts)
-        - username: Username
-        - name: Display name
-        - bio: Bio
-        - persona: Detailed persona
-        - age: Age (integer)
-        - gender: "male", "female", or "other"
-        - mbti: MBTI type
-        - country: Country
         """
         data = []
         for idx, profile in enumerate(profiles):
-            # Use format consistent with to_reddit_format()
+            if profile.age is None:
+                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'age'")
+            if not profile.gender:
+                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'gender'")
+            if not profile.mbti:
+                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'mbti'")
+            if not profile.country:
+                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'country'")
+
             item = {
-                "user_id": profile.user_id if profile.user_id is not None else idx,  # Key: must include user_id
+                "user_id": profile.user_id if profile.user_id is not None else idx,
                 "username": profile.user_name,
                 "name": profile.name,
                 "bio": profile.bio[:150] if profile.bio else f"{profile.name}",
                 "persona": profile.persona or f"{profile.name} is a participant in social discussions.",
                 "karma": profile.karma if profile.karma else 1000,
                 "created_at": profile.created_at,
-                # OASIS required fields - ensure all have defaults
-                "age": profile.age if profile.age else 30,
+                "age": profile.age,
                 "gender": self._normalize_gender(profile.gender),
-                "mbti": profile.mbti if profile.mbti else "ISTJ",
-                "country": profile.country if profile.country else "US",
+                "mbti": profile.mbti,
+                "country": profile.country,
             }
 
-            # Optional fields
             if profile.profession:
                 item["profession"] = profile.profession
             if profile.interested_topics:

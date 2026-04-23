@@ -247,6 +247,10 @@ def test_main_fails_on_invalid_polymarket_prior_before_condition_matrix(monkeypa
         def model_for(self, _name):
             return "dummy-model"
 
+        def client_for(self, _role):
+            return protocol_script.LLMClient(api_key="sk-test", base_url="http://localhost", model="dummy-model")
+        def client_for(self, _role):
+            return protocol_script.LLMClient(api_key="sk-test", base_url="http://localhost", model="dummy-model")
     def fail_build_condition_matrix(*_args, **_kwargs):
         pytest.fail("build_condition_matrix should not run before polymarket prior validation")
 
@@ -301,6 +305,10 @@ def test_main_fails_on_leakage_before_condition_matrix(monkeypatch, tmp_path):
         def model_for(self, _name):
             return "dummy-model"
 
+        def client_for(self, _role):
+            return protocol_script.LLMClient(api_key="sk-test", base_url="http://localhost", model="dummy-model")
+        def client_for(self, _role):
+            return protocol_script.LLMClient(api_key="sk-test", base_url="http://localhost", model="dummy-model")
     def fail_build_condition_matrix(*_args, **_kwargs):
         pytest.fail("build_condition_matrix should not run before leakage preflight")
 
@@ -475,6 +483,27 @@ def test_build_event_result_row_extracts_directional_and_weighted_metrics():
     assert row["weighted_rubric_score"] == pytest.approx(0.625)
 
 
+def test_build_event_result_row_marks_tied_probabilities_as_neutral_directional_accuracy():
+    event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "A",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"A": 0.5, "B": 0.5},
+        brier=0.5,
+    )
+
+    assert row["directional_correct"] is None
+    assert row["directional_accuracy"] == pytest.approx(0.5)
+    assert row["calibration_predicted_probability"] == pytest.approx(0.5)
+    assert row["calibration_bracket"] == "0.5-0.75"
+    assert row["calibration_hit"] == 1
+
+
 def test_build_event_result_row_defaults_missing_directional_and_weighted_metrics():
     event = {"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]}
 
@@ -511,6 +540,29 @@ def test_build_event_result_row_extracts_yes_probability_and_strict_contract_fla
 
     assert row["yes_probability"] == pytest.approx(0.8)
     assert row["strict_contract"] is False
+
+
+def test_build_event_result_row_persists_evaluator_fallback_fields():
+    event = {"event_id": "E1", "question": "Q", "outcome": "YES", "options": ["YES", "NO"]}
+
+    row = protocol_script.build_event_result_row(
+        event,
+        "B",
+        1,
+        simulation_status="completed",
+        simulation_completed=True,
+        evaluation_completed=True,
+        probabilities={"YES": 0.5, "NO": 0.5},
+        brier=0.5,
+        strict_contract=False,
+        evaluator_fallback_used=True,
+        evaluator_fallback_reason="dev_minimal_evaluator_error: ValueError: bad payload",
+        evaluator_fallback_source="dev_minimal_default_probabilities",
+    )
+
+    assert row["evaluator_fallback_used"] is True
+    assert row["evaluator_fallback_reason"] == "dev_minimal_evaluator_error: ValueError: bad payload"
+    assert row["evaluator_fallback_source"] == "dev_minimal_default_probabilities"
 
 
 def test_build_event_result_row_includes_rps_and_calibration_fields():
@@ -1598,7 +1650,7 @@ def test_evaluate_row_skips_condition_a_evaluator_in_dev_minimal(monkeypatch):
 
     monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
 
-    probabilities, brier = protocol_script._evaluate_row(
+    row = protocol_script._evaluate_row(
         {
             "event_id": "E1",
             "question": "Q",
@@ -1611,8 +1663,49 @@ def test_evaluate_row_skips_condition_a_evaluator_in_dev_minimal(monkeypatch):
         FakeRouter(),
     )
 
-    assert probabilities == {"YES": pytest.approx(0.7), "NO": pytest.approx(0.3)}
-    assert isinstance(brier, float)
+    assert row["probabilities"] == {"YES": pytest.approx(0.7), "NO": pytest.approx(0.3)}
+    assert isinstance(row["brier"], float)
+    assert row["evaluator_fallback_used"] is True
+    assert row["evaluator_fallback_reason"] == "dev_minimal_skip_condition_a"
+    assert row["evaluator_fallback_source"] == "dev_minimal_default_probabilities"
+
+
+def test_evaluate_row_falls_back_when_evaluator_raises_in_dev_minimal(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "true")
+    monkeypatch.setenv("DEV_MINIMAL_FALLBACK_ON_EVALUATOR_ERROR", "true")
+
+    class FakeRouter:
+        def model_for(self, role):
+            del role
+            return "openrouter/benchmark-model"
+
+    class FakeEvaluator:
+        def __init__(self, router):
+            del router
+
+        def evaluate(self, *_args, **_kwargs):
+            raise RuntimeError("forced evaluator failure")
+
+    monkeypatch.setattr(protocol_script, "ProbabilityEvaluator", FakeEvaluator)
+
+    row = protocol_script._evaluate_row(
+        {
+            "event_id": "E2",
+            "question": "Q",
+            "outcome": "YES",
+            "options": ["YES", "NO"],
+            "polymarket_opening_prior": {"YES": 0.55, "NO": 0.45},
+        },
+        "B",
+        "evidence text",
+        FakeRouter(),
+    )
+
+    assert row["probabilities"] == {"YES": pytest.approx(0.55), "NO": pytest.approx(0.45)}
+    assert isinstance(row["brier"], float)
+    assert row["evaluator_fallback_used"] is True
+    assert row["evaluator_fallback_reason"].startswith("dev_minimal_evaluator_error:")
+    assert row["evaluator_fallback_source"] == "dev_minimal_default_probabilities"
 
 
 def test_summarize_event_results_propagates_unexpected_composite_value_errors(monkeypatch):
@@ -1681,6 +1774,12 @@ def _patch_minimal_main_inputs(monkeypatch, tmp_path, *, simulation_result, eval
                 "evaluator": "openrouter/evaluator-model",
             }
             return mapping[role]
+
+        def client_for(self, role):
+            return protocol_script.LLMClient(api_key=self.api_key, base_url=self.base_url, model=self.model_for(role))
+
+        def client_for(self, _role):
+            return protocol_script.LLMClient(api_key=self.api_key, base_url=self.base_url, model="dummy-model")
 
     monkeypatch.setattr(protocol_script, "_utc_run_id", lambda: "fixed-run")
     monkeypatch.setattr(protocol_script, "load_events_from_raw", lambda *args, **kwargs: events)
@@ -1765,10 +1864,10 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
             lambda cls, config=None: type(
                 "R",
                 (),
-                {"model_for": lambda self, role: "m", "api_key": "k", "base_url": "u"},
-            )()
-        ),
-    )
+                {"model_for": lambda self, role: "m", "api_key": "k", "base_url": "u", "client_for": lambda self, role: protocol_script.LLMClient(api_key="k", base_url="u", model="m")},
+                )()
+            ),
+        )
     monkeypatch.setattr(protocol_script, "Step30InjectionLoader", lambda *_args, **_kwargs: DummyInjectionLoader())
     monkeypatch.setattr(protocol_script, "_check_neo4j_connectivity", lambda: (True, None))
     monkeypatch.setattr(protocol_script, "ProtocolConditionExecutor", FakeProtocolExecutor)
@@ -2686,6 +2785,59 @@ def test_summarize_event_results_includes_content_susceptibility_and_strict_cont
     assert summary["content_susceptibility"]["delta"]["B_minus_C"] == pytest.approx(0.5)
     assert summary["strict_contract"]["strict_contract_completed_count"] == 2
     assert summary["strict_contract"]["legacy_contract_completed_count"] == 1
+
+
+def test_summarize_event_results_includes_evaluator_fallback_block():
+    rows = [
+        {
+            "condition": "A",
+            "brier": 0.3,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 1.0,
+            "weighted_rubric_score": 0.4,
+            "yes_probability": 0.4,
+            "strict_contract": True,
+            "evaluator_fallback_used": False,
+        },
+        {
+            "condition": "B",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 0.5,
+            "weighted_rubric_score": 0.5,
+            "yes_probability": 0.5,
+            "strict_contract": False,
+            "evaluator_fallback_used": True,
+            "evaluator_fallback_reason": "dev_minimal_evaluator_error: ValueError: bad payload",
+            "evaluator_fallback_source": "dev_minimal_default_probabilities",
+        },
+        {
+            "condition": "C",
+            "brier": 0.2,
+            "simulation_status": "completed",
+            "full_simulation_completed": True,
+            "directional_accuracy": 0.0,
+            "weighted_rubric_score": 0.5,
+            "yes_probability": 0.4,
+            "strict_contract": False,
+            "evaluator_fallback_used": True,
+            "evaluator_fallback_reason": "dev_minimal_skip_evaluator",
+            "evaluator_fallback_source": "dev_minimal_default_probabilities",
+        },
+    ]
+
+    summary = protocol_script.summarize_event_results(rows)
+
+    assert summary["evaluator_fallback"]["fallback_used_count"] == 2
+    assert summary["evaluator_fallback"]["fallback_used_ratio"] == pytest.approx(2 / 3)
+    assert summary["evaluator_fallback"]["by_condition"] == {"A": 0, "B": 1, "C": 1}
+    assert summary["evaluator_fallback"]["by_reason"] == {
+        "dev_minimal_evaluator_error": 1,
+        "dev_minimal_skip_evaluator": 1,
+    }
+    assert summary["evaluator_fallback"]["by_source"] == {"dev_minimal_default_probabilities": 2}
 
 
 def test_signed_susceptibility_pro_yes_positive_delta_has_no_belief_update_failure():

@@ -97,6 +97,32 @@ def test_compute_round_jsd_trace_raises_on_low_coverage(tmp_path):
         )
 
 
+def test_compute_round_jsd_trace_ignores_non_probability_actions_for_coverage(tmp_path):
+    unit_dir = tmp_path / "unit"
+    twitter_path = unit_dir / "twitter" / "actions.jsonl"
+
+    entries = [
+        {"round": 12, "action_type": "TELEMETRY_PROBE", "action_args": {"yes_probability": 0.6}},
+        {"round": 12, "action_type": "TELEMETRY_PROBE", "action_args": {"yes_probability": 0.4}},
+    ]
+    entries.extend(
+        {"round": 12, "action_type": "LIKE_POST", "action_args": {"post_id": f"p{i}"}}
+        for i in range(8)
+    )
+
+    _write_actions(twitter_path, entries)
+
+    trace = compute_round_jsd_trace(
+        unit_dir,
+        checkpoints=[12],
+        min_parsed_probability_ratio=0.5,
+        resolved_label="YES",
+    )
+
+    assert len(trace) == 1
+    assert trace[0] >= 0.0
+
+
 def test_compute_round_jsd_trace_parses_probability_text_for_resolved_label(tmp_path):
     unit_dir = tmp_path / "unit"
     twitter_path = unit_dir / "twitter" / "actions.jsonl"

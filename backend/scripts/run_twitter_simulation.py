@@ -312,6 +312,7 @@ class IPCHandler:
         
         try:
             conn = sqlite3.connect(db_path)
+            conn.execute("PRAGMA encoding = \'UTF-8\';")
             cursor = conn.cursor()
             
             # query latestInterviewrecord

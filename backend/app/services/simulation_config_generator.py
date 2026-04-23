@@ -450,6 +450,17 @@ class SimulationConfigGenerator:
                     # Don't set max_tokens, let LLM generate freely
                 )
 
+                # Defensive check for OpenRouter/Provider failures that return null choices
+                if not hasattr(response, 'choices') or not response.choices:
+                    error_msg = f"LLM returned no choices (attempt {attempt+1}). Model: {self.model_name}. Response: {response}"
+                    logger.warning(error_msg)
+                    # If using JSON mode, it might be the cause of null choices on some providers
+                    if attempt < max_attempts - 1:
+                        logger.info("Retrying in next attempt...")
+                        continue
+                    else:
+                        raise ValueError(error_msg)
+
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
 

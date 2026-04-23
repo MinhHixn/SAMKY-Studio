@@ -221,7 +221,7 @@ class ProtocolConditionExecutor:
         *,
         router: Any,
         python_exe: str,
-        profiles: list[Dict[str, Any]],
+        profiles_builder: Callable[[str], list[Dict[str, Any]]],
         seed_files: list[Path],
         event_index_lookup: Mapping[str, int],
         trace_writer: Any,
@@ -239,7 +239,7 @@ class ProtocolConditionExecutor:
     ):
         self._router = router
         self._python_exe = python_exe
-        self._profiles = profiles
+        self._profiles_builder = profiles_builder
         self._seed_files = seed_files
         self._event_index_lookup = event_index_lookup
         self._trace_writer = trace_writer
@@ -256,8 +256,25 @@ class ProtocolConditionExecutor:
         self._exception_formatter = exception_formatter
 
     def _seed_path_for_event(self, event_id: str) -> Path:
-        index = self._event_index_lookup[event_id]
-        return self._seed_files[index % len(self._seed_files)]
+        target_id = str(event_id).strip().upper()
+        # Primary: match folder name and context.md exactly
+        for seed_file in self._seed_files:
+            if seed_file.parent.name.upper() == target_id and seed_file.name == "context.md":
+                return seed_file
+        # Secondary: match folder name only
+        for seed_file in self._seed_files:
+            if seed_file.parent.name.upper() == target_id:
+                return seed_file
+        # Fallback to index but ensure we return a context.md if possible
+        index = self._event_index_lookup.get(event_id, 0)
+        fallback = self._seed_files[index % len(self._seed_files)] if self._seed_files else Path()
+        
+        # If fallback is not a context.md, try to find one in the same list
+        if fallback.name != "context.md":
+            for seed_file in self._seed_files:
+                if seed_file.name == "context.md":
+                    return seed_file
+        return fallback
 
     def execute(
         self,
@@ -275,6 +292,7 @@ class ProtocolConditionExecutor:
         event_id = str(event["event_id"])
         unit_id = f"{event_id}_{condition}_r{repeat}"
         seed_path = self._seed_path_for_event(event_id)
+        profiles = self._profiles_builder(event_id)
 
         self._trace_writer.write(
             {
@@ -294,6 +312,9 @@ class ProtocolConditionExecutor:
         evaluator_noisy_dimensions: Any = None
         evaluator_dimension_labels: Any = None
         evaluator_reliability_status: str | None = None
+        evaluator_fallback_used = False
+        evaluator_fallback_reason: str | None = None
+        evaluator_fallback_source: str | None = None
         simulation_status = "simulation_failed"
         simulation_completed = False
         evaluation_completed = False
@@ -305,14 +326,14 @@ class ProtocolConditionExecutor:
         evidence_text = ""
 
         try:
-            config = config_builder(event, condition)
+            config = config_builder(event, condition, profiles)
             config["run_unit"] = {
                 "run_id": run_id,
                 "unit_id": unit_id,
                 "seed_file": str(seed_path),
             }
             config_path = self._config_writer(unit_dir, config)
-            self._profile_writer(unit_dir, self._profiles)
+            self._profile_writer(unit_dir, profiles)
 
             simulation_log_path = unit_dir / "simulation.log"
             if condition == "A":
@@ -380,11 +401,24 @@ class ProtocolConditionExecutor:
                         mcq_dimensions = None
                         validated_scales = None
                     elif isinstance(evaluation_payload, Mapping):
-                        strict_contract = True
-                        required_keys = ("probabilities", "brier", "mcq_dimensions", "validated_scales")
+                        evaluator_fallback_used = bool(evaluation_payload.get("evaluator_fallback_used", False))
+                        fallback_reason = evaluation_payload.get("evaluator_fallback_reason")
+                        evaluator_fallback_reason = (
+                            str(fallback_reason) if isinstance(fallback_reason, str) else None
+                        )
+                        fallback_source = evaluation_payload.get("evaluator_fallback_source")
+                        evaluator_fallback_source = (
+                            str(fallback_source) if isinstance(fallback_source, str) else None
+                        )
+                        strict_contract = not evaluator_fallback_used
+                        required_keys = ("probabilities", "brier")
+                        if strict_contract:
+                            required_keys = required_keys + ("mcq_dimensions", "validated_scales")
                         missing_keys = [key for key in required_keys if key not in evaluation_payload]
                         if missing_keys:
-                            raise ValueError(f"Evaluator mapping missing required keys: {', '.join(missing_keys)}")
+                            raise ValueError(
+                                f"Evaluator mapping missing required keys: {', '.join(missing_keys)}"
+                            )
                         probabilities = _validate_probability_payload(
                             evaluation_payload["probabilities"],
                             context="Evaluator mapping field",
@@ -393,17 +427,26 @@ class ProtocolConditionExecutor:
                             evaluation_payload["brier"],
                             context="Evaluator mapping field",
                         )
-                        mcq_dimensions = _validate_mcq_dimensions_payload(
-                            evaluation_payload["mcq_dimensions"],
-                            context="Evaluator mapping field",
-                        )
-                        validated_scales = _validate_validated_scales_payload(
-                            evaluation_payload["validated_scales"],
-                            context="Evaluator mapping field",
-                        )
-                        evaluator_noisy_dimensions = evaluation_payload.get("evaluator_noisy_dimensions")
-                        evaluator_dimension_labels = evaluation_payload.get("evaluator_dimension_labels")
-                        evaluator_reliability_status = evaluation_payload.get("evaluator_reliability_status")
+                        if strict_contract:
+                            mcq_dimensions = _validate_mcq_dimensions_payload(
+                                evaluation_payload["mcq_dimensions"],
+                                context="Evaluator mapping field",
+                            )
+                            validated_scales = _validate_validated_scales_payload(
+                                evaluation_payload["validated_scales"],
+                                context="Evaluator mapping field",
+                            )
+                            evaluator_noisy_dimensions = evaluation_payload.get("evaluator_noisy_dimensions")
+                            evaluator_dimension_labels = evaluation_payload.get("evaluator_dimension_labels")
+                            evaluator_reliability_status = evaluation_payload.get("evaluator_reliability_status")
+                            micro_epistemic_mapping = evaluation_payload.get("micro_epistemic_mapping")
+                        else:
+                            mcq_dimensions = None
+                            validated_scales = None
+                            evaluator_noisy_dimensions = None
+                            evaluator_dimension_labels = None
+                            evaluator_reliability_status = None
+                            micro_epistemic_mapping = None
                     else:
                         raise ValueError("Evaluator result must be a tuple or mapping")
                     evaluation_completed = True
@@ -430,6 +473,9 @@ class ProtocolConditionExecutor:
                     evaluator_noisy_dimensions = None
                     evaluator_dimension_labels = None
                     evaluator_reliability_status = None
+                    evaluator_fallback_used = False
+                    evaluator_fallback_reason = None
+                    evaluator_fallback_source = None
                     row_error = self._exception_formatter(exc)
                     self._trace_writer.write(
                         {
@@ -508,6 +554,9 @@ class ProtocolConditionExecutor:
             evaluator_noisy_dimensions=evaluator_noisy_dimensions,
             evaluator_dimension_labels=evaluator_dimension_labels,
             evaluator_reliability_status=evaluator_reliability_status,
+            evaluator_fallback_used=evaluator_fallback_used,
+            evaluator_fallback_reason=evaluator_fallback_reason,
+            evaluator_fallback_source=evaluator_fallback_source,
             error=row_error,
             strict_contract=strict_contract,
             simulation_executed=(condition != "A"),
@@ -517,6 +566,7 @@ class ProtocolConditionExecutor:
             convergence_monotonic=convergence_monotonic,
             delta_conformity=delta_conformity,
             baseline_scores=baseline_scores,
+            micro_epistemic_mapping=micro_epistemic_mapping,
         )
 
 

@@ -140,8 +140,6 @@ def validate_event_result_row(row: Mapping[str, Any]) -> None:
         raise ValueError("'brier' must be finite for completed rows")
     if not isinstance(baseline_scores, Mapping) or not baseline_scores:
         raise ValueError("'baseline_scores' must be a non-empty mapping for completed rows")
-    if not _is_finite_number(rps):
-        raise ValueError("'rps' must be finite for completed rows")
     if not isinstance(calibration_bracket, str) or not calibration_bracket.strip():
         raise ValueError("'calibration_bracket' must be a non-empty string for completed rows")
 

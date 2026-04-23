@@ -1,0 +1,21 @@
+{
+  "study": {
+    "title": "Minimal Simulation — S3 Only"
+  },
+  "core_events": {
+    "social_short": [
+      {
+        "id": "S3",
+        "question": "Will Republicans achieve a red sweep in 2024 (Presidency + House + Senate)?",
+        "market_type": "binary",
+        "options": ["YES", "NO"],
+        "opened": "2024-10",
+        "resolved": "2024-11-08",
+        "outcome": "YES",
+        "url": "https://polymarket.com/event/balance-of-power-2024-election",
+        "information_type": "Social/Behavioral",
+        "horizon": "short"
+      }
+    ]
+  }
+}

@@ -90,8 +90,16 @@ def _normalize_probability_mapping(mapping: Any, context: str) -> Dict[str, floa
     return {label: value / total for label, value in normalized.items()}
 
 
-def _validate_numeric_scores_mapping(mapping: Any, context: str) -> Dict[str, float]:
-    if not isinstance(mapping, Mapping) or not mapping:
+def _validate_numeric_scores_mapping(
+    mapping: Any,
+    context: str,
+    *,
+    allow_empty: bool = False,
+) -> Dict[str, float]:
+    if not isinstance(mapping, Mapping):
+        requirement = "a mapping" if allow_empty else "a non-empty mapping"
+        raise ValueError(f"{context} must be {requirement}")
+    if not mapping and not allow_empty:
         raise ValueError(f"{context} must be a non-empty mapping")
 
     validated: Dict[str, float] = {}
@@ -130,18 +138,116 @@ def _compute_canonical_validated_scales(mcq_dimensions: Mapping[str, Mapping[str
     return scores
 
 
+def _one_hot_bucket_mapping(bucket_label: str, *, context: str) -> Dict[str, float]:
+    normalized_label = bucket_label.strip()
+    if normalized_label not in MCQ_BUCKET_KEYS:
+        allowed = ", ".join(MCQ_BUCKET_KEYS)
+        raise ValueError(f"{context} label must be one of: {allowed}")
+    return {bucket: (1.0 if bucket == normalized_label else 0.0) for bucket in MCQ_BUCKET_KEYS}
+
+
 class ProbabilityEvaluator:
     """Query the evaluator role and normalize outcome probabilities."""
 
     def __init__(self, router: BenchmarkRoleRouter):
         self._router = router
 
-    def evaluate(self, event_question: str, condition: str, evidence_text: str) -> Dict[str, Any]:
+    def evaluate(
+        self,
+        event_question: str,
+        condition: str,
+        evidence_text: str,
+        micro_questions: list[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
         client = self._router.client_for("evaluator")
+        system_prompt = get_evaluator_system_prompt()
+        json_schema: Dict[str, Any] | None = None
+
+        if micro_questions:
+            # requirement 2: Dynamic Prompt Injection
+            instruction = (
+                "\n\nAs a Report Agent, based strictly on the provided discussion timeline, "
+                "answer the following 3 micro-questions to map the swarm's epistemic logic. "
+                "Choose the dominant option the swarm believes, and provide a short rationale."
+            )
+            q_text = ""
+            for q in micro_questions:
+                q_id = q.get("id", "unknown")
+                q_str = q.get("question", "")
+                q_options = ", ".join(q.get("options", []))
+                q_text += f"\n- {q_id}: {q_str} (Options: {q_options})"
+            system_prompt += instruction + q_text
+
+            # requirement 3: Output Schema Update
+            micro_mapping_properties = {}
+            for q in micro_questions:
+                q_id = q.get("id")
+                if q_id:
+                    micro_mapping_properties[q_id] = {
+                        "type": "object",
+                        "properties": {
+                            "dominant_tag": {"type": "string"},
+                            "short_rationale": {"type": "string"},
+                        },
+                        "required": ["dominant_tag", "short_rationale"],
+                        "additionalProperties": False,
+                    }
+
+            # Build full JSON schema for strict validation if micro_questions are present
+            # This incorporates existing keys (probabilities, mcq_dimensions, validated_scales)
+            json_schema = {
+                "name": "evaluator_response",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "probabilities": {"type": "object", "additionalProperties": {"type": "number"}},
+                        "mcq_dimensions": {
+                            "type": "object",
+                            "properties": {
+                                k: {
+                                    "type": "object",
+                                    "properties": {
+                                        b: {"type": "number"} for b in MCQ_BUCKET_KEYS
+                                    },
+                                    "required": list(MCQ_BUCKET_KEYS),
+                                    "additionalProperties": False,
+                                }
+                                for k in MCQ_DIMENSION_KEYS
+                            },
+                            "required": list(MCQ_DIMENSION_KEYS),
+                            "additionalProperties": False,
+                        },
+                        "validated_scales": {
+                            "type": "object",
+                            "properties": {
+                                "schema_version": {"type": "string"},
+                                "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+                            },
+                            "required": ["schema_version", "scores"],
+                            "additionalProperties": False,
+                        },
+                        "micro_epistemic_mapping": {
+                            "type": "object",
+                            "properties": micro_mapping_properties,
+                            "required": list(micro_mapping_properties.keys()),
+                            "additionalProperties": False,
+                        },
+                    },
+                    "required": [
+                        "probabilities",
+                        "mcq_dimensions",
+                        "validated_scales",
+                        "micro_epistemic_mapping",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+
         messages = [
             {
                 "role": "system",
-                "content": get_evaluator_system_prompt(),
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -158,8 +264,9 @@ class ProbabilityEvaluator:
                 response = client.chat_json(
                     messages,
                     temperature=0.0,
-                    max_tokens=512,
+                    max_tokens=1024 if micro_questions else 512,
                     repair_truncated_json=True,
+                    json_schema=json_schema,
                 )
                 break
             except ValueError as error:
@@ -181,7 +288,39 @@ class ProbabilityEvaluator:
         result["normalized_probabilities"] = normalized
         result["mcq_dimensions"] = normalized_dimensions
         result["validated_scales"] = normalized_scales
+
+        # requirement 3: Epistemic mapping persistence
+        if micro_questions and "micro_epistemic_mapping" in result:
+            result["micro_epistemic_mapping"] = self._validate_micro_mapping(
+                result["micro_epistemic_mapping"], micro_questions
+            )
+
         return result
+
+    def _validate_micro_mapping(
+        self, mapping: Any, micro_questions: list[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        if not isinstance(mapping, Mapping):
+            raise ValueError("micro_epistemic_mapping must be a mapping")
+        
+        validated = {}
+        for q in micro_questions:
+            q_id = q.get("id")
+            if not q_id:
+                continue
+            q_data = mapping.get(q_id)
+            if not isinstance(q_data, Mapping):
+                # Fallback to placeholder if missing to avoid breaking macro metrics
+                validated[q_id] = {"dominant_tag": "N/A", "short_rationale": "Missing in LLM response"}
+                continue
+            
+            dominant_tag = str(q_data.get("dominant_tag", "N/A"))
+            short_rationale = str(q_data.get("short_rationale", "No rationale provided"))
+            validated[q_id] = {
+                "dominant_tag": dominant_tag,
+                "short_rationale": short_rationale
+            }
+        return validated
 
     def _normalize_probabilities(self, probabilities: Any) -> Dict[str, float]:
         if not isinstance(probabilities, Mapping) or not probabilities:
@@ -203,7 +342,10 @@ class ProbabilityEvaluator:
             total += numeric
 
         if total <= 0.0:
-            raise ValueError("Evaluator probabilities must have positive total mass")
+            num_keys = len(normalized)
+            if num_keys == 0:
+                raise ValueError("Evaluator probabilities must have positive total mass")
+            return {label: 1.0 / num_keys for label in normalized.keys()}
 
         return {label: value / total for label, value in normalized.items()}
 
@@ -219,14 +361,23 @@ class ProbabilityEvaluator:
         normalized: Dict[str, Dict[str, float]] = {}
         for dimension in MCQ_DIMENSION_KEYS:
             buckets = dimensions.get(dimension)
-            if not isinstance(buckets, Mapping):
-                raise ValueError("Evaluator response mcq_dimensions must map to bucket mappings")
-            bucket_keys = set(buckets.keys())
-            if bucket_keys != set(MCQ_BUCKET_KEYS):
-                raise ValueError("Evaluator response mcq_dimensions must include all bucket keys")
-            normalized[dimension] = _normalize_probability_mapping(
-                buckets,
-                f"mcq_dimensions.{dimension}",
+            if isinstance(buckets, Mapping):
+                bucket_keys = set(buckets.keys())
+                if bucket_keys != set(MCQ_BUCKET_KEYS):
+                    raise ValueError("Evaluator response mcq_dimensions must include all bucket keys")
+                normalized[dimension] = _normalize_probability_mapping(
+                    buckets,
+                    f"mcq_dimensions.{dimension}",
+                )
+                continue
+            if isinstance(buckets, str):
+                normalized[dimension] = _one_hot_bucket_mapping(
+                    buckets,
+                    context=f"mcq_dimensions.{dimension}",
+                )
+                continue
+            raise ValueError(
+                "Evaluator response mcq_dimensions must map dimensions to bucket mappings or bucket labels"
             )
 
         return normalized
@@ -236,23 +387,7 @@ class ProbabilityEvaluator:
         validated_scales: Any,
         mcq_dimensions: Mapping[str, Mapping[str, float]],
     ) -> Dict[str, Any]:
-        if not isinstance(validated_scales, Mapping):
-            raise ValueError("Evaluator response must include validated_scales mapping")
-
-        schema_version = validated_scales.get("schema_version")
-        if not isinstance(schema_version, str) or not schema_version:
-            raise ValueError("validated_scales.schema_version must be a non-empty string")
-        if schema_version != VALIDATED_SCALES_SCHEMA_VERSION:
-            raise ValueError(
-                f"validated_scales.schema_version must be {VALIDATED_SCALES_SCHEMA_VERSION!r}"
-            )
-
-        scores = _validate_numeric_scores_mapping(
-            validated_scales.get("scores"),
-            "validated_scales.scores",
-        )
-        del scores
         canonical_scores = _compute_canonical_validated_scales(mcq_dimensions)
         if set(canonical_scores.keys()) != set(CANONICAL_VALIDATED_SCALE_KEYS):
             raise ValueError("Canonical validated_scales key set mismatch")
-        return {"schema_version": schema_version, "scores": canonical_scores}
+        return {"schema_version": VALIDATED_SCALES_SCHEMA_VERSION, "scores": canonical_scores}

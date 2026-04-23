@@ -30,10 +30,18 @@ class LLMClient:
         model: Optional[str] = None,
         timeout: Optional[float] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
-        self.model = model or Config.LLM_MODEL_NAME
+        self.api_key = api_key or os.environ.get('LLM_API_KEY') or Config.LLM_API_KEY
+        self.base_url = base_url or os.environ.get('LLM_BASE_URL') or Config.LLM_BASE_URL
+        self.model = model or os.environ.get('LLM_MODEL_NAME') or Config.LLM_MODEL_NAME
         resolved_timeout = float(timeout if timeout is not None else Config.LLM_TIMEOUT_SECONDS)
+
+        # Fallback to OPENAI_* variables if LLM_* are not set (for compatibility with OASIS/CAMEL-AI environment setup)
+        if not self.api_key:
+            self.api_key = os.environ.get('OPENAI_API_KEY')
+        if not self.base_url or self.base_url == 'http://localhost:11434/v1':
+            env_base = os.environ.get('OPENAI_API_BASE_URL')
+            if env_base:
+                self.base_url = env_base
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
@@ -296,9 +304,9 @@ class LLMClient:
 
         return stripped_payload + ''.join(repair_suffix)
 
-    def _chat_create_with_retry(self, kwargs: Dict[str, Any]):
+    def _chat_create_with_retry(self, kwargs: Dict[str, Any], enforce_benchmark_params: bool = True):
         request_kwargs = dict(kwargs)
-        if self._benchmark_mode:
+        if self._benchmark_mode and enforce_benchmark_params:
             requested_temperature = request_kwargs.get("temperature")
             parsed_temperature = self._try_float(requested_temperature)
             if parsed_temperature != ENFORCED_BENCHMARK_TEMPERATURE:
@@ -348,8 +356,9 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: int = 4096,
-        response_format: Optional[Dict] = None
+        max_tokens: int = 2048,
+        response_format: Optional[Dict] = None,
+        enforce_benchmark_params: bool = True
     ) -> str:
         """
         Send chat request
@@ -359,6 +368,7 @@ class LLMClient:
             temperature: Temperature parameter
             max_tokens: Max token count
             response_format: Response format (e.g., JSON mode)
+            enforce_benchmark_params: Whether to enforce benchmark mode overrides
 
         Returns:
             Model response text
@@ -372,6 +382,9 @@ class LLMClient:
 
         if response_format:
             kwargs["response_format"] = response_format
+            # CRITICAL FIX: Explicitly disable streaming when JSON Schema/Object mode is used.
+            # Some providers (e.g. Cloudflare via OpenRouter) reject JSON schemas with stream=True.
+            kwargs["stream"] = False
 
         extra_headers = {}
         if self._openrouter_http_referer:
@@ -387,7 +400,14 @@ class LLMClient:
                 "options": {"num_ctx": self._num_ctx}
             }
 
-        response = self._chat_create_with_retry(kwargs)
+        response = self._chat_create_with_retry(kwargs, enforce_benchmark_params=enforce_benchmark_params)
+        
+        # Defensive check for OpenRouter/Provider failures that return null choices
+        if not hasattr(response, 'choices') or not response.choices:
+            error_msg = f"LLM returned no choices. Model: {self.model}. Response: {response}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         content = response.choices[0].message.content
         # Some models (like MiniMax M2.5) include <think>thinking content in response, need to remove
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
@@ -397,36 +417,50 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 2048,
         repair_truncated_json: bool = False,
-        json_schema: Optional[Dict[str, Any]] = None
+        json_schema: Optional[Dict[str, Any]] = None,
+        enforce_benchmark_params: bool = True
     ) -> Dict[str, Any]:
         """
         Send chat request and return JSON, optionally with a strict schema.
-
-        Args:
-            messages: Message list
-            temperature: Temperature parameter
-            max_tokens: Max token count
-            repair_truncated_json: Attempt one safe JSON truncation repair when enabled
-            json_schema: Optional JSON schema for strict enforcement
-
-        Returns:
-            Parsed JSON object
         """
         response_format = {"type": "json_object"}
+        use_schema = False
         if json_schema:
             response_format = {
                 "type": "json_schema",
                 "json_schema": json_schema
             }
+            use_schema = True
 
-        response = self.chat(
-            messages=messages,
-            temperature=0.3 if temperature is None else temperature,
-            max_tokens=max_tokens,
-            response_format=response_format
-        )
+        try:
+            response = self.chat(
+                messages=messages,
+                temperature=0.3 if temperature is None else temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+                enforce_benchmark_params=enforce_benchmark_params
+            )
+        except APIStatusError as error:
+            # If the model does not support json_schema (Structured Outputs),
+            # fall back to standard json_object mode.
+            if use_schema and error.status_code == 400:
+                logger.warning(
+                    "Model %s does not support json_schema, falling back to json_object. Error: %s",
+                    self.model,
+                    error,
+                )
+                return self.chat_json(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    repair_truncated_json=repair_truncated_json,
+                    json_schema=None,  # Fallback: disable schema
+                    enforce_benchmark_params=enforce_benchmark_params
+                )
+            raise
+
         # Clean markdown code block markers
         cleaned_response = response.strip()
         cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)

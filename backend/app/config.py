@@ -4,6 +4,7 @@ Loads configuration from .env file in project root directory
 """
 
 import os
+from typing import Any
 from dotenv import load_dotenv
 
 # Load .env file from project root
@@ -15,6 +16,10 @@ if os.path.exists(project_root_env):
 else:
     # If no .env in root, try to load environment variables (for production)
     load_dotenv(override=False)
+
+
+def _env_get(name: str, default: Any = None) -> Any:
+    return os.environ.get(name, default)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -49,7 +54,7 @@ class Config:
     JSON_AS_ASCII = False
 
     # LLM configuration (unified OpenAI format)
-    LLM_API_KEY = os.environ.get('LLM_API_KEY')
+    LLM_API_KEY = os.environ.get('LLM_API_KEY') or 'sam-local'
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'qwen2.5:32b')
     OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY') or LLM_API_KEY
@@ -63,7 +68,8 @@ class Config:
     BENCHMARK_TEMPERATURE = _env_float_or_raw('BENCHMARK_TEMPERATURE', 0.0)
     BENCHMARK_SEED = _env_int_or_raw('BENCHMARK_SEED', 42)
     HEADLESS_MODE = _env_bool('HEADLESS_MODE', False)
-    LLM_TIMEOUT_SECONDS = _env_float_or_raw('LLM_TIMEOUT_SECONDS', 300.0)
+    LLM_TIMEOUT_SECONDS = _env_float_or_raw('LLM_TIMEOUT_SECONDS', 600.0)
+    LLM_USE_JSON_SCHEMA = _env_bool('LLM_USE_JSON_SCHEMA', True)
     LLM_RETRY_MAX_RETRIES = _env_int_or_raw('LLM_RETRY_MAX_RETRIES', 3)
     LLM_RETRY_INITIAL_DELAY = _env_float_or_raw('LLM_RETRY_INITIAL_DELAY', 1.0)
     LLM_RETRY_MAX_DELAY = _env_float_or_raw('LLM_RETRY_MAX_DELAY', 30.0)
@@ -76,7 +82,12 @@ class Config:
 
     # Embedding configuration
     EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'nomic-embed-text')
-    EMBEDDING_BASE_URL = os.environ.get('EMBEDDING_BASE_URL', 'http://localhost:11434')
+    EMBEDDING_BASE_URL = _env_get('EMBEDDING_BASE_URL', 'http://localhost:11434')
+
+    # Dual-server support for HPC scalability
+    EVALUATOR_LLM_BASE_URL = _env_get('EVALUATOR_LLM_BASE_URL', None)
+    GRAPH_LLM_BASE_URL = _env_get('GRAPH_LLM_BASE_URL', None)
+
 
     # File upload configuration
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -88,7 +99,7 @@ class Config:
     DEFAULT_CHUNK_OVERLAP = 50  # Default overlap size
 
     # OASIS simulation configuration
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
+    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '60'))
     OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
 
     # OASIS platform available actions configuration

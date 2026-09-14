@@ -311,7 +311,7 @@ class IPCHandler:
             return result
         
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=60)
             conn.execute("PRAGMA encoding = \'UTF-8\';")
             cursor = conn.cursor()
             
@@ -551,7 +551,7 @@ class TwitterSimulationRunner:
         minutes_per_round = time_config.get("minutes_per_round", 30)
         
         # Calculate total rounds
-        total_rounds = (total_hours * 60) // minutes_per_round
+        total_rounds = int(time_config.get("total_rounds", (total_hours * 60) // minutes_per_round))
         
         # If maximum rounds specified, truncate
         if max_rounds is not None and max_rounds > 0:
@@ -597,7 +597,7 @@ class TwitterSimulationRunner:
             agent_graph=self.agent_graph,
             platform=oasis.DefaultPlatformType.TWITTER,
             database_path=db_path,
-            semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
+            semaphore=max(1, min(32, int(os.environ.get("OASIS_LLM_CONCURRENCY", "5")))),
         )
         
         await self.env.reset()

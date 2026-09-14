@@ -39,6 +39,10 @@ class _FakeTaskManager:
     def get_task(self, task_id):
         return self._tasks.get(task_id)
 
+    def list_tasks(self, task_type=None):
+        _ = task_type
+        return []
+
 
 def test_report_generate_runs_synchronously_in_headless_mode(monkeypatch):
     monkeypatch.setattr(storage_module, "Neo4jStorage", lambda: object())

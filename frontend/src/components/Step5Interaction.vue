@@ -4,7 +4,11 @@
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
       <div class="left-panel report-style" ref="leftPanel">
-        <div v-if="reportOutline" class="report-content-wrapper">
+        <div v-if="reportError" class="waiting-placeholder" role="alert">
+          <p>{{ reportError }}</p>
+          <button @click="loadReportData">Refresh report</button>
+        </div>
+        <div v-if="reportOutline?.sections?.length" class="report-content-wrapper">
           <!-- Report Header -->
           <div class="report-header-block">
             <div class="report-meta">
@@ -66,7 +70,7 @@
         </div>
 
         <!-- Waiting State -->
-        <div v-if="!reportOutline" class="waiting-placeholder">
+        <div v-if="!reportOutline?.sections?.length && !reportError" class="waiting-placeholder">
           <div class="waiting-animation">
             <div class="waiting-ring"></div>
             <div class="waiting-ring"></div>
@@ -155,7 +159,7 @@
               <div class="tools-card-avatar">R</div>
               <div class="tools-card-info">
                 <div class="tools-card-name">Report Agent - Chat</div>
-                <div class="tools-card-subtitle">Quick chat version of Report Agent with 4 professional tools, has MiroFish's full memory</div>
+                <div class="tools-card-subtitle">Quick chat with the Report Agent, four specialist tools, and SAM's full simulation memory</div>
               </div>
               <button class="tools-card-toggle" @click="showToolsDetail = !showToolsDetail">
                 <svg :class="{ 'is-expanded': showToolsDetail }" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -283,6 +287,7 @@
                   <span></span>
                   <span></span>
                 </div>
+                <span class="message-time">{{ chatTarget === 'report_agent' ? 'Waiting for reply (up to 2 minutes)...' : 'Waiting for the simulated individual...' }}</span>
               </div>
             </div>
           </div>
@@ -412,7 +417,8 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { chatWithReport, getReport, getAgentLog } from '../api/report'
+import { chatWithReport, getReport, getReportSections } from '../api/report'
+import { getReportReply } from '../utils/reportResponse'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
 
 const props = defineProps({
@@ -447,6 +453,9 @@ const isSurveying = ref(false)
 
 // Report Data
 const reportOutline = ref(null)
+const reportError = ref('')
+let reportPollTimer = null
+let reportLoadVersion = 0
 const generatedSections = ref({})
 const collapsedSections = ref(new Set())
 const currentSectionIndex = ref(null)
@@ -552,7 +561,7 @@ const formatTime = (timestamp) => {
 }
 
 const renderMarkdown = (content) => {
-  if (!content) return ''
+  if (typeof content !== 'string' || !content) return ''
   
   let processedContent = content.replace(/^##\s+.+\n+/, '')
   let html = processedContent.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
@@ -665,7 +674,9 @@ const sendMessage = async () => {
     addLog(`Send failed: ${err.message}`)
     chatHistory.value.push({
       role: 'assistant',
-      content: `Sorry, an error occurred: ${err.message}`,
+      content: chatTarget.value === 'report_agent' && err.code === 'ECONNABORTED'
+        ? 'The reply timed out after 2 minutes. Please try again.'
+        : `Sorry, an error occurred: ${err.message}`,
       timestamp: new Date().toISOString()
     })
   } finally {
@@ -697,7 +708,7 @@ const sendToReportAgent = async (message) => {
   if (res.success && res.data) {
     chatHistory.value.push({
       role: 'assistant',
-      content: res.data.response || res.data.answer || 'No response',
+      content: getReportReply(res.data),
       timestamp: new Date().toISOString()
     })
     addLog('Report Agent replied')
@@ -871,43 +882,46 @@ const submitSurvey = async () => {
 // Load Report Data
 const loadReportData = async () => {
   if (!props.reportId) return
+  clearTimeout(reportPollTimer)
+  const version = ++reportLoadVersion
+  const reportId = props.reportId
 
   try {
-    addLog(`Loading report data: ${props.reportId}`)
+    addLog(`Loading report data: ${reportId}`)
 
-    // Get report info
-    const reportRes = await getReport(props.reportId)
+    // Persisted report data is authoritative; debug logs may be absent or stale.
+    const reportRes = await getReport(reportId)
+    if (version !== reportLoadVersion) return
     if (reportRes.success && reportRes.data) {
-      // Load agent logs to get report outline and sections
-      await loadAgentLogs()
-    }
-  } catch (err) {
-    addLog(`Failed to load report: ${err.message}`)
-  }
-}
-
-const loadAgentLogs = async () => {
-  if (!props.reportId) return
-
-  try {
-    const res = await getAgentLog(props.reportId, 0)
-    if (res.success && res.data) {
-      const logs = res.data.logs || []
-
-      logs.forEach(log => {
-        if (log.action === 'planning_complete' && log.details?.outline) {
-          reportOutline.value = log.details.outline
-        }
-
-        if (log.action === 'section_complete' && log.section_index < 100 && log.details?.content) {
-          generatedSections.value[log.section_index] = log.details.content
-        }
+      const report = reportRes.data
+      reportOutline.value = report.outline
+      generatedSections.value = {}
+      reportError.value = ''
+      ;(report.outline?.sections || []).forEach((section, idx) => {
+        if (section.content?.trim()) generatedSections.value[idx + 1] = section.content
       })
-
-      addLog('Report data loading completed')
+      const running = ['pending', 'planning', 'generating'].includes(report.status)
+      if (running || (report.outline?.sections || []).some((s) => !s.content?.trim())) {
+        const sectionsRes = await getReportSections(reportId)
+        if (version !== reportLoadVersion) return
+        for (const section of sectionsRes.data?.sections || []) {
+          if (section.content?.trim()) generatedSections.value[section.section_index] = section.content
+        }
+      }
+      if (report.status === 'failed') {
+        reportError.value = report.error || 'Report generation failed. Please regenerate the report from Step 4.'
+      } else if (!running && (!report.outline?.sections?.length ||
+        report.outline.sections.some((_, idx) => !generatedSections.value[idx + 1]))) {
+        reportError.value = 'This report has no complete content. Please regenerate it from Step 4.'
+      }
+      emit('update-status', reportError.value ? 'error' : running ? 'processing' : 'ready')
+      if (running) reportPollTimer = setTimeout(loadReportData, 3000)
     }
   } catch (err) {
-    addLog(`Failed to load report logs: ${err.message}`)
+    if (version !== reportLoadVersion) return
+    reportError.value = `Failed to load report: ${err.message}`
+    emit('update-status', 'error')
+    addLog(`Failed to load report: ${err.message}`)
   }
 }
 
@@ -936,16 +950,19 @@ const handleClickOutside = (e) => {
 // Lifecycle
 onMounted(() => {
   addLog('Step5 Interaction initialized')
-  loadReportData()
-  loadProfiles()
   document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
+  clearTimeout(reportPollTimer)
+  reportLoadVersion++
   document.removeEventListener('click', handleClickOutside)
 })
 
 watch(() => props.reportId, (newId) => {
+  reportOutline.value = null
+  reportError.value = ''
+  generatedSections.value = {}
   if (newId) {
     loadReportData()
   }

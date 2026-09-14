@@ -4,6 +4,7 @@ Step2: Entity reading and filtering, OASIS simulation preparation and execution 
 """
 
 import os
+import json
 import traceback
 from flask import request, jsonify, send_file, current_app
 
@@ -21,6 +22,18 @@ logger = get_logger('mirofish.api.simulation')
 
 def _is_headless_mode_enabled() -> bool:
     return bool(getattr(Config, "HEADLESS_MODE", False) or getattr(Config, "BENCHMARK_MODE", False))
+
+
+def _profile_concurrency(data: dict) -> int:
+    """Use more independent model requests online; preserve offline capacity."""
+    from ..services.studio_runtime import public_runtime
+
+    count = data.get('parallel_profile_count')
+    if count is None:
+        count = 12 if public_runtime()['mode'] == 'online' else 5
+    if type(count) is not int or not 1 <= count <= 32:
+        raise ValueError('parallel_profile_count must be an integer from 1 to 32')
+    return count
 
 
 # Interview prompt optimization prefix
@@ -375,7 +388,7 @@ def prepare_simulation():
             "simulation_id": "sim_xxxx",                   // Required，Simulation ID
             "entity_types": ["Student", "PublicFigure"],  // Optional，Specified entity type
             "use_llm_for_profiles": true,                 // Optional，IsOtherwise useLLMGeneratepersona
-            "parallel_profile_count": 5,                  // Optional, number of personas to generate in parallel, default 5
+            "parallel_profile_count": 12,                 // Optional; online default 12, offline default 5
             "force_regenerate": false                     // Optional，ForceGenerate，Defaultfalse
         }
     
@@ -418,6 +431,11 @@ def prepare_simulation():
         # Check if forced regeneration
         force_regenerate = data.get('force_regenerate', False)
         logger.info(f"Start processing /prepare Request: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
+
+        # A reload or second tab should attach to preparation already in flight.
+        for task in TaskManager().list_tasks(task_type="simulation_prepare"):
+            if task['metadata'].get('simulation_id') == simulation_id and task['status'] in {'pending', 'processing'}:
+                return jsonify(success=True, data={"simulation_id": simulation_id, "task_id": task['task_id'], "status": task['status'], "progress": task['progress']})
         
         # Check if already prepared（Avoid duplicatesGenerate）
         if not force_regenerate:
@@ -460,7 +478,7 @@ def prepare_simulation():
         
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
+        parallel_profile_count = _profile_concurrency(data)
         
         # ========== Get GraphStorage（Capture reference before background task starts） ==========
         storage = current_app.extensions.get('neo4j_storage')
@@ -603,7 +621,9 @@ def prepare_simulation():
                     state.error = str(e)
                     manager._save_simulation_state(state)
         
-        if _is_headless_mode_enabled():
+        # Studio requests need a task id immediately so the graph/progress UI
+        # can poll long profile generation, even on a benchmark-configured host.
+        if _is_headless_mode_enabled() and not data.get('run_async', False):
             run_prepare()
             final_state = manager.get_simulation(simulation_id)
             if final_state and final_state.status == SimulationStatus.READY:
@@ -1520,8 +1540,18 @@ def start_simulation():
 
         platform = data.get('platform', 'parallel')
         max_rounds = data.get('max_rounds')  # Optional: Maximum simulation rounds
+        # Studio chooses an exact duration before preparing the society. Keep
+        # max_rounds as the backwards-compatible CLI truncation option.
+        rounds = data.get('rounds')
+        if rounds is not None and (type(rounds) is not int or not 1 <= rounds <= 1000):
+            return jsonify(success=False, error="rounds must be an integer from 1 to 1000"), 400
+        if rounds is not None and max_rounds is not None:
+            return jsonify(success=False, error="Specify rounds or max_rounds, not both"), 400
         enable_graph_memory_update = data.get('enable_graph_memory_update', False)  # Optional：IsFalseEnable knowledge graph memory update
         force = data.get('force', False)  # Optional：Force restart
+        interactive = data.get('interactive', False)
+        if type(interactive) is not bool:
+            return jsonify(success=False, error="interactive must be a boolean"), 400
 
         # Verify max_rounds Parameters
         if max_rounds is not None:
@@ -1555,6 +1585,11 @@ def start_simulation():
             }), 404
 
         force_restarted = False
+        if state.status == SimulationStatus.READY and SimulationRunner.has_live_process(simulation_id):
+            return jsonify({
+                "success": False,
+                "error": "A previous simulation process is still active; close it before starting another run",
+            }), 409
         
         # Intelligently handle status: if preparation work is complete, reset status to ready
         if state.status != SimulationStatus.READY:
@@ -1574,7 +1609,11 @@ def start_simulation():
                             try:
                                 SimulationRunner.stop_simulation(simulation_id)
                             except Exception as e:
-                                logger.warning(f"Warning when stopping simulation: {str(e)}")
+                                logger.error(f"Could not stop simulation before force restart: {e}")
+                                return jsonify({
+                                    "success": False,
+                                    "error": f"Cannot safely restart while the previous run is active: {e}",
+                                }), 409
                         else:
                             return jsonify({
                                 "success": False,
@@ -1583,10 +1622,26 @@ def start_simulation():
 
                 # If force mode，Clean runtime logs
                 if force:
+                    # A completed simulation can still own an OASIS wait-mode
+                    # process and locked SQLite files for later interviews.
+                    if SimulationRunner.has_live_process(simulation_id):
+                        try:
+                            SimulationRunner.stop_simulation(simulation_id)
+                        except Exception as e:
+                            logger.error(f"Could not close previous wait-mode process: {e}")
+                            return jsonify({
+                                "success": False,
+                                "error": f"Cannot safely restart while the previous process is active: {e}",
+                            }), 409
                     logger.info(f"Force mode: cleaning simulation runtime files for {simulation_id}")
                     cleanup_result = SimulationRunner.cleanup_simulation_logs(simulation_id)
                     if not cleanup_result.get("success"):
-                        logger.warning(f"Warning when cleaning logs: {cleanup_result.get('errors')}")
+                        logger.error(f"Cannot safely restart; runtime files are still locked: {cleanup_result.get('errors')}")
+                        return jsonify({
+                            "success": False,
+                            "error": "Cannot safely restart while previous run files are locked",
+                            "details": cleanup_result.get("errors"),
+                        }), 409
                     force_restarted = True
 
                 # Process does not exist or has ended，Reset status to ready
@@ -1619,13 +1674,28 @@ def start_simulation():
             
             logger.info(f"Enable knowledge graph memory update: simulation_id={simulation_id}, graph_id={graph_id}")
         
+        if rounds is not None:
+            if SimulationRunner.has_live_process(simulation_id):
+                return jsonify(success=False, error="Close the existing simulation before changing its duration"), 409
+            config_path = os.path.join(manager._get_simulation_dir(simulation_id), "simulation_config.json")
+            with open(config_path, encoding="utf-8") as config_file:
+                config = json.load(config_file)
+            time_config = config.setdefault("time_config", {})
+            time_config["total_rounds"] = rounds
+            time_config["total_simulation_hours"] = rounds * float(time_config.get("minutes_per_round", 30)) / 60
+            with open(config_path + ".studio.tmp", "w", encoding="utf-8") as config_file:
+                json.dump(config, config_file, ensure_ascii=False, indent=2)
+            os.replace(config_path + ".studio.tmp", config_path)
+
         # Start simulation
         run_state = SimulationRunner.start_simulation(
             simulation_id=simulation_id,
             platform=platform,
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
-            graph_id=graph_id
+            graph_id=graph_id,
+            storage=current_app.extensions.get('neo4j_storage'),
+            interactive=interactive
         )
         
         # Update simulation status
@@ -2160,6 +2230,29 @@ def get_simulation_comments(simulation_id: str):
 
 # ============== Interview Interview interface ==============
 
+@simulation_bp.route('/interview/archived', methods=['POST'])
+def interview_archived_agent():
+    """Answer as a saved persona when the live environment has closed."""
+    from ..services.archived_interview import interview_archived
+
+    data = request.get_json(silent=True) or {}
+    simulation_id = data.get('simulation_id')
+    platform = data.get('platform')
+    agent_id = data.get('agent_id')
+    prompt = data.get('prompt')
+    if not simulation_id or not SimulationManager().get_simulation(simulation_id):
+        return jsonify(success=False, error="Simulation does not exist"), 404
+    if platform not in ('reddit', 'twitter') or type(agent_id) is not int or not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000:
+        return jsonify(success=False, error="Provide a platform, numeric agent_id and question (up to 8000 characters)"), 400
+    try:
+        result = interview_archived(simulation_id, platform, agent_id, prompt.strip())
+        return jsonify(success=True, data=result)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception as exc:
+        logger.exception("Archived interview failed")
+        return jsonify(success=False, error=str(exc)), 502
+
 @simulation_bp.route('/interview', methods=['POST'])
 def interview_agent():
     """
@@ -2641,6 +2734,7 @@ def get_env_status():
         
         # Get more detailed status information
         env_status = SimulationRunner.get_env_status_detail(simulation_id)
+        from ..services.archived_interview import archived_available
 
         if env_alive:
             message = "Environment running, ready to receive interview requests"
@@ -2652,6 +2746,7 @@ def get_env_status():
             "data": {
                 "simulation_id": simulation_id,
                 "env_alive": env_alive,
+                "archived_available": archived_available(simulation_id),
                 "twitter_available": env_status.get("twitter_available", False),
                 "reddit_available": env_status.get("reddit_available", False),
                 "message": message

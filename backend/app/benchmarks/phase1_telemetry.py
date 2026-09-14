@@ -16,6 +16,7 @@ _PROBABILITY_KEYS = (
     "forecast",
     "prediction",
     "belief",
+    "response",
 )
 _DISTRIBUTION_SUM_MIN = 0.95
 _DISTRIBUTION_SUM_MAX = 1.05

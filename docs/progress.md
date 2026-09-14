@@ -36,8 +36,16 @@ Migration from Zep Cloud + DashScope (Alibaba Qwen API) to local Neo4j CE + Olla
 ## PHASE 6 — Cleanup (COMPLETE)
 - **TASK-018**: Deleted 4 dead `zep_*.py` files, deprecated `generate_python_code()` in ontology_generator, fixed Zep docstrings in graph.py, added `requests` to requirements.txt
 
-## PHASE 7 — Publish (TODO)
+## PHASE 7 — Publish (COMPLETE)
 - **TASK-019**: Rename to MiroFish-Offline, add AGPL-3.0 license, publish to GitHub
+
+## PHASE 8 — ECN-BENCH Optimization & Scale (COMPLETE)
+- **TASK-020**: Implemented **Architecture v3.5 (Async Micro-Batching)** for Synthetic Expansion.
+- **TASK-021**: Solved "Attention Dilution" in LLM profile generation by chunking large targets (e.g., 60+ agents) into micro-batches (BATCH_SIZE=5).
+- **TASK-022**: Enabled concurrent generation using `asyncio.gather` with a `MAX_CONCURRENT_BATCHES=3` limit for local LLM stability.
+- **TASK-023**: Integrated `json-repair` and `repair_truncated_json=True` in `LLMClient` for fault-tolerant JSON parsing from smaller models.
+- **TASK-024**: Hardened granular retry logic: the system now preserves valid agents from partially failed batches and only retries the remaining delta.
+- **TASK-025**: Verified scale-up to 60 agents and 30 rounds for Event C5 (Condition A, B, C) with successful JSD convergence and Brier score telemetry.
 
 ## Files Created (New)
 | File | Replaces | Status |
@@ -64,6 +72,8 @@ Migration from Zep Cloud + DashScope (Alibaba Qwen API) to local Neo4j CE + Olla
 | `backend/app/api/report.py` | GraphToolsService DI, TODO cleaned | Done |
 | `backend/app/api/simulation.py` | EntityReader DI, ZEP guards removed | Done |
 | `backend/app/__init__.py` | Neo4jStorage singleton init + teardown | Done |
+| `backend/app/benchmarks/protocol.py` | Implemented Async Micro-Batching (v3.5) | Done |
+| `backend/app/utils/llm_client.py` | Enabled `repair_truncated_json` support | Done |
 
 ## Files Deleted (PHASE 6 — DONE)
 - ~~`backend/app/services/zep_entity_reader.py`~~ — deleted

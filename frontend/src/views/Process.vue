@@ -2,7 +2,7 @@
   <div class="process-page">
     <!-- Top navigation bar -->
     <nav class="navbar">
-      <div class="nav-brand" @click="goHome">MIROFISH OFFLINE</div>
+      <div class="nav-brand" @click="goHome">SAMKY STUDIO</div>
       
       <!-- Center step indicator -->
       <div class="nav-center">

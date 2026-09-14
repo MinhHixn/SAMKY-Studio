@@ -8,6 +8,118 @@ import os
 import socket
 import subprocess
 import sys
+
+# ============================================================
+# MONKEYPATCH: Disable tool use in CAMEL for Ollama compatibility
+# and Fix OASIS UserInfo missing agent profiles bug
+# ============================================================
+try:
+    from camel.models import OpenAIModel
+    _original_arun = OpenAIModel.arun
+    async def _patched_arun(self, messages, response_format=None, tools=None):
+        # Force tools to None to disable tool use as Ollama/Gemma often fail with it
+        return await _original_arun(self, messages, response_format, None)
+    OpenAIModel.arun = _patched_arun
+    
+    _original_run = OpenAIModel.run
+    def _patched_run(self, messages, response_format=None, tools=None):
+        return _original_run(self, messages, response_format, None)
+    OpenAIModel.run = _patched_run
+except ImportError:
+    pass
+
+try:
+    from oasis.social_platform.config.user import UserInfo
+
+    def to_twitter_system_message(self) -> str:
+        name_string = f"Your name is {self.name}." if self.name is not None else ""
+        description = name_string
+        if self.profile:
+            user_profile = self.profile.get("persona") or self.profile.get("user_profile")
+            if not user_profile and "other_info" in self.profile and isinstance(self.profile["other_info"], dict):
+                user_profile = self.profile["other_info"].get("user_profile")
+            
+            bio = self.profile.get("bio") or self.profile.get("description")
+            
+            parts = []
+            if name_string:
+                parts.append(name_string)
+            if bio:
+                parts.append(f"Bio: {bio}")
+            if user_profile:
+                parts.append(f"Your profile and personality: {user_profile}")
+            description = "\n".join(parts)
+            
+        return f"""# OBJECTIVE
+You're a Twitter user, and I'll present you with some posts. After you see the posts, choose some actions from the following functions.
+
+# SELF-DESCRIPTION
+Your actions should be consistent with your self-description and personality.
+{description}
+
+# RESPONSE METHOD
+Please perform actions by tool calling."""
+
+    def to_reddit_system_message(self) -> str:
+        name_string = f"Your name is {self.name}." if self.name is not None else ""
+        description = name_string
+        if self.profile:
+            user_profile = self.profile.get("persona") or self.profile.get("user_profile")
+            gender = self.profile.get("gender")
+            age = self.profile.get("age")
+            mbti = self.profile.get("mbti")
+            country = self.profile.get("country")
+            
+            if "other_info" in self.profile and isinstance(self.profile["other_info"], dict):
+                if not user_profile:
+                    user_profile = self.profile["other_info"].get("user_profile")
+                if not gender:
+                    gender = self.profile["other_info"].get("gender")
+                if not age:
+                    age = self.profile["other_info"].get("age")
+                if not mbti:
+                    mbti = self.profile["other_info"].get("mbti")
+                if not country:
+                    country = self.profile["other_info"].get("country")
+                    
+            bio = self.profile.get("bio") or self.profile.get("description")
+            
+            parts = []
+            if name_string:
+                parts.append(name_string)
+            if bio:
+                parts.append(f"Bio: {bio}")
+            if user_profile:
+                parts.append(f"Your profile and personality: {user_profile}")
+            
+            meta_parts = []
+            if gender:
+                meta_parts.append(f"gender: {gender}")
+            if age:
+                meta_parts.append(f"age: {age} years old")
+            if mbti:
+                meta_parts.append(f"MBTI: {mbti}")
+            if country:
+                meta_parts.append(f"from: {country}")
+            if meta_parts:
+                parts.append("Demographics: " + ", ".join(meta_parts))
+            description = "\n".join(parts)
+            
+        return f"""# OBJECTIVE
+You're a Reddit user, and I'll present you with some tweets. After you see the tweets, choose some actions from the following functions.
+
+# SELF-DESCRIPTION
+Your actions should be consistent with your self-description and personality.
+{description}
+
+# RESPONSE METHOD
+Please perform actions by tool calling."""
+
+    UserInfo.to_twitter_system_message = to_twitter_system_message
+    UserInfo.to_reddit_system_message = to_reddit_system_message
+except ImportError:
+    pass
+# ============================================================
 import time
 from functools import lru_cache
 from datetime import datetime, timezone
@@ -425,6 +537,42 @@ def build_base_profile(seed_path: Path, index: int) -> Dict[str, Any]:
     preview = _seed_preview(seed_path)
     username = _sanitize_identifier(stem)
     persona = _seed_text_excerpt(seed_path).strip() or preview or f"Seed profile derived from {seed_path.name}"
+
+    # ARCHITECTURE v5.15: Index-aware Anti-Dump Shield.
+    # Previously EVERY context.md seed collapsed to the identical
+    # "Political Analyst" persona, which then got replicated 1->N in the
+    # rule-based fallback of expand_profiles_to_target, producing 300 clones.
+    # Now we rotate diversified identities so the seed (used as the anchor for
+    # the rule-based fallback pool) is never the sole source of diversity.
+    if title.lower() == "context" or len(persona) > 500:
+        _rotated_first = [
+            "Ava", "Liam", "Sofia", "Maya", "Ethan", "Isabella", "Caleb", "Zoe",
+            "Nora", "Julian", "Ruby", "Leo", "Hazel", "Miles", "Iris", "Felix",
+        ]
+        _rotated_last = [
+            "Reyes", "Novak", "Singh", "Park", "Muller", "Rossi", "Chen",
+            "Andersson", "Dubois", "Kim", "Silva", "Hassan", "Yamamoto", "Schmidt",
+        ]
+        _rotated_profs = [
+            "Policy Analyst", "Data Scientist", "Investigative Journalist",
+            "Economist", "Geopolitical Strategist", "Researcher",
+            "Community Organizer", "Market Analyst",
+        ]
+        _rotated_countries = ["US", "UK", "Germany", "India", "France", "Japan", "Brazil", "Canada"]
+        first = _rotated_first[index % len(_rotated_first)]
+        last = _rotated_last[(index * 5 + 2) % len(_rotated_last)]
+        title = f"{first} {last}"
+        profession = _rotated_profs[index % len(_rotated_profs)]
+        preview = f"{profession} based in {_rotated_countries[index % len(_rotated_countries)]}, engaging on emerging developments."
+        persona = (
+            f"- Worldview: Pragmatic and data-driven.\n"
+            f"- Motivation: To understand and forecast shifts in their domain.\n"
+            f"- Style: Professional and objective.\n"
+            f"- Biases: Triggered by emotional or unsubstantiated claims."
+        )
+    else:
+        profession = "Participant"
+
     if not preview:
         preview = persona[:200]
 
@@ -439,7 +587,7 @@ def build_base_profile(seed_path: Path, index: int) -> Dict[str, Any]:
         "gender": "other",
         "mbti": "ISTJ",
         "country": "US",
-        "profession": "Participant",
+        "profession": profession,
         "interested_topics": [],
         "karma": 1000,
         "friend_count": 100,
@@ -462,19 +610,49 @@ def build_profiles(
 ) -> List[Dict[str, Any]]:
     seed_files = load_seed_files(seeds_dir, event_id=event_id)
     
-    # Intelligent Expansion: If we have only ONE seed file (like context.md),
-    # use LLM to generate multiple diverse base profiles first.
-    if len(seed_files) == 1 and llm_client:
-        context_text = seed_files[0].read_text(encoding="utf-8", errors="replace")
-        logger.info(f"Using intelligent persona generation for event {event_id}...")
-        base_profiles = generate_intelligent_base_profiles(context_text, agent_count=target_count, llm_client=llm_client)
-        if not base_profiles:
-             logger.warning("Intelligent persona generation failed, falling back to basic seed profile.")
-             base_profiles = [build_base_profile(seed_files[0], 0)]
+    # Preflight Check: If checkpoint already exists, skip slow base profile generation completely.
+    # ARCHITECTURE v5.15: BUST_PERSONA_CHECKPOINT=true ignores a stale/poisoned
+    # checkpoint (e.g. one that captured the 300 "Political Analyst" clones from
+    # a previous run where LLM tool-calling had crashed). This forces a clean
+    # regeneration of diverse personas.
+    checkpoint_dir = os.path.join(os.getcwd(), "logs", "checkpoints")
+    model_name = os.getenv("LLM_MODEL_NAME", "default_model")
+    sanitized_model = model_name.replace("/", "_").replace(":", "_").replace("\\", "_")
+    checkpoint_file = os.path.join(checkpoint_dir, f"expansion_{sanitized_model}_{event_id}.json")
+    bust_checkpoint = os.environ.get("BUST_PERSONA_CHECKPOINT", "").strip().lower() in {"1", "true", "yes", "on"}
+    if os.path.exists(checkpoint_file) and not bust_checkpoint:
+        logger.info(f"Checkpoint expansion_{sanitized_model}_{event_id}.json found. Skipping base profile generation to save time.")
+        # Build a small diversified seed set (not a single clone) so that, if the
+        # checkpoint inside expand_profiles_to_target is missing/incomplete, the
+        # rule-based fallback has multiple distinct anchors to rotate from.
+        base_profiles = [build_base_profile(seed_files[0], i) for i in range(min(8, target_count))]
+    elif bust_checkpoint and os.path.exists(checkpoint_file):
+        logger.warning(f"BUST_PERSONA_CHECKPOINT=true: deleting stale checkpoint {checkpoint_file} and regenerating personas.")
+        try:
+            os.remove(checkpoint_file)
+        except OSError:
+            pass
+        base_profiles = []
     else:
-        base_profiles = [build_base_profile(seed_path, index) for index, seed_path in enumerate(seed_files)]
+        # Intelligent Expansion: If we have only ONE seed file (like context.md),
+        # use LLM to generate multiple diverse base profiles first.
+        if len(seed_files) == 1 and llm_client:
+            context_text = seed_files[0].read_text(encoding="utf-8", errors="replace")
+            logger.info(f"Using intelligent persona generation for event {event_id}...")
+            base_profiles = generate_intelligent_base_profiles(context_text, agent_count=target_count, llm_client=llm_client)
+            if not base_profiles:
+                 # ARCHITECTURE v5.15: Graceful fallback instead of crashing.
+                 logger.warning("Intelligent persona generation returned empty. Falling back to diversified build_base_profile pool.")
+                 base_profiles = [build_base_profile(seed_files[0], i) for i in range(min(8, target_count))]
+        else:
+            base_profiles = [build_base_profile(seed_path, index) for index, seed_path in enumerate(seed_files)]
 
-    expanded_profiles = expand_profiles_to_target(base_profiles, target_count=target_count, llm_client=llm_client)
+    # Safety net: ensure base_profiles is never empty
+    if not base_profiles:
+        logger.warning("base_profiles empty after all branches. Using diversified fallback.")
+        base_profiles = [build_base_profile(seed_files[0], i) for i in range(min(8, target_count))] if seed_files else [build_base_profile(Path("context.md"), i) for i in range(8)]
+
+    expanded_profiles = expand_profiles_to_target(base_profiles, target_count=target_count, llm_client=llm_client, event_id=event_id)
 
     for index, profile in enumerate(expanded_profiles):
         # Use a deterministic base profile selection for metadata assignment
@@ -591,6 +769,7 @@ def build_simulation_config(
             "scheduled_events": scheduled_events,
             "hot_topics": [],
             "narrative_direction": "",
+            "options": event.get("options", []),
         },
     }
     if llm_model:
@@ -833,8 +1012,12 @@ def _sample_representative_actions(unit_dir: Path, max_actions: int = 50) -> str
         platform = a.get("platform")
         content = (a.get("action_args") or {}).get("content", "")
         if not content and a_type == "TELEMETRY_PROBE":
-            prob = (a.get("action_args") or {}).get("yes_probability")
-            content = f"Belief check: YES Probability = {prob}"
+            args = a.get("action_args") or {}
+            prob = args.get("yes_probability")
+            if prob is not None:
+                content = f"Belief check: YES Probability = {prob}"
+            elif "response" in args:
+                content = f"Belief check: Probabilities = {args['response']}"
         
         if content:
             lines.append(f"[R{round_n}][{platform}] {agent}: {content[:300]}")
@@ -843,22 +1026,24 @@ def _sample_representative_actions(unit_dir: Path, max_actions: int = 50) -> str
 
 
 def build_evidence_text(simulation_log_path: Path, seed_path: Path) -> str:
+    """ARCHITECTURE v3.6: Blind Grading Implementation. Removes original seed context to prevent data leakage."""
     # 1. High-level log summary
     log_excerpt = _extract_tail_text(simulation_log_path, max_chars=2000)
     
     # 2. Representative Actions Sample (Fix for Evaluator Context Overload)
     actions_sample = _sample_representative_actions(simulation_log_path.parent, max_actions=60)
     
-    # 3. Seed context excerpt
-    seed_excerpt = _seed_text_excerpt(seed_path, max_chars=3000)
-    
     parts = []
     if log_excerpt:
         parts.append(f"Simulation high-level log tail:\n{log_excerpt}")
     if actions_sample:
         parts.append(f"Representative Social Media Actions (Sample):\n{actions_sample}")
-    if seed_excerpt:
-        parts.append(f"Source Seed Context ({seed_path.name}):\n{seed_excerpt}")
+    unit_parts = simulation_log_path.parent.name.rsplit("_", 2)
+    inferred_condition = unit_parts[1] if len(unit_parts) == 3 and unit_parts[1] in CONDITIONS else None
+    if inferred_condition == "A" and seed_path.exists():
+        seed_excerpt = _seed_text_excerpt(seed_path, max_chars=4000).strip()
+        if seed_excerpt:
+            parts.append(f"No-Sim Seed Context (Condition A baseline):\n{seed_excerpt}")
         
     return "\n\n".join(parts)
 
@@ -1076,9 +1261,15 @@ def build_event_result_row(
                     error = f"{error}; {metadata_error}" if error else metadata_error
     resolved_round_jsd = round_jsd
     if round_jsd is not None:
-        if not isinstance(round_jsd, list) or len(round_jsd) != 5:
+        dev_minimal = os.environ.get("DEV_MINIMAL_MODE", "").lower() == "true"
+        max_steps = int(os.environ.get("DEV_MINIMAL_MAX_STEPS", "60")) if dev_minimal else 60
+        checkpoints = list(range(6, max_steps + 1, 6))
+        if not checkpoints or checkpoints[-1] != max_steps:
+            checkpoints.append(max_steps)
+        expected_len = len(checkpoints)
+        if not isinstance(round_jsd, list) or len(round_jsd) != expected_len:
             length_detail = len(round_jsd) if isinstance(round_jsd, list) else "non-list"
-            telemetry_error = f"round_jsd must have length 5 (got {length_detail})"
+            telemetry_error = f"round_jsd must have length {expected_len} (got {length_detail})"
             error = f"{error}; Telemetry error: {telemetry_error}" if error else f"Telemetry error: {telemetry_error}"
             resolved_round_jsd = None
             convergence_monotonic = None
@@ -1168,11 +1359,23 @@ def _resolve_runtime_protocol_parameters(dev_minimal_mode: bool) -> Dict[str, An
             "injection_round": 30,
             "telemetry_checkpoints": None,
         }
+    
+    # ARCHITECTURE v5.11: Dynamic Minimal Mode Parameters
+    # Respect environment variables or use reasonable defaults for testing
+    agent_count = _dev_minimal_int("DEV_MINIMAL_AGENT_COUNT", 100)
+    max_steps = _dev_minimal_int("DEV_MINIMAL_MAX_STEPS", 60)
+    injection_step = _dev_minimal_int("DEV_MINIMAL_INJECTION_STEP", max_steps // 2)
+    
+    # Generate checkpoints every 6 steps up to max_steps
+    checkpoints = list(range(6, max_steps + 1, 6))
+    if not checkpoints or checkpoints[-1] != max_steps:
+        checkpoints.append(max_steps)
+
     return {
-        "agent_count": _dev_minimal_int("DEV_MINIMAL_AGENT_COUNT", 100),
-        "total_simulation_hours": _dev_minimal_int("DEV_MINIMAL_MAX_STEPS", 30),
-        "injection_round": _dev_minimal_int("DEV_MINIMAL_INJECTION_STEP", 15),
-        "telemetry_checkpoints": [6, 12, 18, 24, 30],
+        "agent_count": agent_count,
+        "total_simulation_hours": max_steps,
+        "injection_round": injection_step,
+        "telemetry_checkpoints": checkpoints,
     }
 
 
@@ -1354,7 +1557,15 @@ def _is_headless_mode_enabled() -> bool:
 def _benchmark_subprocess_env(router: BenchmarkRoleRouter) -> Dict[str, str]:
     env = os.environ.copy()
     env["LLM_API_KEY"] = router.api_key
-    env["LLM_BASE_URL"] = router.base_url
+    
+    # Resolve role-specific benchmark base URL to prevent routing local queries to OpenRouter
+    base_url = router.base_url
+    if getattr(Config, "LLM_BASE_URL", None) and os.environ.get("LLM_BASE_URL"):
+        base_url = Config.LLM_BASE_URL
+    elif getattr(router, "_evaluator_base_url", None):
+        base_url = router._evaluator_base_url
+    env["LLM_BASE_URL"] = base_url
+    
     env["LLM_MODEL_NAME"] = router.model_for("benchmark")
     benchmark_mode = bool(Config.BENCHMARK_MODE)
     env["BENCHMARK_MODE"] = "true" if benchmark_mode else "false"
@@ -1474,6 +1685,7 @@ def _evaluate_row(
             condition,
             evidence_text,
             micro_questions=micro_questions,
+            event=event,
         )
     except Exception as exc:
         if _is_dev_minimal_mode_enabled() and _env_flag("DEV_MINIMAL_FALLBACK_ON_EVALUATOR_ERROR", default=True):
@@ -1501,7 +1713,12 @@ def _evaluate_row(
         evaluation_run2 = None
     else:
         try:
-            evaluation_run2 = evaluator.evaluate(event.get("question", ""), condition, evidence_text)
+            evaluation_run2 = evaluator.evaluate(
+                event.get("question", ""), 
+                condition, 
+                evidence_text,
+                event=event
+            )
         except Exception:  # noqa: BLE001 - run2 is reliability-only, keep run1 scoring if it fails
             evaluation_run2 = None
     probabilities = evaluation_run1.get("normalized_probabilities") or evaluation_run1.get("probabilities")
@@ -2017,12 +2234,18 @@ def _write_run_manifest(run_dir: Path, manifest: Mapping[str, Any]) -> None:
     (run_dir / "run_manifest.json").write_text(json.dumps(dict(manifest), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def sanitize_model_name(model_name: str) -> str:
+    """Sanitize model name for directory usage by replacing slashes and colons."""
+    return model_name.replace("/", "_").replace(":", "_")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the ECN-BENCH protocol benchmark end-to-end")
     parser.add_argument("--seeds-dir", required=True)
     parser.add_argument("--events-raw", required=True)
     parser.add_argument("--injection-bank", default=DEFAULT_INJECTION_BANK)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--model-tag", help="Explicit model tag for hierarchical logging")
     parser.add_argument("--events", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--trace-out")
@@ -2043,7 +2266,7 @@ def main() -> None:
     runtime_injection_round = int(runtime_protocol["injection_round"])
 
     router = BenchmarkRoleRouter.from_config()
-    benchmark_model = router.model_for("benchmark")
+    benchmark_model = args.model_tag or router.model_for("benchmark")
     
     # Parse event_ids list if provided
     filter_event_ids = None
@@ -2177,7 +2400,8 @@ def main() -> None:
 
     output_root = Path(args.output_dir)
     run_id = _utc_run_id()
-    run_dir = output_root / run_id
+    sanitized_model = sanitize_model_name(benchmark_model)
+    run_dir = output_root / sanitized_model / run_id
     traces_dir = run_dir / "traces"
 
     trace_path = Path(args.trace_out) if args.trace_out else traces_dir / "execution.jsonl"
@@ -2306,6 +2530,7 @@ def main() -> None:
         config_builder=_protocol_config_builder,
         evaluator=_evaluate_row,
         manifest=manifest,
+        model_name=benchmark_model,
     )
     runtime_topology_sample = _load_runtime_topology_sample(run_dir, condition_matrix)
     if runtime_topology_sample is not None:

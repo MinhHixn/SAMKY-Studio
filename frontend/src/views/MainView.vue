@@ -3,7 +3,7 @@
     <!-- Header -->
     <header class="app-header">
       <div class="header-left">
-        <div class="brand" @click="router.push('/')">MIROFISH OFFLINE</div>
+        <div class="brand" @click="router.push('/')">SAMKY STUDIO</div>
       </div>
       
       <div class="header-center">
@@ -203,6 +203,7 @@ const handleNewProject = async () => {
     const formData = new FormData()
     pending.files.forEach(f => formData.append('files', f))
     formData.append('simulation_requirement', pending.simulationRequirement)
+    if (pending.projectName) formData.append('project_name', pending.projectName)
     
     const res = await generateOntology(formData)
     if (res.success) {

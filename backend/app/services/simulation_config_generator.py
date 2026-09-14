@@ -12,6 +12,9 @@ Adopt step-by-step generation strategy to avoid failures from generating too lon
 
 import json
 import math
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -230,14 +233,30 @@ class SimulationConfigGenerator:
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
+        selected_mode = os.environ.get('SAM_RUNTIME_MODE')
+        endpoint_host = urlparse(self.base_url).hostname
+        self._online_provider = (
+            selected_mode == 'online' if selected_mode in {'online', 'offline'}
+            else endpoint_host not in {'localhost', '127.0.0.1', '::1', 'ollama', 'host.docker.internal'}
+        )
+        reasoning_setting = os.environ.get('OPENROUTER_REASONING_ENABLED', '').strip().lower()
+        self._disable_openrouter_reasoning = (
+            'openrouter.ai' in self.base_url
+            and (
+                reasoning_setting in {'false', '0', 'no', 'off'}
+                or (not reasoning_setting and self.model_name.lower().startswith('deepseek/deepseek-v4-flash'))
+            )
+        )
 
         if not self.api_key:
             raise ValueError("LLM_API_KEY not configured")
 
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        client_options = {'api_key': self.api_key, 'base_url': self.base_url}
+        if self._online_provider:
+            # The outer retry loop already handles failures. Bound each hosted
+            # request so one stalled batch cannot freeze preparation for 30m.
+            client_options.update(timeout=min(float(Config.LLM_TIMEOUT_SECONDS), 120.0), max_retries=0)
+        self.client = OpenAI(**client_options)
     
     def generate_config(
         self,
@@ -291,38 +310,49 @@ class SimulationConfigGenerator:
         
         reasoning_parts = []
         
-        # ========== Step 1: Generate time configuration ==========
-        report_progress(1, "Generating time configuration...")
         num_entities = len(entities)
-        time_config_result = self._generate_time_config(context, num_entities)
+        # These LLM requests depend on the same context, not on one another.
+        # Keep their results keyed by batch so completion order cannot reorder agents.
+        report_progress(0, f"Generating time, event and {num_batches} agent batches...")
+        batch_results = {}
+        with ThreadPoolExecutor(max_workers=min(4, 2 + num_batches)) as executor:
+            futures = {
+                executor.submit(self._generate_time_config, context, num_entities): ("time", None),
+                executor.submit(self._generate_event_config, context, simulation_requirement, entities): ("event", None),
+            }
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * self.AGENTS_PER_BATCH
+                end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
+                futures[executor.submit(
+                    self._generate_agent_configs_batch,
+                    context=context,
+                    entities=entities[start_idx:end_idx],
+                    start_idx=start_idx,
+                    simulation_requirement=simulation_requirement,
+                )] = ("agents", batch_idx)
+
+            completed = 0
+            for future in as_completed(futures):
+                kind, batch_idx = futures[future]
+                try:
+                    value = future.result()
+                except Exception:
+                    logger.exception("Configuration generation failed: %s batch=%s", kind, batch_idx)
+                    raise
+                if kind == "time":
+                    time_config_result = value
+                elif kind == "event":
+                    event_config_result = value
+                else:
+                    batch_results[batch_idx] = value
+                completed += 1
+                report_progress(completed, f"Completed {kind} configuration ({completed}/{2 + num_batches})")
+
         time_config = self._parse_time_config(time_config_result, num_entities)
-        reasoning_parts.append(f"Time config: {time_config_result.get('reasoning', 'Success')}")
-
-        # ========== Step 2: Generate event configuration ==========
-        report_progress(2, "Generating event configuration and hot topics...")
-        event_config_result = self._generate_event_config(context, simulation_requirement, entities)
         event_config = self._parse_event_config(event_config_result)
+        reasoning_parts.append(f"Time config: {time_config_result.get('reasoning', 'Success')}")
         reasoning_parts.append(f"Event config: {event_config_result.get('reasoning', 'Success')}")
-
-        # ========== Step 3-N: Generate agent configurations in batches ==========
-        all_agent_configs = []
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * self.AGENTS_PER_BATCH
-            end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
-            batch_entities = entities[start_idx:end_idx]
-
-            report_progress(
-                3 + batch_idx,
-                f"Generating agent configuration ({start_idx + 1}-{end_idx}/{len(entities)})..."
-            )
-            
-            batch_configs = self._generate_agent_configs_batch(
-                context=context,
-                entities=batch_entities,
-                start_idx=start_idx,
-                simulation_requirement=simulation_requirement
-            )
-            all_agent_configs.extend(batch_configs)
+        all_agent_configs = [config for batch_idx in range(num_batches) for config in batch_results[batch_idx]]
         
         reasoning_parts.append(f"Agent config: Successfully generated {len(all_agent_configs)}")
 
@@ -434,21 +464,23 @@ class SimulationConfigGenerator:
         """LLM call with retry, including JSON repair logic"""
         import re
 
-        max_attempts = 3
+        max_attempts = 2 if self._online_provider else 3
         last_error = None
 
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
+                request_options = {
+                    'model': self.model_name,
+                    'messages': [
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': prompt},
                     ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # Lower temperature with each retry
-                    # Don't set max_tokens, let LLM generate freely
-                )
+                    'response_format': {'type': 'json_object'},
+                    'temperature': 0.7 - (attempt * 0.1),
+                }
+                if self._disable_openrouter_reasoning:
+                    request_options['extra_body'] = {'reasoning': {'enabled': False}}
+                response = self.client.chat.completions.create(**request_options)
 
                 # Defensive check for OpenRouter/Provider failures that return null choices
                 if not hasattr(response, 'choices') or not response.choices:
@@ -463,6 +495,8 @@ class SimulationConfigGenerator:
 
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
+                if not content:
+                    raise ValueError(f'LLM returned empty content (finish_reason={finish_reason})')
 
                 # Check if output was truncated
                 if finish_reason == 'length':

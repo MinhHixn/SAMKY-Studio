@@ -1,12 +1,20 @@
 # MiroFish-Offline Roadmap
 
-## Current State (v0.2.0)
+## Current State (v0.2.5)
 
-Fully local fork running on Neo4j CE + Ollama. All Zep Cloud dependencies removed. Core pipeline works: upload text → build knowledge graph → entity extraction → simulation → report generation.
+Fully local fork running on Neo4j CE + Ollama. All Zep Cloud dependencies removed. Optimized for high-fidelity synthetic expansion using **Architecture v3.5 (Async Micro-Batching)**. Successfully verified on targets of 60+ agents with deterministic benchmark telemetry.
 
 ---
 
-## Near Term
+## Near Term (Released/Done in v0.2.5)
+- [x] **Local Scaling Optimization**: Implemented Async Micro-Batching (v3.5) for Synthetic Expansion.
+- [x] **Fault-Tolerant Generation**: Integrated `json-repair` and granular retry logic for complex persona generation.
+- [x] **Attention Dilution Fix**: Chunked profile generation into BATCH_SIZE=5 to maintain LLM coherence.
+- [x] **Benchmarking Protocol**: Hardened `run_ecnbench_protocol.py` for headless, deterministic large-scale runs.
+
+---
+
+## Near Term (Next Up)
 
 ### v0.3.0 — Stability & Python Compatibility
 - [ ] Fix `camel-oasis` / `camel-ai` compatibility with Python 3.12+ (currently requires <3.12)

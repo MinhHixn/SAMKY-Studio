@@ -3,6 +3,7 @@
 from __future__ import annotations
 from copy import deepcopy
 import os
+import re
 from typing import Any, Dict, List
 
 
@@ -63,6 +64,7 @@ import logging
 import asyncio
 import os
 import random
+import math
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 from ..utils.llm_client import LLMClient
@@ -189,47 +191,99 @@ def _validate_persona_dna(persona_text: str) -> bool:
     )
     return has_trigger and has_structure and len(persona_text) > 80
 
-async def _generate_synthetic_batch_async(base: Dict[str, Any], count: int, client: LLMClient, seed: int = 0) -> List[Dict[Dict[str, Any]]]:
-    """RESTORED: High-fidelity synthetic expansion with 4-Axis DNA blueprints."""
+def _post_process_synthetic_profile(profile: Dict[str, Any], base_template: Dict[str, Any]) -> Dict[str, Any]:
+    """ARCHITECTURE v3.8: Advanced defensive filtering and structural normalization."""
+    # Ensure name is a valid string
+    name = profile.get("name")
+    if isinstance(name, list):
+        profile["name"] = " ".join(str(x) for x in name)
+    elif not name:
+        profile["name"] = f"{base_template.get('profession', 'Agent')} #{profile.get('user_id', 'X')}"
+
+    # CRITICAL: Fix 'bio' if LLM returned an array (common Qwen-7B failure)
+    bio = profile.get("bio")
+    if isinstance(bio, list):
+        # Join array into a single string, then truncate for conciseness
+        profile["bio"] = ". ".join(str(x) for x in bio).strip()[:160]
+    elif isinstance(bio, str):
+        profile["bio"] = bio[:160]
+    else:
+        profile["bio"] = base_template.get("bio", "Social media participant")[:160]
+    
+    # Fix 'persona' if returned as array
+    persona = profile.get("persona")
+    if isinstance(persona, list):
+        profile["persona"] = "\n".join(f"- {str(x).strip('- ')}" for x in persona)
+    elif not isinstance(persona, str):
+        profile["persona"] = base_template.get("persona", "A neutral observer.")
+
+    # Validate Age
+    try:
+        age_val = profile.get("age")
+        if isinstance(age_val, str):
+            profile["age"] = int(re.sub(r'[^0-9]', '', age_val))
+        else:
+            profile["age"] = int(age_val or 30)
+    except (ValueError, TypeError, re.error):
+        profile["age"] = 30
+
+    # Strict normalization for core fields
+    for field in ["name", "bio", "persona", "profession", "country", "mbti"]:
+        if field in profile:
+            profile[field] = str(profile[field]).strip().replace('"', "'")
+            
+    return profile
+
+async def _generate_synthetic_batch_async(base: Dict[str, Any], count: int, client: LLMClient, seed: int = 0) -> List[Dict[str, Any]]:
+    """ARCHITECTURE v3.8: High-success Persona Generation with Structural Anchors."""
     def _run():
-        prompt = f"""You are an expert in social psychology and synthetic data generation.
-Your task is to take the following BASE PERSONA and expand it into {count} unique, first-class identities.
+        # Minimal high-signal attributes for example to reduce token noise
+        example_json = {
+            "name": "Jordan Smith",
+            "bio": "Financial analyst and decentralized tech advocate.",
+            "persona": "- Worldview: Empirical skepticism...\n- Motivation: Protect wealth...\n- Style: Professional...\n- Biases: Triggered by inflation.",
+            "age": 34,
+            "gender": "male",
+            "mbti": "INTJ",
+            "profession": "Analyst",
+            "country": "UK",
+            "interested_topics": ["Finance", "Crypto"]
+        }
 
-BASE PERSONA:
-Name: {base.get('name')}
-Bio: {base.get('bio')}
-Profession: {base.get('profession')}
-Existing DNA Template: 
-{base.get('persona')}
+        prompt = f"""Task: Generate {count} unique stakeholder personas.
+Target: Expand '{base.get('name')}' ({base.get('profession')}) into distinct identities.
 
-INSTRUCTIONS FOR COGNITIVE EXPANSION (CRITICAL):
-1. NO CLONES. Every identity must have a unique name, background, and specific reason for engaging.
-2. 4-AXIS BLUEPRINT: Every variation MUST have a 'persona' field consisting of exactly 4 detailed bullet points:
-   - Worldview & Epistemology: How they filter truth.
-   - Primary Motivation: Their personal objective.
-   - Communication Style: Their textual fingerprint.
-   - Biases & Triggers: MUST start with 'Triggered by...' or 'Biased against...'.
-3. DIVERSIFY: vary the demographic spread (age, gender, country) and the epistemic stance significantly.
-4. Each variation must represent a UNIQUE stakeholder or observer.
+STRICT JSON FORMAT:
+[
+  {{
+    "name": "Full Name",
+    "bio": "Concise string (max 160 chars)",
+    "persona": "- Axis 1: ...\\n- Axis 2: ...\\n- Axis 3: ...\\n- Axis 4: Biased against...",
+    "age": 30,
+    "gender": "male/female/other",
+    "mbti": "XXXX",
+    "profession": "Specific title",
+    "country": "Full Name",
+    "interested_topics": ["topic1", "topic2"]
+  }}
+]
 
-OUTPUT FORMAT:
-Return ONLY a valid JSON list of {count} objects. Each object MUST contain:
-- name: Full name
-- bio: Unique social media bio
-- persona: The 4-Axis DNA string (4 bullet points)
-- age: Integer
-- gender: male, female, or other
-- mbti: MBTI type
-- profession: Specific occupation
-- country: Country name
-- interested_topics: List of strings
-"""
+RULES:
+1. 'bio' MUST be a STRING. NEVER an array [].
+2. 'persona' MUST be a STRING with 4 bullet points.
+3. Every persona MUST include a 'Biases & Triggers' point.
+4. Each of the {count} identities must have a unique name and background.
+
+Example Object:
+{json.dumps(example_json)}
+
+Generate exactly {count} objects in a JSON list:"""
         try:
-            # RESTORED: Use natural temperature (0.7) for creativity
+            # Enable repair_truncated_json for better fault tolerance
             response = client.chat_json([
-                {"role": "system", "content": "You are a master sociological researcher specializing in synthetic population modeling. Output strictly valid JSON."},
+                {"role": "system", "content": "You are a sociological research unit. Output ONLY valid JSON list. 'bio' field MUST be a string, NOT an array."},
                 {"role": "user", "content": prompt}
-            ], enforce_benchmark_params=False, max_tokens=4096, temperature=0.7)
+            ], enforce_benchmark_params=False, max_tokens=4000, temperature=0.7, repair_truncated_json=True)
             
             if isinstance(response, list):
                 return response
@@ -240,7 +294,7 @@ Return ONLY a valid JSON list of {count} objects. Each object MUST contain:
                         return val
             return []
         except Exception as e:
-            logger.error(f"Restored expansion batch failed: {e}")
+            logger.error(f"Batch generation failed: {e}")
             return []
 
     return await asyncio.to_thread(_run)
@@ -248,30 +302,51 @@ Return ONLY a valid JSON list of {count} objects. Each object MUST contain:
 def expand_profiles_to_target(
     base_profiles: List[Dict[str, Any]], 
     target_count: int = 3000,
-    llm_client: Optional[LLMClient] = None
+    llm_client: Optional[LLMClient] = None,
+    event_id: str = "default"
 ) -> List[Dict[str, Any]]:
     """
-    ARCHITECTURE v3.4: Intelligent Synthetic Expansion.
-    Scales a high-fidelity base set to target size using LLM-driven cognitive blueprints.
+    ARCHITECTURE v3.5: Intelligent Async Micro-Batching Expansion.
+    Scales a high-fidelity base set using concurrent small batches to prevent LLM attention dilution.
+    Uses event-specific checkpoints to prevent Context Bleed.
     """
     if not base_profiles:
         raise ValueError("Cannot expand profiles from an empty base list")
     
+    # ARCHITECTURE v3.11: Ensure rule is applied to base profiles if we return them directly
     if target_count <= len(base_profiles):
-        return base_profiles[:target_count]
+        res = base_profiles[:target_count]
+        for profile in res:
+            if "persona" in profile:
+                rule = "- Global Language Rule: Speak and post strictly in English only."
+                if rule not in profile["persona"]:
+                    profile["persona"] = profile["persona"].strip() + f"\n{rule}"
+        return res
 
-    checkpoint_file = os.path.join(os.getcwd(), "logs", "synthetic_expansion_checkpoint.json")
+    # ARCHITECTURE v4.1: Event-specific checkpoint to prevent Memory Leak / Context Bleed
+    checkpoint_dir = os.path.join(os.getcwd(), "logs", "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    model_name = os.getenv("LLM_MODEL_NAME", "default_model")
+    sanitized_model = model_name.replace("/", "_").replace(":", "_").replace("\\", "_")
+    checkpoint_file = os.path.join(checkpoint_dir, f"expansion_{sanitized_model}_{event_id}.json")
     expanded: List[Dict[str, Any]] = []
 
     if os.path.exists(checkpoint_file):
         try:
             with open(checkpoint_file, "r", encoding="utf-8") as f:
                 expanded = json.load(f)
-            logger.info(f"Loaded {len(expanded)} profiles from checkpoint.")
+            logger.info(f"Loaded {len(expanded)} profiles from event checkpoint: {event_id}")
         except Exception as e:
             logger.warning(f"Failed to load checkpoint: {e}")
 
     if len(expanded) >= target_count:
+        # ARCHITECTURE v3.11: Ensure rule is applied even when returning from checkpoint
+        for profile in expanded[:target_count]:
+            if "persona" in profile:
+                rule = "- Global Language Rule: Speak and post strictly in English only."
+                if rule not in profile["persona"]:
+                    profile["persona"] = profile["persona"].strip() + f"\n{rule}"
         return expanded[:target_count]
 
     try:
@@ -286,7 +361,6 @@ def expand_profiles_to_target(
         for i, base in enumerate(base_profiles):
             original = deepcopy(base)
             original["user_id"] = i
-            # Unique identifiers
             base_name = original.get("name", "Agent")
             original["name"] = f"{base_name} #{i}"
             original["username"] = f"{original.get('username', 'agent')}_{i}"
@@ -296,68 +370,144 @@ def expand_profiles_to_target(
         with open(checkpoint_file, "w", encoding="utf-8") as f:
             json.dump(expanded, f)
 
-    # RESTORED: Intelligent Batch Expansion
+    # MICRO-BATCHING ARCHITECTURE
     if llm_client:
-        max_retries = 3
-        batch_size = 5
-        chunk_size = 25 # Expand in chunks to maintain performance
+        MAX_GLOBAL_RETRIES = 10  # Increased for extreme robustness
+        BATCH_SIZE = 5  # High-stability size for complex persona JSON
+        MAX_CONCURRENT_BATCHES = 3  # Limit concurrency for local LLM stability
         
-        while len(expanded) < target_count and max_retries > 0:
+        global_retries = MAX_GLOBAL_RETRIES
+        total_failures = 0
+        iteration_count = 0
+        
+        while len(expanded) < target_count and global_retries > 0:
+            iteration_count += 1
             remaining = target_count - len(expanded)
-            current_chunk = min(chunk_size, remaining)
-            logger.info(f"Synthetic expansion: {len(expanded)}/{target_count} ready. Generating chunk of {current_chunk}...")
+            # Determine how many batches we need to run concurrently
+            batches_needed = math.ceil(remaining / BATCH_SIZE)
+            current_concurrency = min(batches_needed, MAX_CONCURRENT_BATCHES)
+            
+            logger.info(f"Expansion Progress: {len(expanded)}/{target_count} (Total Failures: {total_failures}). "
+                        f"Requesting {current_concurrency} parallel batches of {BATCH_SIZE}...")
             
             tasks = []
-            for i in range(0, current_chunk, batch_size):
-                b_idx = (len(expanded) + i) % len(base_profiles)
-                n = min(batch_size, current_chunk - i)
-                tasks.append(_generate_synthetic_batch_async(base_profiles[b_idx], n, llm_client, seed=len(expanded) + i))
+            for i in range(current_concurrency):
+                b_idx = (len(expanded) + (i * BATCH_SIZE)) % len(base_profiles)
+                # Vary seed by iteration and batch index to prevent repetitive hallucinations
+                tasks.append(_generate_synthetic_batch_async(
+                    base_profiles[b_idx], BATCH_SIZE, llm_client, 
+                    seed=len(expanded) + (iteration_count * 100) + i
+                ))
             
             results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
             
-            new_batch_count = 0
+            new_agents_found = 0
             for batch in results:
                 if isinstance(batch, Exception) or not batch:
+                    total_failures += BATCH_SIZE # Whole batch failed
                     continue
+                
+                batch_valid_count = 0
                 for v in batch:
                     if len(expanded) >= target_count: break
-                    if not isinstance(v, dict): continue
+                    if not isinstance(v, dict): 
+                        total_failures += 1
+                        continue
                     
-                    # DNA VALIDATION: Ensure expansion follows the 4-axis rule
+                    # STRICT DNA VALIDATION
                     dna = v.get("persona", "")
                     if not _validate_persona_dna(dna):
+                         total_failures += 1
+                         logger.debug(f"Persona validation failed for synthetic agent.")
                          continue
                     
+                    # ARCHITECTURE v3.7: Apply defensive post-processing
                     v_idx = len(expanded)
+                    processed_v = _post_process_synthetic_profile(v, base_profiles[v_idx % len(base_profiles)])
+                    
+                    # ARCHITECTURE v3.11: Global Linguistic Firewall Injection
+                    if "persona" in processed_v:
+                        processed_v["persona"] += "\n- Global Language Rule: Speak and post strictly in English only."
+                    
                     # Merge with base template for safety, but overwrite with synthetic data
                     new_v = deepcopy(base_profiles[v_idx % len(base_profiles)])
-                    new_v.update(v)
+                    new_v.update(processed_v)
                     new_v["user_id"] = v_idx
-                    new_v["name"] = f"{v.get('name', 'Agent')} #{v_idx}"
-                    new_v["username"] = f"{v.get('name', 'agent').lower().replace(' ', '_')}_{v_idx}"
+                    new_v["name"] = f"{processed_v.get('name', 'Agent')} #{v_idx}"
+                    new_v["username"] = f"{processed_v.get('name', 'agent').lower().replace(' ', '_')}_{v_idx}"
                     
                     expanded.append(new_v)
-                    new_batch_count += 1
+                    new_agents_found += 1
+                    batch_valid_count += 1
+                
+                # Account for LLM returning fewer items than requested
+                if len(batch) < BATCH_SIZE:
+                    total_failures += (BATCH_SIZE - len(batch))
             
-            if new_batch_count == 0:
-                max_retries -= 1
-                logger.warning(f"Batch expansion yielded 0 valid agents. Retries left: {max_retries}")
+            if new_agents_found == 0:
+                global_retries -= 1
+                logger.warning(f"Micro-batch generation yielded 0 valid agents. Global retries left: {global_retries}")
+            else:
+                # Reset retries if we're making progress
+                global_retries = MAX_GLOBAL_RETRIES
             
             with open(checkpoint_file, "w", encoding="utf-8") as f:
                 json.dump(expanded, f)
 
     # Hardened Fallback (Rule-based) if LLM fails
+    # ARCHITECTURE v5.15: Diversified rule-based fallback.
+    # Previously this branch deep-copied a SINGLE base profile `needed` times,
+    # producing 300 identical "Political Analyst" clones (name/username/bio all
+    # collapsed) whenever intelligent generation + synthetic batches failed
+    # (typically because the vLLM 400 tool/strict crash killed every LLMAction).
+    # This made the swarm behaviourally homogeneous and invalidated Claim 1/3.
+    # Now each replica gets a distinct identity drawn from rotated pools.
     needed = target_count - len(expanded)
     if needed > 0:
         logger.warning(f"Resorting to DIVERSIFIED rule-based fallback for {needed} agents.")
+        _fallback_first_names = [
+            "Ava", "Liam", "Sofia", "Noah", "Maya", "Ethan", "Isabella", "Lucas",
+            "Mia", "Caleb", "Zoe", "Owen", "Lily", "Carter", "Aria", "Wyatt",
+            "Nora", "Julian", "Ruby", "Leo", "Hazel", "Miles", "Iris", "Felix",
+            "Vera", "Hugo", "Clara", "Theo", "Juno", "Oscar"
+        ]
+        _fallback_last_names = [
+            "Carter", "Reyes", "Okafor", "Novak", "Singh", "Park", "Muller",
+            "Rossi", "Chen", "Andersson", "Dubois", "Kim", "Silva", "Hassan",
+            "Yamamoto", "Schmidt", "Lopez", "Ivanov", "Bauer", "Nguyen",
+            "Fernandez", "Walsh", "Khan", "Petrov", "Mbeki", "Tanaka", "Costa"
+        ]
+        _fallback_mbtis = ["INTJ", "ENTP", "INFJ", "ESTP", "ENFP", "ISTJ", "ENTJ", "ISFP"]
         for i in range(needed):
             v_idx = len(expanded)
             b_idx = v_idx % len(base_profiles)
             var = deepcopy(base_profiles[b_idx])
             var["user_id"] = v_idx
-            var["persona"] = _get_diversified_dna(var.get('profession', 'Expert'), var.get('country', 'US'), v_idx)
-            var["name"] = f"{var.get('profession', 'Agent')} #{v_idx}"
+
+            # Rotate diversified identity attributes so no two clones are identical
+            first = _fallback_first_names[v_idx % len(_fallback_first_names)]
+            last = _fallback_last_names[(v_idx * 7 + 3) % len(_fallback_last_names)]
+            profession = var.get("profession", "Analyst") or "Analyst"
+            country = var.get("country", "US") or "US"
+            var["persona"] = _get_diversified_dna(profession, country, v_idx)
+            var["name"] = f"{first} {last} #{v_idx}"
+            var["realname"] = f"{first} {last}"
+            var["username"] = f"{first.lower()}_{last.lower()}_{v_idx}"
+            var["mbti"] = _fallback_mbtis[v_idx % len(_fallback_mbtis)]
+            var["age"] = 22 + (v_idx * 13 % 45)  # 22..66 spread
+            var["bio"] = f"{profession} based in {country}, engaging on emerging developments."
+            var["entity_name"] = var["name"]
+            var["entity_uuid"] = f"agent-fallback-{v_idx}"
             expanded.append(var)
+
+    # FINAL PASS: Ensure EVERY agent (base, synthetic, fallback, checkpoint)
+    # has the Global Linguistic Firewall Rule injected.
+    logger.info(f"Injecting Global Language Rule into {len(expanded)} profiles...")
+    for profile in expanded:
+        if "persona" in profile:
+            rule = "- Global Language Rule: Speak and post strictly in English only."
+            if rule not in profile["persona"]:
+                profile["persona"] = profile["persona"].strip() + f"\n{rule}"
 
     return expanded[:target_count]
 

@@ -42,10 +42,15 @@ export const getReport = (reportId) => {
   return service.get(`/api/report/${reportId}`)
 }
 
+export const getReportSections = (reportId) => {
+  return service.get(`/api/report/${reportId}/sections`)
+}
+
 /**
  * Chat with Report Agent
  * @param {Object} data - { simulation_id, message, chat_history? }
  */
 export const chatWithReport = (data) => {
-  return requestWithRetry(() => service.post('/api/report/chat', data), 3, 1000)
+  // A timed-out POST may still be running. Do not start duplicate agent turns.
+  return service.post('/api/report/chat', data, { timeout: 120000 })
 }

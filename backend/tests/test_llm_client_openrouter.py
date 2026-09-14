@@ -6,6 +6,45 @@ import pytest
 from app.utils import llm_client as llm_client_module
 
 
+def test_explicit_offline_endpoint_wins_over_previous_online_environment(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_BASE_URL", "https://previous-provider.example/v1")
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+    client = llm_client_module.LLMClient(api_key="sam-local", base_url="http://localhost:11434/v1", model="local-model")
+    assert client.base_url == "http://localhost:11434/v1"
+    assert store["init_kwargs"]["base_url"] == "http://localhost:11434/v1"
+
+
+def test_deepseek_v4_flash_uses_direct_answer_by_default(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+    monkeypatch.delenv("OPENROUTER_REASONING_ENABLED", raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    client = llm_client_module.LLMClient(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash-0731",
+    )
+
+    assert client.chat([{"role": "user", "content": "Reply OK"}]) == "ok"
+    assert store["create_kwargs"]["extra_body"] == {"reasoning": {"enabled": False}}
+
+
+def test_deepseek_v4_flash_can_opt_into_reasoning(monkeypatch):
+    store = {}
+    _install_fake_openai(monkeypatch, store)
+    monkeypatch.setenv("OPENROUTER_REASONING_ENABLED", "true")
+    monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
+    client = llm_client_module.LLMClient(
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash-0731",
+    )
+
+    assert client.chat([{"role": "user", "content": "Reply OK"}]) == "ok"
+    assert "extra_body" not in store["create_kwargs"]
+
+
 def _install_fake_openai(monkeypatch, store):
     class FakeCompletions:
         def create(self, **kwargs):
@@ -305,7 +344,7 @@ def test_retry_backoff_applies_deterministic_jitter(monkeypatch):
     assert store["sleep_calls"] == [0.625, 1.25]
 
 
-def test_rate_limit_retries_even_when_max_retries_zero(monkeypatch):
+def test_rate_limit_respects_zero_retry_budget(monkeypatch):
     store = {"calls": 0, "sleep_calls": []}
 
     class FakeRateLimitError(Exception):
@@ -349,11 +388,12 @@ def test_rate_limit_retries_even_when_max_retries_zero(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_JITTER_MAX", 0.0, raising=False)
 
     client = llm_client_module.LLMClient()
-    response = client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
+    # A zero retry budget must surface 429 rather than hide an unbounded wait.
+    with pytest.raises(FakeRateLimitError):
+        client.chat(messages=[{"role": "user", "content": "hello"}], temperature=0.4)
 
-    assert response == "ok"
-    assert store["calls"] == 2
-    assert store["sleep_calls"] == [300.0]
+    assert store["calls"] == 1
+    assert store["sleep_calls"] == []
 
 
 def test_rate_limit_reset_wait_zero_uses_min_positive_sleep(monkeypatch):
@@ -394,7 +434,7 @@ def test_rate_limit_reset_wait_zero_uses_min_positive_sleep(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
-    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 1, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.1, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_JITTER_MAX", 0.0, raising=False)
@@ -436,7 +476,7 @@ def test_rate_limit_without_reset_uses_backoff_sleep(monkeypatch):
     monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_HTTP_REFERER", None, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "OPENROUTER_X_TITLE", None, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "BENCHMARK_MODE", False, raising=False)
-    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 0, raising=False)
+    monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_RETRIES", 1, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_INITIAL_DELAY", 0.2, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_MAX_DELAY", 1.0, raising=False)
     monkeypatch.setattr(llm_client_module.Config, "LLM_RETRY_JITTER_MAX", 0.25, raising=False)
@@ -561,7 +601,14 @@ def test_chat_json_repairs_unterminated_string_at_eof_when_opted_in(monkeypatch)
     assert parsed == {"a": "abc"}
 
 
-def test_chat_json_truncation_repair_is_opt_in(monkeypatch):
+def test_chat_json_uses_safe_parser_repair_even_without_opt_in(monkeypatch):
+    # BEHAVIOUR CHANGE (documented in llm_client.py as "INTEGRATION: Use SafeParser logic for
+    # all JSON calls"): chat_json() now always attempts SafeParser.parse_llm_json() (backed by
+    # the json_repair library) before falling through to the narrower, opt-in
+    # _repair_truncated_json() path. SafeParser recovers this markdown-fenced truncated payload
+    # regardless of the repair_truncated_json flag, so this is no longer opt-in in practice --
+    # only the bespoke truncation-specific repair below it still is. Renamed from
+    # test_chat_json_truncation_repair_is_opt_in, which asserted the pre-SafeParser contract.
     client = _create_test_client(monkeypatch)
     monkeypatch.setattr(
         client,
@@ -569,11 +616,18 @@ def test_chat_json_truncation_repair_is_opt_in(monkeypatch):
         lambda **kwargs: "```json\n{\"items\": [1, 2\n```",
     )
 
-    with pytest.raises(ValueError, match="Invalid JSON format from LLM:"):
-        client.chat_json(messages=[{"role": "user", "content": "return json"}])
+    parsed = client.chat_json(messages=[{"role": "user", "content": "return json"}])
+
+    assert parsed == {"items": [1, 2]}
 
 
-def test_chat_json_repair_keeps_error_for_non_truncated_payload(monkeypatch):
+def test_chat_json_safe_parser_repairs_non_truncated_malformed_payload(monkeypatch):
+    # Same root cause as test_chat_json_uses_safe_parser_repair_even_without_opt_in: SafeParser
+    # (via json_repair) fixes this stray double-comma too, independent of repair_truncated_json.
+    # Renamed from test_chat_json_repair_keeps_error_for_non_truncated_payload, which asserted
+    # that only the narrower truncation-specific repair ran here and that it correctly declined
+    # to touch non-truncated malformed JSON -- true of that mechanism alone, no longer true of
+    # chat_json() as a whole now that SafeParser runs first.
     client = _create_test_client(monkeypatch)
     monkeypatch.setattr(
         client,
@@ -581,8 +635,9 @@ def test_chat_json_repair_keeps_error_for_non_truncated_payload(monkeypatch):
         lambda **kwargs: "{\"items\": [1,, 2]}",
     )
 
-    with pytest.raises(ValueError, match="Invalid JSON format from LLM:"):
-        client.chat_json(
-            messages=[{"role": "user", "content": "return json"}],
-            repair_truncated_json=True,
-        )
+    parsed = client.chat_json(
+        messages=[{"role": "user", "content": "return json"}],
+        repair_truncated_json=True,
+    )
+
+    assert parsed == {"items": [1, 2]}

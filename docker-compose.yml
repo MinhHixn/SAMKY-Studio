@@ -3,9 +3,15 @@ services:
     build: .
     # Or use pre-built image (when available):
     # image: ghcr.io/nikmcfly/mirofish-offline:latest
-    container_name: mirofish-offline
+    container_name: samky-studio
     env_file:
       - .env
+    environment:
+      # Container-to-container addresses for the fully offline stack.
+      LLM_BASE_URL: http://ollama:11434/v1
+      OPENAI_API_BASE_URL: http://ollama:11434/v1
+      EMBEDDING_BASE_URL: http://ollama:11434
+      NEO4J_URI: bolt://neo4j:7687
     ports:
       - "3000:3000"
       - "5001:5001"
@@ -48,13 +54,13 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
 
 volumes:
   neo4j_data:

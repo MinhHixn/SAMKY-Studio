@@ -1,0 +1,26 @@
+<template>
+  <footer class="progress-dock"><div class="progress-inner">
+    <div class="progress-head"><div class="progress-title"><span class="status-dot" :class="{done,failed:error}" /><span aria-live="polite">{{ title }}</span></div><span class="mono progress-number">{{ detail || (value === null ? '…' : Math.round(value) + '%') }}</span></div>
+    <ol v-if="phase!=='reporting'" class="steps" :aria-label="t('steps')"><li v-for="(item,index) in stages" :key="item" :class="{current:index===activeIndex,finished:index<activeIndex}" :aria-current="index===activeIndex?'step':undefined"><span class="step-index">{{ index<activeIndex?'✓':String(index+1).padStart(2,'0') }}</span><span>{{ t(done&&item==='running'?'completed':item) }}</span></li></ol>
+    <div class="progress-track" role="progressbar" :aria-label="t('progress')" :aria-valuenow="value === null ? undefined : Math.round(value)" aria-valuemin="0" aria-valuemax="100" :aria-valuetext="title + (detail ? ', ' + detail : '')"><div :class="{indeterminate:value === null}" :style="{width:value === null ? '26%' : Math.min(100,Math.max(0,value)) + '%'}" /></div>
+    <div v-if="!done" class="progress-meta"><span v-if="itemTotal>0" class="mono">{{ itemCurrent }}/{{ itemTotal }} {{ t('items') }}</span><span v-else>{{ stageDescription || t('estimating') }}</span><span v-if="etaSeconds !== null">{{ t(phase==='running'?'estimatedRunRemaining':'estimatedRemaining') }} {{ duration(etaSeconds) }}</span><span v-else>{{ t('remainingUnknown') }}</span></div>
+    <p v-if="itemTotal>0 && stageDescription" class="stage-description">{{ stageDescription }}</p>
+    <p v-if="stalled && !done && !error" class="progress-notice" role="status">{{ t('slowStep') }}</p>
+    <p v-if="error" class="error-message" role="alert">{{ error }}</p><p v-else-if="notice" class="progress-notice" role="status">{{ notice }}</p>
+    <div v-if="$slots.default" class="progress-actions"><slot /></div>
+  </div></footer>
+</template>
+<script setup>
+import { computed } from 'vue'
+import { useStudioText } from './i18n'
+const props=defineProps({title:String,detail:String,value:{type:Number,default:null},done:Boolean,error:String,notice:String,phase:String,substage:String,stageDescription:String,itemCurrent:{type:Number,default:0},itemTotal:{type:Number,default:0},etaSeconds:{type:Number,default:null},stalled:Boolean})
+const { t } = useStudioText()
+const stages=['uploading','building','reading','generating_profiles','generating_config','copying_scripts','running']
+const activeIndex=computed(()=>props.done?stages.length:Math.max(0,stages.indexOf(props.phase==='preparing'?(props.substage||'reading'):props.phase==='stopped'?'running':props.phase)))
+function duration(seconds){const minutes=Math.max(1,Math.ceil(seconds/60));return minutes<60?`${minutes} ${t('minutes')}`:`${Math.floor(minutes/60)} ${t('hours')} ${minutes%60} ${t('minutes')}`}
+</script>
+<style scoped>
+.progress-dock{flex-shrink:0;background:var(--paper);padding:18px 4.2vw 20px;border-top:1px solid var(--line)}.progress-inner{max-width:860px;margin:auto}.progress-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:15px}.progress-title{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}.status-dot{width:6px;height:6px;flex-shrink:0;border-radius:100%;background:var(--accent);box-shadow:0 0 0 4px #287b6410}.status-dot.failed{background:var(--danger)}.progress-number{color:var(--muted);font-size:14px}.steps{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;list-style:none;margin:0 0 15px;padding:0}.steps li{display:grid;gap:6px;font-size:12px;color:var(--muted);min-width:0;line-height:1.35}.steps .current{color:var(--ink);font-weight:600}.steps .finished{color:var(--accent)}.step-index{font-size:12px;font-family:monospace}.progress-track{height:4px;background:var(--track);overflow:hidden;border-radius:3px}.progress-track>div{height:100%;background:var(--accent);transition:width .8s ease;border-radius:3px}.progress-track .indeterminate{animation:indeterminate 2s ease-in-out infinite}.progress-meta{display:flex;justify-content:space-between;gap:16px;margin-top:10px;font-size:12px;color:var(--muted)}.stage-description{margin-top:7px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.progress-actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:14px}.progress-notice{margin-top:10px;font-size:14px;color:var(--muted)}.error-message{margin-top:12px}@keyframes indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(490%)}}@media(max-width:700px){.progress-dock{padding:15px 20px}.steps{display:flex;overflow-x:auto;gap:14px}.steps li{min-width:84px}.progress-meta{flex-wrap:wrap}.progress-title{font-size:14px}}
+.progress-dock{padding-top:20px;padding-bottom:22px}.progress-head{margin-bottom:17px}.progress-title{font-size:16px;gap:11px}.status-dot{width:9px;height:9px;box-shadow:0 0 0 5px #287b6410}.progress-number{font-size:16px}.steps{gap:10px;margin-bottom:18px}.steps li{font-size:14px;gap:8px}.step-index{font-size:16px;font-weight:600}.progress-track{height:6px}.progress-meta{font-size:14px}.stage-description{font-size:14px}.progress-notice{font-size:14px}
+@media(max-width:700px){.steps li{min-width:94px}.progress-title{font-size:16px}}
+</style>

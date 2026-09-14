@@ -1,6 +1,10 @@
 import pytest
 
-from app.benchmarks.evaluator import ProbabilityEvaluator, get_evaluator_system_prompt
+from app.benchmarks.evaluator import (
+    ProbabilityEvaluator,
+    get_evaluator_system_prompt,
+    EVALUATOR_JSON_MAX_ATTEMPTS,
+)
 from app.benchmarks.prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 from app.benchmarks.scoring import (
     brier_score,
@@ -14,6 +18,19 @@ from pathlib import Path
 
 
 REAL_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "ecnbench_mcq_v1.yaml"
+
+_VALID_MCQ_DIMENSIONS = {
+    key: {"very_low": 1, "low": 1, "high": 1, "very_high": 1}
+    for key in (
+        "prediction_accuracy",
+        "polarization",
+        "herd_effect",
+        "deliberation_quality",
+        "susceptibility",
+        "convergence",
+        "information_diversity",
+    )
+}
 
 
 def test_brier_score_is_zero_for_correct_certainty():
@@ -176,7 +193,7 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             calls.append({"messages": messages, "temperature": temperature, "max_tokens": max_tokens})
             return {
                 "probabilities": {"A": 2, "B": 3, "C": 5},
@@ -194,7 +211,7 @@ def test_probability_evaluator_normalizes_probabilities_and_uses_evaluator_role(
             return FakeClient()
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Will it rain?", "B", "evidence text")
+    result = evaluator.evaluate("Will it rain?", "B", "evidence text", options=["A", "B", "C"])
 
     assert result["normalized_probabilities"] == {"A": 0.2, "B": 0.3, "C": 0.5}
     assert result["probabilities"] == {"A": 0.2, "B": 0.3, "C": 0.5}
@@ -229,13 +246,19 @@ def test_evaluator_system_prompt_uses_shipped_prompt_contract():
     "payload, match",
     [
         ({}, r"probabilities"),
-        ({"probabilities": {"A": 1, "B": "x", "C": 0}}, r"[Ii]nvalid"),
-        ({"probabilities": {"A": -1, "B": 2, "C": 0}}, r"non-negative"),
+        (
+            {"probabilities": {"A": 1, "B": "x", "C": 0}, "mcq_dimensions": _VALID_MCQ_DIMENSIONS},
+            r"[Ii]nvalid",
+        ),
+        (
+            {"probabilities": {"A": -1, "B": 2, "C": 0}, "mcq_dimensions": _VALID_MCQ_DIMENSIONS},
+            r"non-negative",
+        ),
     ],
 )
 def test_probability_evaluator_rejects_missing_invalid_or_zero_mass_probabilities(payload, match):
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return payload
 
     class FakeRouter:
@@ -245,20 +268,29 @@ def test_probability_evaluator_rejects_missing_invalid_or_zero_mass_probabilitie
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=match):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
 
 @pytest.mark.parametrize(
     "payload, match",
     [
-        ({"probabilities": {"A": float("nan"), "B": 1, "C": 1}}, r"finite"),
-        ({"probabilities": {"A": float("inf"), "B": 1, "C": 1}}, r"finite"),
-        ({"probabilities": {"A": 1, "B": -float("inf"), "C": 1}}, r"finite"),
+        (
+            {"probabilities": {"A": float("nan"), "B": 1, "C": 1}, "mcq_dimensions": _VALID_MCQ_DIMENSIONS},
+            r"finite",
+        ),
+        (
+            {"probabilities": {"A": float("inf"), "B": 1, "C": 1}, "mcq_dimensions": _VALID_MCQ_DIMENSIONS},
+            r"finite",
+        ),
+        (
+            {"probabilities": {"A": 1, "B": -float("inf"), "C": 1}, "mcq_dimensions": _VALID_MCQ_DIMENSIONS},
+            r"finite",
+        ),
     ],
 )
 def test_probability_evaluator_rejects_non_finite_probabilities(payload, match):
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return payload
 
     class FakeRouter:
@@ -268,7 +300,7 @@ def test_probability_evaluator_rejects_non_finite_probabilities(payload, match):
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=match):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
 
 def test_probability_evaluator_returns_normalized_rubric_and_validated_scales():
@@ -285,7 +317,7 @@ def test_probability_evaluator_returns_normalized_rubric_and_validated_scales():
     mcq_dimensions = {key: dict(bucket_values) for key in dimension_keys}
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 2, "B": 3, "C": 5},
                 "mcq_dimensions": mcq_dimensions,
@@ -300,7 +332,7 @@ def test_probability_evaluator_returns_normalized_rubric_and_validated_scales():
             return FakeClient()
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Q", "A", "E")
+    result = evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert set(result["mcq_dimensions"].keys()) == set(dimension_keys)
     for buckets in result["mcq_dimensions"].values():
@@ -343,7 +375,7 @@ def test_probability_evaluator_accepts_label_based_mcq_dimensions_contract():
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 2, "B": 3, "C": 5},
                 "mcq_dimensions": label_assignments,
@@ -358,7 +390,7 @@ def test_probability_evaluator_accepts_label_based_mcq_dimensions_contract():
             return FakeClient()
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Q", "A", "E")
+    result = evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert set(result["mcq_dimensions"].keys()) == set(dimension_keys)
     for dimension, assigned_bucket in label_assignments.items():
@@ -386,7 +418,7 @@ def test_probability_evaluator_accepts_empty_validated_scales_scores_when_rubric
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 2, "B": 3, "C": 5},
                 "mcq_dimensions": mcq_dimensions,
@@ -401,7 +433,7 @@ def test_probability_evaluator_accepts_empty_validated_scales_scores_when_rubric
             return FakeClient()
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Q", "A", "E")
+    result = evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert result["validated_scales"]["schema_version"] == "v1"
     assert "weighted_rubric_score" in result["validated_scales"]["scores"]
@@ -409,7 +441,7 @@ def test_probability_evaluator_accepts_empty_validated_scales_scores_when_rubric
 
 def test_probability_evaluator_rejects_missing_rubric_dimension():
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 1, "B": 2, "C": 3},
                 "mcq_dimensions": {
@@ -433,7 +465,7 @@ def test_probability_evaluator_rejects_missing_rubric_dimension():
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"mcq_dimensions"):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
 
 def __test_skip1():
@@ -515,7 +547,7 @@ def test_probability_evaluator_rejects_invalid_mcq_bucket_keys():
     mcq_dimensions["prediction_accuracy"] = {"very_low": 1, "low": 1, "high": 1}
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 1, "B": 2, "C": 3},
                 "mcq_dimensions": mcq_dimensions,
@@ -532,7 +564,7 @@ def test_probability_evaluator_rejects_invalid_mcq_bucket_keys():
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"bucket keys"):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
 
 @pytest.mark.parametrize(
@@ -593,7 +625,7 @@ def test_probability_evaluator_retries_invalid_json_then_succeeds(monkeypatch):
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             attempts.append(repair_truncated_json)
             if len(attempts) < 3:
                 raise ValueError("Invalid JSON format from LLM: {")
@@ -610,11 +642,12 @@ def test_probability_evaluator_retries_invalid_json_then_succeeds(monkeypatch):
     monkeypatch.setattr("time.sleep", sleep_calls.append)
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Q", "A", "E")
+    result = evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert result["probabilities"] == pytest.approx({"A": 1 / 6, "B": 2 / 6, "C": 3 / 6})
     assert attempts == [True, True, True]
-    assert sleep_calls == [0.1, 0.2]
+    # Backoff constant is 0.2 * (attempt + 1) for attempt in {0, 1} between the 3 tries.
+    assert sleep_calls == [0.2, 0.4]
 
 
 def test_probability_evaluator_raises_after_two_invalid_json_retries(monkeypatch):
@@ -622,7 +655,7 @@ def test_probability_evaluator_raises_after_two_invalid_json_retries(monkeypatch
     sleep_calls = []
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             nonlocal attempts
             attempts += 1
             raise ValueError("Invalid JSON format from LLM: invalid")
@@ -636,13 +669,18 @@ def test_probability_evaluator_raises_after_two_invalid_json_retries(monkeypatch
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"Invalid JSON format from LLM:"):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert attempts == 3
-    assert sleep_calls == [0.1, 0.2]
+    assert sleep_calls == [0.2, 0.4]
 
 
-def test_probability_evaluator_does_not_retry_non_json_validation_errors():
+def test_probability_evaluator_retries_then_raises_non_json_validation_errors():
+    # BEHAVIOUR CHANGE (documented, not a bug): the evaluator now retries with corrective
+    # feedback on *any* evaluator exception, not only "Invalid JSON format from LLM:" parse
+    # failures -- a validation error (e.g. a non-numeric probability) gets the same
+    # retry-with-feedback treatment, since the feedback message may let the model self-correct.
+    # It still fails loudly (raises) once retries are exhausted rather than silently defaulting.
     attempts = 0
     dimension_keys = [
         "prediction_accuracy",
@@ -658,7 +696,7 @@ def test_probability_evaluator_does_not_retry_non_json_validation_errors():
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             nonlocal attempts
             attempts += 1
             return {
@@ -674,15 +712,18 @@ def test_probability_evaluator_does_not_retry_non_json_validation_errors():
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"[Ii]nvalid"):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
-    assert attempts == 1
+    assert attempts == EVALUATOR_JSON_MAX_ATTEMPTS
 
-def test_probability_evaluator_does_not_retry_non_json_valueerror_from_client():
+
+def test_probability_evaluator_retries_then_raises_non_json_valueerror_from_client():
+    # See test_probability_evaluator_retries_then_raises_non_json_validation_errors: retrying
+    # on any client-raised error (not just JSON-format ones) is the intended behaviour.
     attempts = 0
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             nonlocal attempts
             attempts += 1
             raise ValueError("Some other value error")
@@ -694,9 +735,9 @@ def test_probability_evaluator_does_not_retry_non_json_valueerror_from_client():
     evaluator = ProbabilityEvaluator(FakeRouter())
 
     with pytest.raises(ValueError, match=r"Some other value error"):
-        evaluator.evaluate("Q", "A", "E")
+        evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
-    assert attempts == 1
+    assert attempts == EVALUATOR_JSON_MAX_ATTEMPTS
 
 
 def test_probability_evaluator_uses_deterministic_scales_not_free_form_scores():
@@ -715,7 +756,7 @@ def test_probability_evaluator_uses_deterministic_scales_not_free_form_scores():
     }
 
     class FakeClient:
-        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False):
+        def chat_json(self, messages, temperature=0.3, max_tokens=4096, repair_truncated_json=False, json_schema=None):
             return {
                 "probabilities": {"A": 2, "B": 3, "C": 5},
                 "mcq_dimensions": mcq_dimensions,
@@ -730,7 +771,7 @@ def test_probability_evaluator_uses_deterministic_scales_not_free_form_scores():
             return FakeClient()
 
     evaluator = ProbabilityEvaluator(FakeRouter())
-    result = evaluator.evaluate("Q", "A", "E")
+    result = evaluator.evaluate("Q", "A", "E", options=["A", "B", "C"])
 
     assert "free_form" not in result["validated_scales"]["scores"]
     assert "weighted_rubric_score" in result["validated_scales"]["scores"]

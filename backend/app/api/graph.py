@@ -161,6 +161,15 @@ def generate_ontology():
         simulation_requirement = request.form.get('simulation_requirement', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
         additional_context = request.form.get('additional_context', '')
+        studio_settings = {}
+        if 'rounds' in request.form:
+            raw_rounds = request.form.get('rounds', '')
+            platform = request.form.get('platform', 'parallel')
+            if not raw_rounds.isdigit() or not 1 <= int(raw_rounds) <= 1000:
+                return jsonify(success=False, error="rounds must be an integer from 1 to 1000"), 400
+            if platform not in {'parallel', 'twitter', 'reddit'}:
+                return jsonify(success=False, error="Invalid simulation community"), 400
+            studio_settings = {'rounds': int(raw_rounds), 'platform': platform}
 
         logger.debug(f"Project name: {project_name}")
         logger.debug(f"Simulation requirement: {simulation_requirement[:100]}...")
@@ -182,6 +191,7 @@ def generate_ontology():
         # Create project
         project = ProjectManager.create_project(name=project_name)
         project.simulation_requirement = simulation_requirement
+        project.studio_settings = studio_settings
         logger.info(f"Project created: {project.project_id}")
         
         # Save files and extract text

@@ -35,6 +35,9 @@ def generate_report():
             return jsonify({"success": False, "error": "Please provide simulation_id"}), 400
 
         force_regenerate = data.get('force_regenerate', False)
+        for task in TaskManager().list_tasks(task_type="report_generate"):
+            if task['metadata'].get('simulation_id') == simulation_id and task['status'] in {'pending', 'processing'}:
+                return jsonify(success=True, data={"simulation_id": simulation_id, "report_id": task['metadata']['report_id'], "task_id": task['task_id'], "status": "generating"})
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if not state:
@@ -76,6 +79,7 @@ def generate_report():
         # (current_app is not available inside background threads)
         storage = current_app.extensions.get('neo4j_storage')
         if not storage:
+            task_manager.fail_task(task_id, "GraphStorage not initialized")
             return jsonify({"success": False, "error": "GraphStorage not initialized — check Neo4j connection"}), 500
         graph_tools = GraphToolsService(storage=storage)
 
@@ -100,7 +104,7 @@ def generate_report():
                 logger.error(f"Report generation failed: {str(e)}")
                 task_manager.fail_task(task_id, str(e))
 
-        if _is_headless_mode_enabled():
+        if _is_headless_mode_enabled() and not data.get('run_async', False):
             run_generate()
             completed_report = ReportManager.get_report(report_id)
             if completed_report and completed_report.status == ReportStatus.COMPLETED:
@@ -282,7 +286,9 @@ def chat_with_report_agent():
         )
 
         result = agent.chat(message=message, chat_history=chat_history)
-        return jsonify({"success": True, "data": {"response": result, "simulation_id": simulation_id}})
+        # ReportAgent.chat already returns response text together with tool metadata.
+        # Wrapping it in another "response" object breaks the Markdown renderer.
+        return jsonify({"success": True, "data": {**result, "simulation_id": simulation_id}})
 
     except Exception as e:
         logger.error(f"Chat failed: {str(e)}")

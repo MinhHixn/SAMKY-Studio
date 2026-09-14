@@ -265,6 +265,7 @@ class SimulationManager:
         
         try:
             state.status = SimulationStatus.PREPARING
+            state.error = None
             self._save_simulation_state(state)
             
             sim_dir = self._get_simulation_dir(simulation_id)
@@ -345,7 +346,8 @@ class SimulationManager:
                 graph_id=state.graph_id,  # Pass graph_id for graph retrieval
                 parallel_count=parallel_profile_count,  # Parallel generation count
                 realtime_output_path=realtime_output_path,  # Real-time save path
-                output_platform=realtime_platform  # Output format
+                output_platform=realtime_platform,  # Output format
+                checkpoint_path=os.path.join(sim_dir, "profiles_checkpoint.json"),
             )
             
             state.profiles_count = len(profiles)
@@ -396,7 +398,7 @@ class SimulationManager:
             
             if progress_callback:
                 progress_callback(
-                    "generating_config", 30, 
+                    "generating_config", 5,
                     "Calling LLM to generate config...",
                     current=1,
                     total=3
@@ -410,12 +412,21 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                progress_callback=(
+                    lambda step, total, message: progress_callback(
+                        "generating_config",
+                        min(90, 10 + int(step / max(total, 1) * 80)),
+                        message,
+                        current=step,
+                        total=total,
+                    )
+                ) if progress_callback else None,
             )
             
             if progress_callback:
                 progress_callback(
-                    "generating_config", 70, 
+                    "generating_config", 95,
                     "Saving config files...",
                     current=2,
                     total=3

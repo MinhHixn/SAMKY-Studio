@@ -225,6 +225,11 @@ class SimulationRunner:
     
     # Graph memory update configuration
     _graph_memory_enabled: Dict[str, bool] = {}  # simulation_id -> enabled
+
+    @classmethod
+    def has_live_process(cls, simulation_id: str) -> bool:
+        process = cls._processes.get(simulation_id)
+        return process is not None and process.poll() is None
     
     @classmethod
     def get_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
@@ -316,7 +321,8 @@ class SimulationRunner:
         max_rounds: int = None,  # Maximum simulation rounds (optional, for truncating long simulations)
         enable_graph_memory_update: bool = False,  # Whether to update activities to the graph
         graph_id: str = None,  # Graph ID (required when enabling graph updates)
-        storage: 'GraphStorage' = None  # GraphStorage instance (required if enable_graph_memory_update)
+        storage: 'GraphStorage' = None,  # GraphStorage instance (required if enable_graph_memory_update)
+        interactive: bool = False
     ) -> SimulationRunState:
         """
         Start simulation
@@ -350,7 +356,7 @@ class SimulationRunner:
         time_config = config.get("time_config", {})
         total_hours = time_config.get("total_simulation_hours", 72)
         minutes_per_round = time_config.get("minutes_per_round", 30)
-        total_rounds = int(total_hours * 60 / minutes_per_round)
+        total_rounds = int(time_config.get("total_rounds", total_hours * 60 / minutes_per_round))
         
         # If max_rounds specified, truncate
         if max_rounds is not None and max_rounds > 0:
@@ -434,6 +440,14 @@ class SimulationRunner:
             env = os.environ.copy()
             env['PYTHONUTF8'] = '1'  # Python 3.7+ support, make all open() use UTF-8 by default
             env['PYTHONIOENCODING'] = 'utf-8'  # Ensure stdout/stderr use UTF-8
+            if interactive:
+                # A Studio run remains available for live interviews even if
+                # benchmark telemetry is enabled on the shared server.
+                env['SAM_INTERACTIVE_WAIT'] = '1'
+                env['ENABLE_TELEMETRY_PROBES'] = 'false'
+                from .studio_runtime import public_runtime
+                if public_runtime()['mode'] == 'online':
+                    env['OASIS_LLM_CONCURRENCY'] = '12'
             
             # Set working directory to simulation directory (database files etc. will be generated here)
             # Use start_new_session=True to create new process group, ensuring all child processes can be terminated via os.killpg
@@ -726,27 +740,18 @@ class SimulationRunner:
             timeout: Timeout for process exit (seconds)
         """
         if IS_WINDOWS:
-            # Windows: Use taskkill command to terminate process tree
-            # /F = force terminate, /T = terminate process tree (including child processes)
+            # The uv/python launcher may exit while its child keeps the SQLite
+            # files open. Terminate the whole tree before allowing a force run.
             logger.info(f"Terminate process tree (Windows): simulation={simulation_id}, pid={process.pid}")
             try:
-                # Try graceful termination first
-                subprocess.run(
-                    ['taskkill', '/PID', str(process.pid), '/T'],
+                result = subprocess.run(
+                    ['taskkill', '/F', '/PID', str(process.pid), '/T'],
                     capture_output=True,
                     timeout=5
                 )
-                try:
-                    process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    # Force terminate
-                    logger.warning(f"Process not responding, force terminating: {simulation_id}")
-                    subprocess.run(
-                        ['taskkill', '/F', '/PID', str(process.pid), '/T'],
-                        capture_output=True,
-                        timeout=5
-                    )
-                    process.wait(timeout=5)
+                if result.returncode != 0 and process.poll() is None:
+                    raise RuntimeError(f"taskkill failed: {result.stderr.decode(errors='replace')}")
+                process.wait(timeout=timeout)
             except Exception as e:
                 logger.warning(f"taskkill failed, trying terminate: {e}")
                 process.terminate()
@@ -778,7 +783,7 @@ class SimulationRunner:
         if not state:
             raise ValueError(f"Simulation does not exist: {simulation_id}")
         
-        if state.runner_status not in [RunnerStatus.RUNNING, RunnerStatus.PAUSED]:
+        if state.runner_status not in [RunnerStatus.RUNNING, RunnerStatus.PAUSED] and not cls.has_live_process(simulation_id):
             raise ValueError(f"Simulation not running: {simulation_id}, status={state.runner_status}")
         
         state.runner_status = RunnerStatus.STOPPING
@@ -800,6 +805,10 @@ class SimulationRunner:
                     process.wait(timeout=5)
                 except Exception:
                     process.kill()
+
+        monitor_thread = cls._monitor_threads.get(simulation_id)
+        if monitor_thread and monitor_thread is not threading.current_thread():
+            monitor_thread.join(timeout=5)
         
         state.runner_status = RunnerStatus.STOPPED
         state.twitter_running = False
@@ -1132,13 +1141,13 @@ class SimulationRunner:
         
         # Files to delete (including database files)
         files_to_delete = [
-            "run_state.json",
+            "twitter_simulation.db",  # Likely locked; check before deleting status
+            "reddit_simulation.db",
             "simulation.log",
             "stdout.log",
             "stderr.log",
-            "twitter_simulation.db",  # Twitter platform database
-            "reddit_simulation.db",   # Reddit platform database
             "env_status.json",        # Environment status file
+            "run_state.json",
         ]
         
         # Directories to delete (contains action logs)
@@ -1153,9 +1162,10 @@ class SimulationRunner:
                     cleaned_files.append(filename)
                 except Exception as e:
                     errors.append(f"Failed to delete {filename}: {str(e)}")
+                    break
         
         # Clean up action logs in platform directories
-        for dir_name in dirs_to_clean:
+        for dir_name in dirs_to_clean if not errors else []:
             dir_path = os.path.join(sim_dir, dir_name)
             if os.path.exists(dir_path):
                 actions_file = os.path.join(dir_path, "actions.jsonl")
@@ -1167,7 +1177,7 @@ class SimulationRunner:
                         errors.append(f"Failed to delete {dir_name}/actions.jsonl: {str(e)}")
         
         # Clean up in-memory run state
-        if simulation_id in cls._run_states:
+        if not errors and simulation_id in cls._run_states:
             del cls._run_states[simulation_id]
         
         logger.info(f"Cleanup simulation logs completed: {simulation_id}, deleted files: {cleaned_files}")

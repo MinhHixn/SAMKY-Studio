@@ -13,6 +13,16 @@ def _disable_leakage_preflight_for_non_leakage_tests(monkeypatch, request):
         monkeypatch.setattr(protocol_script, "validate_leakage_preflight", lambda *_args, **_kwargs: None)
 
 
+# `main()` now nests each run under output_root / sanitize_model_name(benchmark_model) / run_id
+# (BenchmarkRunOrchestrator.run(), passed `model_name=benchmark_model`), matching the real
+# production layout observed on the HPC cluster (e.g. simulation_logs/<model>/<run_id>/). This
+# was added after these tests were originally written, which assumed a flat output_root / run_id
+# layout. `_patch_minimal_main_inputs()`'s DummyRouter always resolves the "benchmark" role to
+# "openrouter/benchmark-model", so every test built on that fixture lands under this fixed,
+# sanitized subdirectory.
+_SANITIZED_BENCHMARK_MODEL_DIR = "openrouter_benchmark-model"
+
+
 def test_build_condition_matrix_counts_and_contents():
     events = [{"event_id": "E1"}, {"event_id": "E2"}]
 
@@ -229,6 +239,12 @@ def test_load_events_keeps_scalar_events_with_metadata_keys(tmp_path):
 
 
 def test_main_fails_on_invalid_polymarket_prior_before_condition_matrix(monkeypatch, tmp_path):
+    # The project .env sets DEV_MINIMAL_MODE=true for local dev; that makes main() take the
+    # "relaxed" branch that silently normalizes an invalid prior instead of validating it
+    # strictly, which is the opposite of what this test needs to exercise. Every other test in
+    # this file that depends on the strict path clears this first -- this one was missing it.
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("TELEMETRY_REQUIRED", raising=False)
     events = [
         {
             "event_id": "E1",
@@ -284,6 +300,12 @@ def test_main_fails_on_invalid_polymarket_prior_before_condition_matrix(monkeypa
 
 
 def test_main_fails_on_leakage_before_condition_matrix(monkeypatch, tmp_path):
+    # Same reason as test_main_fails_on_invalid_polymarket_prior_before_condition_matrix: the
+    # project .env sets DEV_MINIMAL_MODE=true, which makes main() skip the leakage preflight
+    # entirely ("leakage preflight skipped for architecture run") rather than run it. This test
+    # is specifically about the strict/production path, so it must clear that first.
+    monkeypatch.delenv("DEV_MINIMAL_MODE", raising=False)
+    monkeypatch.delenv("TELEMETRY_REQUIRED", raising=False)
     seed_file = tmp_path / "seed.txt"
     seed_file.write_text("The outcome was resolved in advance.", encoding="utf-8")
     events = [
@@ -327,6 +349,9 @@ def test_main_fails_on_leakage_before_condition_matrix(monkeypatch, tmp_path):
             "version": "v1",
             "jsd_monotonic_tolerance_epsilon": 0.0,
             "telemetry_checkpoints": [],
+            # _resolve_telemetry_runtime() now requires this key directly (no default);
+            # 0.25 matches config/benchmark_phase1_v1.json's real production value.
+            "min_parsed_probability_ratio": 0.25,
         },
     )
     monkeypatch.setattr(protocol_script, "load_layer23_config", lambda *_args, **_kwargs: {"leakage_min_days_before_resolution": 7, "leakage_outcome_regex": r"resolved|closed"})
@@ -407,6 +432,12 @@ def test_build_event_result_row_includes_telemetry_fields():
         "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
         "market_prior": {"probabilities": {"A": 0.6, "B": 0.4}, "brier": 0.4},
     }
+    # build_event_result_row now validates round_jsd length against the checkpoint schedule
+    # (every 6th round up to 60 by default: 6, 12, ..., 60 -> 10 checkpoints) and silently
+    # discards round_jsd/convergence_monotonic if the length doesn't match, rather than
+    # persisting a mismatched telemetry array. Supply the full 10-point series to exercise the
+    # happy path this test is actually about (does telemetry data flow through when it's valid).
+    round_jsd = [0.1, 0.2, 0.3, 0.4, 0.5, 0.4, 0.35, 0.3, 0.25, 0.2]
     row = protocol_script.build_event_result_row(
         event,
         "B",
@@ -416,11 +447,11 @@ def test_build_event_result_row_includes_telemetry_fields():
         evaluation_completed=True,
         probabilities={"A": 1.0},
         brier=0.0,
-        round_jsd=[0.1, 0.2, 0.3, 0.4, 0.5],
+        round_jsd=round_jsd,
         convergence_monotonic=True,
         baseline_scores=baseline_scores,
     )
-    assert row["round_jsd"] == [0.1, 0.2, 0.3, 0.4, 0.5]
+    assert row["round_jsd"] == round_jsd
     assert row["convergence_monotonic"] is True
     assert set(row["baseline_scores"]) == {"uniform_random", "market_prior"}
 
@@ -600,7 +631,13 @@ def test_build_event_result_row_handles_rps_probability_option_label_mismatch():
     )
 
     assert row["rps"] is None
-    assert row["calibration_bracket"] is None
+    # build_event_result_row now forces a non-empty calibration_bracket for any row with
+    # simulation_status="completed" (schemas.py requires a non-empty string bracket for
+    # completed rows), even when the real bracket could not be computed due to this exact
+    # RPS/option mismatch. It is a documented placeholder ("Fallback bracket"), not a real
+    # calibration reading -- calibration_predicted_probability/calibration_hit stay None,
+    # which is what actually distinguishes a genuine bracket from this fallback.
+    assert row["calibration_bracket"] == "0-0.25"
     assert row["calibration_predicted_probability"] is None
     assert row["calibration_hit"] is None
     assert "RPS/calibration unavailable" in row["error"]
@@ -860,6 +897,33 @@ def test_write_profiles_creates_parent_directory(tmp_path):
     assert reddit_path.exists()
     assert twitter_path.parent == profile_dir
     assert reddit_path.parent == profile_dir
+
+
+def test_build_evidence_text_includes_seed_context_for_condition_a(tmp_path):
+    unit_dir = tmp_path / "E1_A_r1"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    simulation_log_path = unit_dir / "simulation.log"
+    seed_path = unit_dir / "context.md"
+    seed_path.write_text("Seed-only baseline context for condition A.", encoding="utf-8")
+
+    evidence_text = protocol_script.build_evidence_text(simulation_log_path, seed_path)
+
+    assert "No-Sim Seed Context" in evidence_text
+    assert "Seed-only baseline context for condition A." in evidence_text
+
+
+def test_build_evidence_text_keeps_seed_hidden_for_condition_b(tmp_path):
+    unit_dir = tmp_path / "E1_B_r1"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    simulation_log_path = unit_dir / "simulation.log"
+    simulation_log_path.write_text("simulation loop output", encoding="utf-8")
+    seed_path = unit_dir / "context.md"
+    seed_path.write_text("This seed text must not appear for B/C evidence.", encoding="utf-8")
+
+    evidence_text = protocol_script.build_evidence_text(simulation_log_path, seed_path)
+
+    assert "simulation loop output" in evidence_text
+    assert "This seed text must not appear for B/C evidence." not in evidence_text
 
 
 def test_write_summary_includes_failure_counts(tmp_path):
@@ -1334,7 +1398,7 @@ def test_evaluate_row_marks_evaluator_reliability_absent_when_second_run_fails(m
         def __init__(self, router):
             self.router = router
 
-        def evaluate(self, question, condition, evidence_text):
+        def evaluate(self, question, condition, evidence_text, options=None, micro_questions=None, event=None):
             del question, condition, evidence_text
             FakeEvaluator.calls += 1
             if FakeEvaluator.calls == 1:
@@ -1402,7 +1466,7 @@ def test_evaluate_row_marks_evaluator_reliability_partial_when_second_run_is_inc
         def __init__(self, router):
             self.router = router
 
-        def evaluate(self, question, condition, evidence_text):
+        def evaluate(self, question, condition, evidence_text, options=None, micro_questions=None, event=None):
             del question, condition, evidence_text
             FakeEvaluator.calls += 1
             if FakeEvaluator.calls == 1:
@@ -1494,7 +1558,7 @@ def test_evaluate_row_runs_evaluator_twice_and_records_dimension_labels(monkeypa
         def __init__(self, router):
             self.router = router
 
-        def evaluate(self, question, condition, evidence_text):
+        def evaluate(self, question, condition, evidence_text, options=None, micro_questions=None, event=None):
             FakeEvaluator.calls.append((question, condition, evidence_text))
             if len(FakeEvaluator.calls) == 1:
                 return {
@@ -1595,7 +1659,7 @@ def test_evaluate_row_uses_single_pass_reliability_in_dev_minimal(monkeypatch):
         def __init__(self, router):
             self.router = router
 
-        def evaluate(self, question, condition, evidence_text):
+        def evaluate(self, question, condition, evidence_text, options=None, micro_questions=None, event=None):
             del question, condition, evidence_text
             FakeEvaluator.calls += 1
             return {
@@ -1830,7 +1894,9 @@ def test_main_delegates_run_loop_to_orchestrator_with_leakage_preflight(monkeypa
             run_dir = Path(kwargs["output_root"]) / kwargs["run_id"]
             captured["run_dir_exists_before_run"] = run_dir.exists()
             captured["manifest_exists_before_run"] = (run_dir / "run_manifest.json").exists()
-            built_config = kwargs["config_builder"]({"event_id": "E1", "question": "Q", "outcome": "A"}, "A")
+            # _protocol_config_builder now takes (event, condition, profiles) -- profiles was
+            # added so per-unit config can carry the persona set built for this run.
+            built_config = kwargs["config_builder"]({"event_id": "E1", "question": "Q", "outcome": "A"}, "A", [{"agent_id": 1}])
             captured["built_config"] = built_config
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "event_results.json").write_text("[]", encoding="utf-8")
@@ -2035,7 +2101,7 @@ def test_main_manifest_includes_continuation_metadata(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["workflow_mode"] == "abc-per-event"
     assert manifest["benchmark_model"] == "openrouter/benchmark-model"
     assert manifest["expected_run_units"] == len(custom_matrix)
@@ -2102,7 +2168,7 @@ def test_main_uses_mock_telemetry_when_dev_minimal_and_neo4j_unreachable(monkeyp
 
     protocol_script.main()
 
-    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["telemetry_mode"] == "mock"
     assert manifest["telemetry_required"] is False
     assert manifest["neo4j_connected"] is False
@@ -2131,7 +2197,7 @@ def test_main_records_simulation_failure_and_summary(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    run_dir = output_dir / "fixed-run"
+    run_dir = output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run"
     rows = json.loads((run_dir / "event_results.json").read_text(encoding="utf-8"))
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
@@ -2167,7 +2233,7 @@ def test_main_records_evaluation_failure_and_summary(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    run_dir = output_dir / "fixed-run"
+    run_dir = output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run"
     rows = json.loads((run_dir / "event_results.json").read_text(encoding="utf-8"))
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
@@ -2238,7 +2304,7 @@ def test_main_schema_guard_allows_valid_event_results(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    row = json.loads((output_dir / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))[0]
+    row = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))[0]
     for key in (
         "event_id",
         "condition",
@@ -2340,7 +2406,7 @@ def test_main_writes_artifacts(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    run_dir = output_dir / "fixed-run"
+    run_dir = output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run"
     assert (run_dir / "run_manifest.json").exists()
     assert (run_dir / "traces" / "execution.jsonl").exists()
     assert (run_dir / "event_results.json").exists()
@@ -2403,7 +2469,7 @@ def test_main_persists_signed_enrichment_in_event_results(monkeypatch, tmp_path)
 
     protocol_script.main()
 
-    rows = json.loads((output_dir / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))
+    rows = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "event_results.json").read_text(encoding="utf-8"))
     rows_by_condition = {row["condition"]: row for row in rows}
     row_b = rows_by_condition["B"]
     row_c = rows_by_condition["C"]
@@ -2434,7 +2500,7 @@ def test_main_writes_traces_to_custom_path(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    run_dir = output_dir / "fixed-run"
+    run_dir = output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run"
     assert trace_out.exists()
     assert not (run_dir / "traces" / "execution.jsonl").exists()
     manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
@@ -2454,7 +2520,7 @@ def test_main_records_timeout_failure_with_log_tail(monkeypatch, tmp_path):
     monkeypatch.setattr(protocol_script, "_run_simulation_subprocess", raise_timeout)
 
     output_dir = tmp_path / "runs"
-    run_dir = output_dir / "fixed-run"
+    run_dir = output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run"
     unit_dir = run_dir / "E1_B_r1"
     unit_dir.mkdir(parents=True, exist_ok=True)
     (unit_dir / "simulation.log").write_text("line 1\nline 2\n", encoding="utf-8")
@@ -3119,7 +3185,7 @@ def test_main_manifest_includes_topology_metadata(monkeypatch, tmp_path):
 
     protocol_script.main()
 
-    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["topology"]["degree_distribution_descriptor"]
     assert "clustering_coefficient" in manifest["topology"]
 
@@ -3154,7 +3220,7 @@ def test_main_manifest_topology_uses_runtime_simulation_config_when_available(mo
 
     protocol_script.main()
 
-    manifest = json.loads((output_dir / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output_dir / _SANITIZED_BENCHMARK_MODEL_DIR / "fixed-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["topology"]["source"] == "simulation_config"
     assert manifest["topology"]["degree_distribution_descriptor"] == "runtime-scale-free"
     assert manifest["topology"]["clustering_coefficient"] == pytest.approx(0.31)

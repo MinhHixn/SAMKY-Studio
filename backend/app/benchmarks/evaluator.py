@@ -10,6 +10,7 @@ from typing import Any, Dict, Mapping
 
 from .prompt_registry import build_evaluator_system_prompt, load_mcq_prompt_spec
 from .role_router import BenchmarkRoleRouter
+from ..utils.safe_parser import SafeParser
 
 MCQ_DIMENSION_KEYS = (
     "prediction_accuracy",
@@ -157,17 +158,38 @@ class ProbabilityEvaluator:
         event_question: str,
         condition: str,
         evidence_text: str,
+        options: list[str] | None = None,
         micro_questions: list[Dict[str, Any]] | None = None,
+        event: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         client = self._router.client_for("evaluator")
         system_prompt = get_evaluator_system_prompt()
-        json_schema: Dict[str, Any] | None = None
+        
+        # Resolve options: extract from event dict if positional 'options' is missing
+        final_options = options
+        if final_options is None and event is not None:
+            final_options = event.get("options")
+        
+        if not final_options:
+            # Emergency fallback: ensure evaluate never runs without valid keys
+            final_options = ["YES", "NO"] if "YES/NO" in event_question.upper() else ["Option A", "Option B"]
+        
+        # TASK 3: Strict Key Enforcement & Comprehensive Analysis Instruction
+        key_instruction = (
+            "\n\nCRITICAL INSTRUCTION: The keys in your `probabilities` dictionary MUST EXACTLY MATCH the items in the following options list: "
+            f"{', '.join(final_options)}. DO NOT hallucinate, summarize, or invent new keys. "
+            "If you invent a key, the system will crash."
+            "\n\nProvide a comprehensive analysis including:"
+            "\n1. Probabilities for the specified options."
+            "\n2. Micro-epistemic mapping for each provided question."
+            "\n3. Rubric scores for the defined MCQ dimensions."
+        )
+        system_prompt += key_instruction
 
         if micro_questions:
-            # requirement 2: Dynamic Prompt Injection
             instruction = (
                 "\n\nAs a Report Agent, based strictly on the provided discussion timeline, "
-                "answer the following 3 micro-questions to map the swarm's epistemic logic. "
+                "answer the following micro-questions to map the swarm's epistemic logic. "
                 "Choose the dominant option the swarm believes, and provide a short rationale."
             )
             q_text = ""
@@ -178,8 +200,11 @@ class ProbabilityEvaluator:
                 q_text += f"\n- {q_id}: {q_str} (Options: {q_options})"
             system_prompt += instruction + q_text
 
-            # requirement 3: Output Schema Update
-            micro_mapping_properties = {}
+        # requirement 3: Output Schema Update (Refined for TASK 3)
+        probabilities_properties = {opt: {"type": "number"} for opt in final_options}
+        
+        micro_mapping_properties = {}
+        if micro_questions:
             for q in micro_questions:
                 q_id = q.get("id")
                 if q_id:
@@ -193,56 +218,69 @@ class ProbabilityEvaluator:
                         "additionalProperties": False,
                     }
 
-            # Build full JSON schema for strict validation if micro_questions are present
-            # This incorporates existing keys (probabilities, mcq_dimensions, validated_scales)
-            json_schema = {
-                "name": "evaluator_response",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "probabilities": {"type": "object", "additionalProperties": {"type": "number"}},
-                        "mcq_dimensions": {
-                            "type": "object",
-                            "properties": {
-                                k: {
-                                    "type": "object",
-                                    "properties": {
-                                        b: {"type": "number"} for b in MCQ_BUCKET_KEYS
-                                    },
-                                    "required": list(MCQ_BUCKET_KEYS),
-                                    "additionalProperties": False,
-                                }
-                                for k in MCQ_DIMENSION_KEYS
-                            },
-                            "required": list(MCQ_DIMENSION_KEYS),
-                            "additionalProperties": False,
-                        },
-                        "validated_scales": {
-                            "type": "object",
-                            "properties": {
-                                "schema_version": {"type": "string"},
-                                "scores": {"type": "object", "additionalProperties": {"type": "number"}},
-                            },
-                            "required": ["schema_version", "scores"],
-                            "additionalProperties": False,
-                        },
-                        "micro_epistemic_mapping": {
-                            "type": "object",
-                            "properties": micro_mapping_properties,
-                            "required": list(micro_mapping_properties.keys()),
-                            "additionalProperties": False,
-                        },
+        # ARCHITECTURE v3.10: Comprehensive Hybrid JSON Schema
+        json_schema = {
+            "name": "evaluator_response",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "probabilities": {
+                        "type": "object", 
+                        "properties": probabilities_properties,
+                        "required": final_options,
+                        "additionalProperties": False
                     },
-                    "required": [
-                        "probabilities",
-                        "mcq_dimensions",
-                        "validated_scales",
-                        "micro_epistemic_mapping",
-                    ],
-                    "additionalProperties": False,
+                    "mcq_dimensions": {
+                        "type": "object",
+                        "properties": {
+                            k: {
+                                "type": "object",
+                                "properties": {
+                                    b: {"type": "number"} for b in MCQ_BUCKET_KEYS
+                                },
+                                "required": list(MCQ_BUCKET_KEYS),
+                                "additionalProperties": False,
+                            }
+                            for k in MCQ_DIMENSION_KEYS
+                        },
+                        "required": list(MCQ_DIMENSION_KEYS),
+                        "additionalProperties": False,
+                    },
+                    "validated_scales": {
+                        "type": "object",
+                        "properties": {
+                            "schema_version": {"type": "string"},
+                            "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+                        },
+                        "required": ["schema_version", "scores"],
+                        "additionalProperties": False,
+                    }
                 },
+                "required": [
+                    "probabilities",
+                    "mcq_dimensions",
+                    "validated_scales",
+                ],
+                "additionalProperties": False,
+            },
+        }
+        
+        if micro_questions:
+            json_schema["schema"]["properties"]["micro_epistemic_mapping"] = {
+                "type": "object",
+                "properties": micro_mapping_properties,
+                "required": list(micro_mapping_properties.keys()),
+                "additionalProperties": False,
             }
+            json_schema["schema"]["required"].append("micro_epistemic_mapping")
+        else:
+            # Still require the key even if empty, to maintain structure consistency
+            json_schema["schema"]["properties"]["micro_epistemic_mapping"] = {
+                "type": "object",
+                "additionalProperties": False
+            }
+            json_schema["schema"]["required"].append("micro_epistemic_mapping")
 
         messages = [
             {
@@ -259,29 +297,104 @@ class ProbabilityEvaluator:
             },
         ]
         response = None
+        current_messages = list(messages)
+        last_error = ""
+        normalized = None
+        normalized_dimensions = None
+        normalized_scales = None
         for attempt in range(EVALUATOR_JSON_MAX_ATTEMPTS):
             try:
+                temp = 0.0
+                if attempt > 0:
+                    # Escape greedy decoding loop using temperature jitter and feedback instruction
+                    temp = 0.1 if attempt == 1 else 0.2
+
+                    # Add error context to guide recovery
+                    error_feedback = (
+                        f"Your previous output was invalid or incomplete. "
+                        f"Ensure you return a valid JSON object matching the schema. "
+                        f"Crucially, verify that the 'probabilities' key and all expected MCQ dimension keys are fully populated. "
+                        f"Specifically, the evaluation failed with the following error: {last_error}"
+                    )
+                    current_messages.append({
+                        "role": "user",
+                        "content": f"[SYSTEM NOTICE: Retry {attempt}] {error_feedback}"
+                    })
+
                 response = client.chat_json(
-                    messages,
-                    temperature=0.0,
-                    max_tokens=1024 if micro_questions else 512,
+                    current_messages,
+                    temperature=temp,
+                    # 4096 was observed too tight for reasoning-heavy models (e.g. OpenRouter
+                    # deepseek/deepseek-v4-flash): finish_reason="length" with a null content,
+                    # deterministically on every retry since BENCHMARK_MODE pins temperature to
+                    # 0.0 regardless of what's requested here. The schema itself is also large
+                    # (probabilities + 7 MCQ dimensions x 4 buckets + validated_scales + up to 3
+                    # micro-question mappings), leaving little room for any reasoning tokens. Set
+                    # generously high (this evaluator's model has a 1M-token context window, so
+                    # this is nowhere near the input-side ceiling) -- the retry loop's own
+                    # completeness checks, not this budget, are what should decide success.
+                    max_tokens=65536,
                     repair_truncated_json=True,
                     json_schema=json_schema,
                 )
-                break
-            except ValueError as error:
-                if not str(error).startswith(INVALID_JSON_ERROR_PREFIX):
-                    raise
-                if attempt == EVALUATOR_JSON_MAX_ATTEMPTS - 1:
-                    raise
-                time.sleep(0.1 * (attempt + 1))
 
-        probabilities = response.get("probabilities") if isinstance(response, dict) else None
-        mcq_dimensions = response.get("mcq_dimensions") if isinstance(response, dict) else None
-        validated_scales = response.get("validated_scales") if isinstance(response, dict) else None
-        normalized = self._normalize_probabilities(probabilities)
-        normalized_dimensions = self._normalize_mcq_dimensions(mcq_dimensions)
-        normalized_scales = self._normalize_validated_scales(validated_scales, normalized_dimensions)
+                # Check response format completeness to determine if we should retry
+                if not isinstance(response, dict):
+                    raise ValueError("Evaluator response is not a dictionary")
+
+                probs = response.get("probabilities", {})
+                mcq = response.get("mcq_dimensions", {})
+
+                if not isinstance(probs, dict) or not probs or not any(opt in probs for opt in final_options):
+                    raise ValueError("Evaluator probabilities mapping is empty or invalid")
+
+                if not isinstance(mcq, dict) or not mcq or len(mcq) < len(MCQ_DIMENSION_KEYS):
+                    raise ValueError("Evaluator mcq_dimensions mapping is incomplete")
+
+                # BUGFIX: this check was previously absent, so an incomplete/empty
+                # micro_epistemic_mapping was silently accepted as "complete" and never
+                # retried -- it was then backfilled with N/A/"Missing in LLM response" by
+                # _validate_micro_mapping() with no error ever raised or surfaced. Require the
+                # same completeness (all requested question ids present) that the schema asks for.
+                if micro_questions:
+                    micro_map = response.get("micro_epistemic_mapping", {})
+                    expected_ids = {q.get("id") for q in micro_questions if q.get("id")}
+                    present_ids = set(micro_map.keys()) if isinstance(micro_map, dict) else set()
+                    if not isinstance(micro_map, dict) or not expected_ids.issubset(present_ids):
+                        raise ValueError(
+                            f"Evaluator micro_epistemic_mapping is incomplete: "
+                            f"missing {sorted(expected_ids - present_ids)}"
+                        )
+
+                # BUGFIX: normalization used to happen *after* this loop, so a structurally
+                # "complete" response (right keys present) with an invalid value inside it (a
+                # non-numeric probability, a negative score, a NaN) would raise from
+                # _normalize_probabilities()/_normalize_mcq_dimensions() on the very first
+                # attempt, bypassing the retry-with-feedback mechanism entirely. Validating here,
+                # inside the loop, means value-level errors get the same retry treatment as
+                # structural ones, and a successful attempt leaves normalized results ready to use.
+                normalized = self._normalize_probabilities(probs, final_options)
+                normalized_dimensions = self._normalize_mcq_dimensions(mcq)
+                normalized_scales = self._normalize_validated_scales(
+                    response.get("validated_scales"), normalized_dimensions
+                )
+
+                # If everything is complete and valid, we succeed and break the retry loop
+                break
+            except Exception as error:
+                last_error = str(error)
+                if attempt == EVALUATOR_JSON_MAX_ATTEMPTS - 1:
+                    # BUGFIX: this used to `break` here and let execution fall through to
+                    # normalization with a known-incomplete `response`, which
+                    # _normalize_probabilities()/_normalize_mcq_dimensions() would then paper
+                    # over with defaults (uniform probabilities, 0.25-per-bucket dimensions)
+                    # with no exception raised and no fallback flag set anywhere -- structurally
+                    # indistinguishable from a real evaluator answer. Re-raise instead: the
+                    # caller (run_ecnbench_protocol.py) already has a defined, visible fallback
+                    # path for evaluator errors (evaluator_fallback_used/evaluator_fallback_reason),
+                    # and that is where an unrecoverable failure belongs, not a silent default here.
+                    raise
+                time.sleep(0.2 * (attempt + 1))
 
         result = dict(response) if isinstance(response, dict) else {}
         result["probabilities"] = normalized
@@ -289,11 +402,14 @@ class ProbabilityEvaluator:
         result["mcq_dimensions"] = normalized_dimensions
         result["validated_scales"] = normalized_scales
 
-        # requirement 3: Epistemic mapping persistence
-        if micro_questions and "micro_epistemic_mapping" in result:
+        if micro_questions:
+            # Ensure micro_epistemic_mapping always exists and is a dict
+            mapping_data = result.get("micro_epistemic_mapping", {})
             result["micro_epistemic_mapping"] = self._validate_micro_mapping(
-                result["micro_epistemic_mapping"], micro_questions
+                mapping_data, micro_questions
             )
+        else:
+            result["micro_epistemic_mapping"] = {}
 
         return result
 
@@ -310,7 +426,6 @@ class ProbabilityEvaluator:
                 continue
             q_data = mapping.get(q_id)
             if not isinstance(q_data, Mapping):
-                # Fallback to placeholder if missing to avoid breaking macro metrics
                 validated[q_id] = {"dominant_tag": "N/A", "short_rationale": "Missing in LLM response"}
                 continue
             
@@ -322,63 +437,138 @@ class ProbabilityEvaluator:
             }
         return validated
 
-    def _normalize_probabilities(self, probabilities: Any) -> Dict[str, float]:
+    def _normalize_probabilities(self, probabilities: Any, fallback_options: list[str]) -> Dict[str, float]:
+        # Restored strict validation (an earlier revision of this method silently coerced
+        # non-numeric/negative/non-finite values to 0.0 and defaulted an all-zero response to a
+        # uniform distribution -- indistinguishable from a real, evenly-weighted answer). Option
+        # matching stays fuzzy (case/whitespace-insensitive, then substring) since that is a
+        # genuine robustness need, not error-masking: a model naming an option slightly
+        # differently from the exact seed-context string is not a data-quality defect.
         if not isinstance(probabilities, Mapping) or not probabilities:
             raise ValueError("Evaluator response must include a non-empty probabilities mapping")
 
-        normalized: Dict[str, float] = {}
-        total = 0.0
+        normalized: Dict[str, float] = {opt: 0.0 for opt in fallback_options}
+        matched_any = False
         for label, value in probabilities.items():
             if not isinstance(label, str) or not label:
-                raise ValueError("Evaluator probabilities must use non-empty string labels")
-            if not isinstance(value, (int, float)):
+                raise ValueError(f"Evaluator probabilities must use non-empty string labels, got {label!r}")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise ValueError(f"Invalid probability for outcome {label!r}: {value!r}")
             numeric = float(value)
-            if not math.isfinite(numeric) or numeric < 0.0:
-                raise ValueError(
-                    f"Invalid probability for outcome {label!r}: {value!r} (must be finite and non-negative)"
-                )
-            normalized[label] = numeric
-            total += numeric
+            if not math.isfinite(numeric):
+                raise ValueError(f"Probability for outcome {label!r} must be finite: {value!r}")
+            if numeric < 0.0:
+                raise ValueError(f"Probability for outcome {label!r} must be non-negative: {value!r}")
 
-        if total <= 0.0:
-            num_keys = len(normalized)
-            if num_keys == 0:
-                raise ValueError("Evaluator probabilities must have positive total mass")
-            return {label: 1.0 / num_keys for label in normalized.keys()}
+            # Check for matching option key (case-insensitive strip match)
+            matched_opt = None
+            for opt in fallback_options:
+                if opt.strip().upper() == label.strip().upper():
+                    matched_opt = opt
+                    break
+            if matched_opt is None:
+                # Fuzzy match fallback
+                for opt in fallback_options:
+                    if label.strip().upper() in opt.strip().upper() or opt.strip().upper() in label.strip().upper():
+                        matched_opt = opt
+                        break
+            if matched_opt is not None:
+                normalized[matched_opt] = normalized.get(matched_opt, 0.0) + numeric
+                matched_any = True
+
+        total = sum(normalized.values())
+        if not matched_any or total <= 0.0:
+            raise ValueError(
+                "Evaluator probabilities must have positive total mass over the expected options "
+                f"{fallback_options}, got {dict(probabilities)!r}"
+            )
 
         return {label: value / total for label, value in normalized.items()}
 
     def _normalize_mcq_dimensions(self, dimensions: Any) -> Dict[str, Dict[str, float]]:
+        # Restored strict validation of *content* (a missing dimension, a bucket set missing a
+        # key, or an all-zero/non-numeric bucket now raises) while keeping the *naming* leniency
+        # (case/punctuation-insensitive key matching, and a bare bucket-label string as shorthand
+        # for a one-hot mapping) that a prior revision added. An earlier version of this method
+        # defaulted every one of these cases to a uniform {very_low..very_high: 0.25} placeholder
+        # with no error raised, which is indistinguishable in the released data from a genuine
+        # "the swarm was maximally uncertain on this dimension" reading and is exactly the
+        # silent-placeholder pattern this benchmark's own audit flags elsewhere (JSD telemetry,
+        # micro_epistemic_mapping).
         if not isinstance(dimensions, Mapping):
             raise ValueError("Evaluator response must include mcq_dimensions mapping")
 
-        expected_dimensions = set(MCQ_DIMENSION_KEYS)
-        provided_dimensions = set(dimensions.keys())
-        if provided_dimensions != expected_dimensions:
-            raise ValueError("Evaluator response mcq_dimensions must include all required dimensions")
+        # Fuzzy dimension key matching to handle variations like prediction-accuracy or predictionaccuracy
+        dimension_map = {d.replace("_", "").replace("-", "").casefold(): d for d in MCQ_DIMENSION_KEYS}
 
+        raw_dimensions: Dict[str, Any] = {}
+        for raw_k, raw_v in dimensions.items():
+            if not isinstance(raw_k, str):
+                continue
+            clean_k = raw_k.replace("_", "").replace("-", "").casefold()
+            if clean_k in dimension_map:
+                canonical_k = dimension_map[clean_k]
+                raw_dimensions[canonical_k] = raw_v
+
+        missing_dimensions = [d for d in MCQ_DIMENSION_KEYS if d not in raw_dimensions]
+        if missing_dimensions:
+            raise ValueError(
+                f"Evaluator response mcq_dimensions is missing required dimensions: {missing_dimensions}"
+            )
+
+        bucket_map = {b.replace("_", "").replace("-", "").casefold(): b for b in MCQ_BUCKET_KEYS}
         normalized: Dict[str, Dict[str, float]] = {}
         for dimension in MCQ_DIMENSION_KEYS:
-            buckets = dimensions.get(dimension)
-            if isinstance(buckets, Mapping):
-                bucket_keys = set(buckets.keys())
-                if bucket_keys != set(MCQ_BUCKET_KEYS):
-                    raise ValueError("Evaluator response mcq_dimensions must include all bucket keys")
-                normalized[dimension] = _normalize_probability_mapping(
-                    buckets,
-                    f"mcq_dimensions.{dimension}",
-                )
-                continue
+            buckets = raw_dimensions[dimension]
+
             if isinstance(buckets, str):
+                # A bare label is shorthand for a one-hot mapping -- a legitimate alternate
+                # format, not an error, provided it names one of the four known buckets.
+                bucket_label_clean = buckets.strip().replace("_", "").replace("-", "").casefold()
+                if bucket_label_clean not in bucket_map:
+                    raise ValueError(
+                        f"mcq_dimensions.{dimension} label {buckets!r} is not one of {MCQ_BUCKET_KEYS}"
+                    )
                 normalized[dimension] = _one_hot_bucket_mapping(
-                    buckets,
+                    bucket_map[bucket_label_clean],
                     context=f"mcq_dimensions.{dimension}",
                 )
                 continue
-            raise ValueError(
-                "Evaluator response mcq_dimensions must map dimensions to bucket mappings or bucket labels"
-            )
+
+            if not isinstance(buckets, Mapping):
+                raise ValueError(
+                    f"mcq_dimensions.{dimension} must be a bucket mapping or bucket label string, "
+                    f"got {type(buckets).__name__}"
+                )
+
+            # Standardize bucket mapping keys, stripping whitespace/casing/punctuation
+            raw_buckets: Dict[str, Any] = {}
+            for bk, bv in buckets.items():
+                if not isinstance(bk, str):
+                    continue
+                clean_bk = bk.replace("_", "").replace("-", "").casefold()
+                if clean_bk in bucket_map:
+                    raw_buckets[bucket_map[clean_bk]] = bv
+
+            missing_buckets = [b for b in MCQ_BUCKET_KEYS if b not in raw_buckets]
+            if missing_buckets:
+                raise ValueError(f"mcq_dimensions.{dimension} is missing bucket keys: {missing_buckets}")
+
+            hydrated_buckets: Dict[str, float] = {}
+            for b in MCQ_BUCKET_KEYS:
+                val = raw_buckets[b]
+                if not isinstance(val, (int, float)) or isinstance(val, bool):
+                    raise ValueError(f"mcq_dimensions.{dimension}.{b} must be numeric, got {val!r}")
+                numeric = float(val)
+                if not math.isfinite(numeric) or numeric < 0.0:
+                    raise ValueError(f"mcq_dimensions.{dimension}.{b} must be finite and non-negative: {val!r}")
+                hydrated_buckets[b] = numeric
+
+            total_mass = sum(hydrated_buckets.values())
+            if total_mass <= 0.0:
+                raise ValueError(f"mcq_dimensions.{dimension} bucket values must have positive total mass")
+
+            normalized[dimension] = {b: v / total_mass for b, v in hydrated_buckets.items()}
 
         return normalized
 

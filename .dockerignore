@@ -1,4 +1,5 @@
 .git
+.worktrees
 .github
 .gitignore
 .cursor
@@ -8,6 +9,7 @@
 node_modules
 frontend/node_modules
 backend/.venv
+backend/.venv311
 .venv
 .python-version
 
@@ -21,3 +23,7 @@ frontend/dist
 frontend/.vite
 
 backend/uploads
+backend/log
+backend/logs
+backend/test_run
+log

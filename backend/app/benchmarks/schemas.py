@@ -145,8 +145,15 @@ def validate_event_result_row(row: Mapping[str, Any]) -> None:
 
     telemetry_error = _has_explicit_telemetry_error(row)
     if condition in ROUND_JSD_CONDITIONS and not telemetry_error:
-        if not isinstance(round_jsd, list) or len(round_jsd) != 5:
-            raise ValueError(f"'round_jsd' must be a list of length 5 for completed condition {condition}")
+        import os
+        dev_minimal = os.environ.get("DEV_MINIMAL_MODE", "").lower() == "true"
+        max_steps = int(os.environ.get("DEV_MINIMAL_MAX_STEPS", "60")) if dev_minimal else 60
+        checkpoints = list(range(6, max_steps + 1, 6))
+        if not checkpoints or checkpoints[-1] != max_steps:
+            checkpoints.append(max_steps)
+        expected_len = len(checkpoints)
+        if not isinstance(round_jsd, list) or len(round_jsd) != expected_len:
+            raise ValueError(f"'round_jsd' must be a list of length {expected_len} for completed condition {condition} (got {len(round_jsd) if isinstance(round_jsd, list) else 'non-list'})")
         if not isinstance(convergence_monotonic, bool):
             raise ValueError(f"'convergence_monotonic' must be a boolean for completed condition {condition}")
 

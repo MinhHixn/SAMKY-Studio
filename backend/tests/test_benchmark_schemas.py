@@ -9,6 +9,12 @@ from app.benchmarks.schemas import (
 )
 
 
+@pytest.fixture(autouse=True)
+def setup_dev_minimal_env(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "true")
+    monkeypatch.setenv("DEV_MINIMAL_MAX_STEPS", "30")
+
+
 def _valid_completed_row(*, condition: str = "B", telemetry_error: bool = False):
     return {
         "event_id": "E1",

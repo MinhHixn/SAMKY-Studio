@@ -9,7 +9,7 @@ import warnings
 # Must be set before all other imports
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, request, g
 from flask_cors import CORS
 
 from .config import Config
@@ -36,7 +36,7 @@ def create_app(config_class=Config):
 
     if should_log_startup:
         logger.info("=" * 50)
-        logger.info("MiroFish-Offline Backend starting...")
+        logger.info("SAMKY Studio Backend starting...")
         logger.info("=" * 50)
 
     # Enable CORS
@@ -63,10 +63,23 @@ def create_app(config_class=Config):
     # Request logging middleware
     @app.before_request
     def log_request():
+        from .services import studio_runtime
+        if request.method in {"POST", "PUT", "DELETE"} and "/runtime" not in request.path:
+            with studio_runtime.lock:
+                studio_runtime.active_requests += 1
+                g.studio_runtime_request = True
         logger = get_logger('mirofish.request')
         logger.debug(f"Request: {request.method} {request.path}")
-        if request.content_type and 'json' in request.content_type:
+        if request.content_type and 'json' in request.content_type and "/runtime" not in request.path:
             logger.debug(f"Request body: {request.get_json(silent=True)}")
+
+    @app.teardown_request
+    def release_runtime_request(_error):
+        if getattr(g, "studio_runtime_request", False):
+            from .services import studio_runtime
+            with studio_runtime.lock:
+                studio_runtime.active_requests -= 1
+                g.studio_runtime_request = False
 
     @app.after_request
     def log_response(response):
@@ -84,10 +97,10 @@ def create_app(config_class=Config):
     # Health check
     @app.route('/health')
     def health():
-        return {'status': 'ok', 'service': 'MiroFish-Offline Backend'}
+        return {'status': 'ok', 'service': 'SAMKY Studio Backend', 'engine': 'MiroFish-Offline'}
 
     if should_log_startup:
-        logger.info("MiroFish-Offline Backend startup complete")
+        logger.info("SAMKY Studio Backend startup complete")
 
     return app
 

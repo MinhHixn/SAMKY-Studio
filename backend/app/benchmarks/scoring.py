@@ -22,19 +22,42 @@ RUBRIC_PLACEHOLDER_WEIGHTS: Dict[str, float] = dict(MCQ_DIMENSION_WEIGHTS)
 
 
 def brier_score(probabilities: Dict[str, float], truth: str) -> float:
-    # Normalize truth to uppercase for consistent matching
-    truth_upper = truth.strip().upper()
-    # Create a mapping of uppercase labels to their probabilities
-    normalized_probs = {str(k).strip().upper(): v for k, v in probabilities.items()}
+    import re
     
+    def normalize(s: str) -> str:
+        s = str(s).replace('_', ' ').replace('-', ' ').strip().upper()
+        return ' '.join(s.split())
+
+    truth_norm = normalize(truth)
+    
+    # Create normalized probs
+    normalized_probs = {}
+    for k, v in probabilities.items():
+        k_norm = normalize(k)
+        normalized_probs[k_norm] = normalized_probs.get(k_norm, 0.0) + float(v)
+        
+    # If the truth_norm is not in normalized_probs, try to resolve it (e.g. '4' vs 'Category 4')
+    if truth_norm not in normalized_probs:
+        truth_digits = re.findall(r'\d+', truth_norm)
+        if truth_digits:
+            for digit in truth_digits:
+                if digit in normalized_probs:
+                    normalized_probs[truth_norm] = normalized_probs.pop(digit)
+                    break
+                for k in list(normalized_probs.keys()):
+                    k_digits = re.findall(r'\d+', k)
+                    if k_digits and digit in k_digits:
+                        normalized_probs[truth_norm] = normalized_probs.pop(k)
+                        break
+
     labels = set(normalized_probs.keys())
-    labels.add(truth_upper)
+    labels.add(truth_norm)
     
     score = 0.0
     for outcome in labels:
         probability = normalized_probs.get(outcome, 0.0)
-        observed = 1.0 if outcome == truth_upper else 0.0
-        score += (float(probability) - observed) ** 2
+        observed = 1.0 if outcome == truth_norm else 0.0
+        score += (probability - observed) ** 2
     return score
 
 

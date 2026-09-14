@@ -839,7 +839,7 @@ onUnmounted(() => {
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size:16px;
   font-weight: 600;
   color: #333;
   pointer-events: auto;
@@ -866,7 +866,7 @@ onUnmounted(() => {
   color: #666;
   transition: all 0.2s;
   box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-  font-size: 13px;
+  font-size:16px;
 }
 
 .tool-btn:hover {
@@ -876,7 +876,7 @@ onUnmounted(() => {
 }
 
 .tool-btn .btn-text {
-  font-size: 12px;
+  font-size:14px;
 }
 
 .icon-refresh.spinning {
@@ -906,7 +906,7 @@ onUnmounted(() => {
 }
 
 .empty-icon {
-  font-size: 48px;
+  font-size:48px;
   margin-bottom: 16px;
   opacity: 0.2;
 }
@@ -926,7 +926,7 @@ onUnmounted(() => {
 
 .legend-title {
   display: block;
-  font-size: 11px;
+  font-size:14px;
   font-weight: 600;
   color: #E91E63;
   margin-bottom: 10px;
@@ -945,7 +945,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size:14px;
   color: #555;
 }
 
@@ -1022,7 +1022,7 @@ input:checked + .slider:before {
 }
 
 .toggle-label {
-  font-size: 12px;
+  font-size:14px;
   color: #666;
 }
 
@@ -1039,7 +1039,7 @@ input:checked + .slider:before {
   box-shadow: 0 8px 32px rgba(0,0,0,0.1);
   overflow: hidden;
   font-family: 'Noto Sans SC', system-ui, sans-serif;
-  font-size: 13px;
+  font-size:16px;
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -1058,13 +1058,13 @@ input:checked + .slider:before {
 .detail-title {
   font-weight: 600;
   color: #333;
-  font-size: 14px;
+  font-size:16px;
 }
 
 .detail-type-badge {
   padding: 4px 10px;
   border-radius: 12px;
-  font-size: 11px;
+  font-size:14px;
   font-weight: 500;
   margin-left: auto;
   margin-right: 12px;
@@ -1073,7 +1073,7 @@ input:checked + .slider:before {
 .detail-close {
   background: none;
   border: none;
-  font-size: 20px;
+  font-size:20px;
   cursor: pointer;
   color: #999;
   line-height: 1;
@@ -1100,7 +1100,7 @@ input:checked + .slider:before {
 
 .detail-label {
   color: #888;
-  font-size: 12px;
+  font-size:14px;
   font-weight: 500;
   min-width: 80px;
 }
@@ -1113,7 +1113,7 @@ input:checked + .slider:before {
 
 .detail-value.uuid-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size:14px;
   color: #666;
 }
 
@@ -1129,7 +1129,7 @@ input:checked + .slider:before {
 }
 
 .section-title {
-  font-size: 12px;
+  font-size:14px;
   font-weight: 600;
   color: #666;
   margin-bottom: 10px;
@@ -1160,7 +1160,7 @@ input:checked + .slider:before {
 .summary-text {
   line-height: 1.6;
   color: #444;
-  font-size: 12px;
+  font-size:14px;
 }
 
 .labels-list {
@@ -1175,7 +1175,7 @@ input:checked + .slider:before {
   background: #F5F5F5;
   border: 1px solid #E0E0E0;
   border-radius: 16px;
-  font-size: 11px;
+  font-size:14px;
   color: #555;
 }
 
@@ -1192,7 +1192,7 @@ input:checked + .slider:before {
   border: 1px solid #E8E8E8;
   border-radius: 6px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size:12px;
   color: #666;
   word-break: break-all;
 }
@@ -1203,7 +1203,7 @@ input:checked + .slider:before {
   padding: 12px;
   border-radius: 8px;
   margin-bottom: 16px;
-  font-size: 13px;
+  font-size:16px;
   font-weight: 500;
   color: #333;
   line-height: 1.5;
@@ -1221,7 +1221,7 @@ input:checked + .slider:before {
   color: #fff;
   padding: 10px 20px;
   border-radius: 30px;
-  font-size: 13px;
+  font-size:16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1316,7 +1316,7 @@ input:checked + .slider:before {
 
 .self-loop-count {
   margin-left: auto;
-  font-size: 11px;
+  font-size:14px;
   color: #666;
   background: rgba(255,255,255,0.8);
   padding: 2px 8px;
@@ -1354,7 +1354,7 @@ input:checked + .slider:before {
 }
 
 .self-loop-index {
-  font-size: 10px;
+  font-size:12px;
   font-weight: 600;
   color: #888;
   background: #E0E0E0;
@@ -1363,7 +1363,7 @@ input:checked + .slider:before {
 }
 
 .self-loop-name {
-  font-size: 12px;
+  font-size:14px;
   font-weight: 500;
   color: #333;
   flex: 1;
@@ -1375,7 +1375,7 @@ input:checked + .slider:before {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size:16px;
   font-weight: 600;
   color: #888;
   background: #E0E0E0;
@@ -1398,12 +1398,12 @@ input:checked + .slider:before {
 }
 
 .self-loop-item-content .detail-label {
-  font-size: 11px;
+  font-size:14px;
   min-width: 60px;
 }
 
 .self-loop-item-content .detail-value {
-  font-size: 12px;
+  font-size:14px;
 }
 
 .self-loop-episodes {
@@ -1418,6 +1418,6 @@ input:checked + .slider:before {
 
 .episode-tag.small {
   padding: 3px 6px;
-  font-size: 9px;
+  font-size:12px;
 }
 </style>

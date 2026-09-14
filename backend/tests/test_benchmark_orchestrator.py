@@ -142,7 +142,7 @@ def test_protocol_condition_executor_clears_noisy_dimensions_when_completion_tra
     executor = ProtocolConditionExecutor(
         router=FakeRouter(),
         python_exe="python",
-        profiles=[],
+        profiles_builder=lambda _event_id: [],
         seed_files=[tmp_path / "seed.md"],
         event_index_lookup={"E1": 0},
         trace_writer=trace_writer,
@@ -178,7 +178,14 @@ def test_protocol_condition_executor_clears_noisy_dimensions_when_completion_tra
     assert row["error"] == "RuntimeError: trace write failed"
 
 
-def _build_protocol_executor(tmp_path, *, telemetry_builder=None, baseline_scores_builder=None):
+def _build_protocol_executor(
+    tmp_path,
+    *,
+    telemetry_builder=None,
+    baseline_scores_builder=None,
+    existing_simulation_root=None,
+    simulation_runner=None,
+):
     trace_entries: list[dict[str, object]] = []
 
     class FakeRouter:
@@ -189,11 +196,14 @@ def _build_protocol_executor(tmp_path, *, telemetry_builder=None, baseline_score
         def write(self, payload):
             trace_entries.append(payload)
 
-    def simulation_runner(python_exe, config_path, router, *, log_path):
+    def default_simulation_runner(python_exe, config_path, router, *, log_path):
         del router
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("simulation ok", encoding="utf-8")
         return subprocess.CompletedProcess(args=[python_exe, str(config_path)], returncode=0)
+
+    if simulation_runner is None:
+        simulation_runner = default_simulation_runner
 
     def config_writer(unit_dir, config):
         config_path = Path(unit_dir) / "simulation_config.json"
@@ -216,7 +226,9 @@ def _build_protocol_executor(tmp_path, *, telemetry_builder=None, baseline_score
     executor = ProtocolConditionExecutor(
         router=FakeRouter(),
         python_exe="python",
-        profiles=[],
+        # ProtocolConditionExecutor now takes profiles_builder (a callable resolving profiles
+        # per event_id) rather than a single static `profiles` list.
+        profiles_builder=lambda _event_id: [],
         seed_files=[tmp_path / "seed.md"],
         event_index_lookup={"E1": 0},
         trace_writer=FakeTraceWriter(),
@@ -230,9 +242,137 @@ def _build_protocol_executor(tmp_path, *, telemetry_builder=None, baseline_score
         telemetry_builder=telemetry_builder,
         baseline_scores_builder=baseline_scores_builder,
         exception_formatter=lambda exc: f"{type(exc).__name__}: {exc}",
+        existing_simulation_root=existing_simulation_root,
     )
 
     return executor, trace_entries
+
+
+def _write_reusable_simulation(source_unit_dir: Path) -> None:
+    source_unit_dir.mkdir(parents=True, exist_ok=True)
+    (source_unit_dir / "simulation.log").write_text("prior run log", encoding="utf-8")
+    (source_unit_dir / "simulation_config.json").write_text("{}", encoding="utf-8")
+    twitter_dir = source_unit_dir / "twitter"
+    twitter_dir.mkdir(parents=True, exist_ok=True)
+    (twitter_dir / "actions.jsonl").write_text(
+        json.dumps({"round": 12, "action_type": "INTERVIEW", "action_args": {"probability": 0.6}}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_protocol_condition_executor_reuses_existing_simulation_when_available(tmp_path):
+    reuse_root = tmp_path / "prior_run"
+    _write_reusable_simulation(reuse_root / "E1_B_r1")
+
+    simulation_runner_calls: list[str] = []
+
+    def failing_simulation_runner(python_exe, config_path, router, *, log_path):
+        # If reuse works, this must never be called -- fail loudly if it is, rather than
+        # silently letting the test pass on a fresh simulation instead of a reused one.
+        simulation_runner_calls.append(str(log_path))
+        raise AssertionError("simulation_runner should not run when a valid reuse source exists")
+
+    executor, trace_entries = _build_protocol_executor(
+        tmp_path,
+        existing_simulation_root=reuse_root,
+        simulation_runner=failing_simulation_runner,
+    )
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "new_run" / "E1_B_r1",
+        seed_file=tmp_path / "seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: ({"A": 0.7, "B": 0.3}, 0.09),
+    )
+
+    assert simulation_runner_calls == []
+    assert row["simulation_status"] == "completed"
+    # The copied files must actually land in the new run's unit directory, not just be read
+    # from the source in place -- so the new run stays self-contained and re-evaluable later.
+    copied_log = tmp_path / "new_run" / "E1_B_r1" / "simulation.log"
+    assert copied_log.read_text(encoding="utf-8") == "prior run log"
+    assert (tmp_path / "new_run" / "E1_B_r1" / "twitter" / "actions.jsonl").exists()
+    assert any(entry.get("status") == "simulation_reused" for entry in trace_entries)
+
+
+def test_protocol_condition_executor_falls_back_to_fresh_simulation_when_reuse_source_missing(tmp_path):
+    reuse_root = tmp_path / "prior_run"
+    reuse_root.mkdir(parents=True, exist_ok=True)
+    # Deliberately do not create prior_run/E1_B_r1 -- this unit was never simulated before
+    # (or its log is missing/incomplete), so reuse must decline and fall back to running fresh.
+
+    fresh_runner_calls: list[str] = []
+
+    def fresh_simulation_runner(python_exe, config_path, router, *, log_path):
+        del python_exe, config_path, router
+        fresh_runner_calls.append(str(log_path))
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("freshly simulated", encoding="utf-8")
+        return subprocess.CompletedProcess(args=["python"], returncode=0)
+
+    executor, _trace_entries = _build_protocol_executor(
+        tmp_path,
+        existing_simulation_root=reuse_root,
+        simulation_runner=fresh_simulation_runner,
+    )
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "new_run" / "E1_B_r1",
+        seed_file=tmp_path / "seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: ({"A": 0.7, "B": 0.3}, 0.09),
+    )
+
+    assert len(fresh_runner_calls) == 1
+    assert row["simulation_status"] == "completed"
+
+
+def test_protocol_condition_executor_reuse_declines_on_empty_actions_log(tmp_path):
+    reuse_root = tmp_path / "prior_run"
+    source_unit_dir = reuse_root / "E1_B_r1"
+    source_unit_dir.mkdir(parents=True, exist_ok=True)
+    (source_unit_dir / "simulation.log").write_text("prior run log", encoding="utf-8")
+    # simulation.log exists but actions.jsonl is empty (0 bytes) on both platforms -- this is
+    # the "looks completed but isn't" case reuse must not trust.
+    (source_unit_dir / "twitter").mkdir(parents=True, exist_ok=True)
+    (source_unit_dir / "twitter" / "actions.jsonl").write_text("", encoding="utf-8")
+
+    fresh_runner_calls: list[str] = []
+
+    def fresh_simulation_runner(python_exe, config_path, router, *, log_path):
+        del python_exe, config_path, router
+        fresh_runner_calls.append(str(log_path))
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("freshly simulated", encoding="utf-8")
+        return subprocess.CompletedProcess(args=["python"], returncode=0)
+
+    executor, _trace_entries = _build_protocol_executor(
+        tmp_path,
+        existing_simulation_root=reuse_root,
+        simulation_runner=fresh_simulation_runner,
+    )
+
+    row = executor.execute(
+        event={"event_id": "E1", "question": "Q", "outcome": "A", "options": ["A", "B"]},
+        condition="B",
+        repeat=1,
+        run_id="r1",
+        unit_dir=tmp_path / "new_run" / "E1_B_r1",
+        seed_file=tmp_path / "seed.md",
+        config_builder=lambda *_args, **_kwargs: {"event_id": "E1"},
+        evaluator=lambda *_args, **_kwargs: ({"A": 0.7, "B": 0.3}, 0.09),
+    )
+
+    assert len(fresh_runner_calls) == 1
+    assert row["simulation_status"] == "completed"
 
 
 def test_protocol_condition_executor_populates_telemetry_fields(tmp_path):
@@ -826,7 +966,14 @@ def test_protocol_condition_executor_execute_invalid_mapping_rubric_falls_back_t
     assert trace_entries[-1]["status"] == "evaluation_failed"
 
 
-def test_orchestrator_writes_event_results_and_summary(tmp_path):
+def test_orchestrator_writes_event_results_and_summary(monkeypatch, tmp_path):
+    # The project .env sets BENCHMARK_MODE=true, which makes orchestrator.run() add
+    # deterministic_mode/enforced_seed/enforced_temperature/headless_mode to the manifest (see
+    # test_orchestrator_enforces_deterministic_manifest_fields_in_benchmark_mode for that
+    # behaviour's own dedicated test). This test asserts the plain, non-benchmark-mode manifest
+    # shape, so it needs BENCHMARK_MODE cleared first.
+    monkeypatch.delenv("BENCHMARK_MODE", raising=False)
+
     class FakeExecutor:
         def execute(self, **kwargs):
             return {
@@ -977,7 +1124,11 @@ def test_orchestrator_clears_stale_artifacts_on_rerun_when_validation_fails_befo
     assert not (run_dir / "summary.json").exists()
 
 
-def test_orchestrator_writes_provided_manifest_payload(tmp_path):
+def test_orchestrator_writes_provided_manifest_payload(monkeypatch, tmp_path):
+    # See test_orchestrator_writes_event_results_and_summary: BENCHMARK_MODE=true from the
+    # project .env would otherwise inject extra deterministic-mode keys into the manifest.
+    monkeypatch.delenv("BENCHMARK_MODE", raising=False)
+
     class FakeExecutor:
         def execute(self, **kwargs):
             return {
@@ -1104,7 +1255,9 @@ def test_orchestrator_keeps_processing_after_unit_failure(tmp_path):
                 "full_simulation_completed": True,
                 "probabilities": {"A": 1.0},
                 "brier": 0.0,
-                "round_jsd": [0.2, 0.15, 0.1, 0.05, 0.01],
+                # build_event_result_row (via schemas.py's row guard) now requires round_jsd to
+                # have exactly len(range(6, 61, 6)) == 10 entries for a completed row.
+                "round_jsd": [0.2, 0.18, 0.15, 0.13, 0.1, 0.08, 0.06, 0.05, 0.03, 0.01],
                 "convergence_monotonic": True,
                 "baseline_scores": {
                     "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},
@@ -1169,7 +1322,9 @@ def test_orchestrator_isolates_malformed_rows_and_missing_event_lookup(tmp_path)
                 "full_simulation_completed": True,
                 "probabilities": {"A": 1.0},
                 "brier": 0.0,
-                "round_jsd": [0.2, 0.15, 0.1, 0.05, 0.01],
+                # build_event_result_row (via schemas.py's row guard) now requires round_jsd to
+                # have exactly len(range(6, 61, 6)) == 10 entries for a completed row.
+                "round_jsd": [0.2, 0.18, 0.15, 0.13, 0.1, 0.08, 0.06, 0.05, 0.03, 0.01],
                 "convergence_monotonic": True,
                 "baseline_scores": {
                     "uniform_random": {"probabilities": {"A": 0.5, "B": 0.5}, "brier": 0.5},

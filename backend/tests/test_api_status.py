@@ -7,6 +7,12 @@ def test_api_status_reports_healthy_dependencies(monkeypatch):
 
     from app.api import system as system_api
 
+    # _check_ollama() reads Config.LLM_MODEL_NAME directly; the project .env sets this to
+    # "google/gemma-4-26b-a4b-it" for local dev, which doesn't match the "qwen2.5:32b" this test
+    # mocks Ollama as having available. Pin it explicitly so the test doesn't depend on whatever
+    # model happens to be configured in the local environment.
+    monkeypatch.setattr(system_api.Config, "LLM_MODEL_NAME", "qwen2.5:32b")
+
     monkeypatch.setattr(
         system_api.requests,
         "get",

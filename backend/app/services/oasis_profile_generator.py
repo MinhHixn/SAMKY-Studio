@@ -9,6 +9,7 @@ Optimization improvements:
 """
 
 import json
+import os
 import random
 import time
 from typing import Dict, Any, List, Optional
@@ -170,6 +171,52 @@ class OasisProfileGenerator:
         "US", "UK", "Japan", "Germany", "France",
         "Canada", "Australia", "Brazil", "India", "South Korea"
     ]
+
+    @staticmethod
+    def _validate_required_profile_fields(profile: OasisAgentProfile) -> None:
+        """Validate before checkpointing, not only when exporting Reddit JSON."""
+        if isinstance(profile.age, bool) or not isinstance(profile.age, int) or profile.age <= 0:
+            raise ValueError(f"Profile {profile.user_name} generation failed: missing or invalid 'age'")
+        if not isinstance(profile.gender, str) or profile.gender.strip().lower() not in {"male", "female", "other"}:
+            raise ValueError(f"Profile {profile.user_name} generation failed: missing or invalid 'gender'")
+        for field_name in ("mbti", "country"):
+            value = getattr(profile, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Profile {profile.user_name} generation failed: missing '{field_name}'")
+
+    @staticmethod
+    def _profile_from_saved(item: Dict[str, Any], entity: EntityNode, index: int) -> Optional[OasisAgentProfile]:
+        """Restore a matching profile from a full checkpoint or legacy Reddit JSON."""
+        if not isinstance(item, dict) or item.get("user_id") != index or item.get("name") != entity.name:
+            return None
+        source_uuid = item.get("source_entity_uuid")
+        if source_uuid and source_uuid != entity.uuid:
+            return None
+        try:
+            profile = OasisAgentProfile(
+                user_id=index,
+                user_name=item.get("user_name") or item["username"],
+                name=entity.name,
+                bio=item["bio"],
+                persona=item["persona"],
+                karma=item.get("karma", 1000),
+                friend_count=item.get("friend_count", 100),
+                follower_count=item.get("follower_count", 150),
+                statuses_count=item.get("statuses_count", 500),
+                age=item.get("age"),
+                gender=item.get("gender"),
+                mbti=item.get("mbti"),
+                country=item.get("country"),
+                profession=item.get("profession"),
+                interested_topics=item.get("interested_topics") or [],
+                source_entity_uuid=entity.uuid,
+                source_entity_type=entity.get_entity_type() or "Entity",
+                created_at=item.get("created_at") or datetime.now().strftime("%Y-%m-%d"),
+            )
+            OasisProfileGenerator._validate_required_profile_fields(profile)
+            return profile
+        except (KeyError, TypeError, ValueError):
+            return None
 
     # Individual type entities (need to generate specific personas)
     INDIVIDUAL_ENTITY_TYPES = [
@@ -524,6 +571,18 @@ class OasisProfileGenerator:
                 if "persona" not in result or not result["persona"]:
                     result["persona"] = entity_summary or f"{entity_name} is a {entity_type}."
 
+                self._validate_required_profile_fields(OasisAgentProfile(
+                    user_id=0,
+                    user_name=entity_name,
+                    name=entity_name,
+                    bio=result["bio"],
+                    persona=result["persona"],
+                    age=result.get("age"),
+                    gender=result.get("gender"),
+                    mbti=result.get("mbti"),
+                    country=result.get("country"),
+                ))
+
                 return result
 
             except Exception as e:
@@ -830,7 +889,8 @@ Important:
         graph_id: Optional[str] = None,
         parallel_count: int = 5,
         realtime_output_path: Optional[str] = None,
-        output_platform: str = "reddit"
+        output_platform: str = "reddit",
+        checkpoint_path: Optional[str] = None,
     ) -> List[OasisAgentProfile]:
         """
         Generate Agent Profiles in batch from entities (supports parallel generation)
@@ -859,6 +919,35 @@ Important:
         completed_count = [0]  # Use list for modification in closure
         lock = Lock()
 
+        # A full checkpoint is preferred. Older runs only have the live Reddit
+        # JSON file, so read that as a migration fallback. Match by both index
+        # and entity name to avoid reusing a profile from a different graph.
+        resume_paths = [checkpoint_path]
+        if output_platform == "reddit":
+            resume_paths.append(realtime_output_path)
+        for path in resume_paths:
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if not isinstance(saved, list):
+                    raise ValueError("Profile checkpoint must be a list")
+                for item in saved:
+                    if not isinstance(item, dict):
+                        continue
+                    index = item.get("user_id")
+                    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < total and profiles[index] is None:
+                        profiles[index] = self._profile_from_saved(item, entities[index], index)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning("Could not read profile checkpoint %s: %s", path, exc)
+
+        completed_count[0] = sum(profile is not None for profile in profiles)
+        if completed_count[0]:
+            logger.info("Resuming profile generation: reusing %s/%s valid profiles", completed_count[0], total)
+            if progress_callback:
+                progress_callback(completed_count[0], total, f"Resumed {completed_count[0]}/{total} valid profiles")
+
         # Helper function for real-time file writing
         def save_profiles_realtime():
             """Real-time save generated profiles to file"""
@@ -872,6 +961,11 @@ Important:
                     return
 
                 try:
+                    if checkpoint_path:
+                        temp_path = f"{checkpoint_path}.tmp"
+                        with open(temp_path, "w", encoding="utf-8") as handle:
+                            json.dump([p.to_dict() for p in existing_profiles], handle, ensure_ascii=False, indent=2)
+                        os.replace(temp_path, checkpoint_path)
                     if output_platform == "reddit":
                         # Reddit JSON format
                         profiles_data = [p.to_reddit_format() for p in existing_profiles]
@@ -900,6 +994,7 @@ Important:
                     user_id=idx,
                     use_llm=use_llm
                 )
+                self._validate_required_profile_fields(profile)
 
                 # Real-time output generated persona to console and log
                 self._print_generated_profile(entity.name, entity_type, profile)
@@ -908,16 +1003,8 @@ Important:
 
             except Exception as e:
                 logger.error(f"Failed to generate persona for entity {entity.name}: {str(e)}")
-                # Create a fallback profile
-                fallback_profile = OasisAgentProfile(
-                    user_id=idx,
-                    user_name=self._generate_username(entity.name),
-                    name=entity.name,
-                    bio=f"{entity_type}: {entity.name}",
-                    persona=entity.summary or f"A participant in social discussions.",
-                    source_entity_uuid=entity.uuid,
-                    source_entity_type=entity_type,
-                )
+                fallback_profile = self.generate_profile_from_entity(entity, idx, use_llm=False)
+                self._validate_required_profile_fields(fallback_profile)
                 return idx, fallback_profile, str(e)
 
         logger.info(f"Starting parallel generation of {total} agent personas (parallel count: {parallel_count})...")
@@ -931,6 +1018,7 @@ Important:
             future_to_entity = {
                 executor.submit(generate_single_profile, idx, entity): (idx, entity)
                 for idx, entity in enumerate(entities)
+                if profiles[idx] is None
             }
 
             # Collect results
@@ -963,19 +1051,7 @@ Important:
 
                 except Exception as e:
                     logger.error(f"Exception occurred while processing entity {entity.name}: {str(e)}")
-                    with lock:
-                        completed_count[0] += 1
-                    profiles[idx] = OasisAgentProfile(
-                        user_id=idx,
-                        user_name=self._generate_username(entity.name),
-                        name=entity.name,
-                        bio=f"{entity_type}: {entity.name}",
-                        persona=entity.summary or "A participant in social discussions.",
-                        source_entity_uuid=entity.uuid,
-                        source_entity_type=entity_type,
-                    )
-                    # Real-time file writing (even for fallback personas)
-                    save_profiles_realtime()
+                    raise RuntimeError(f"Profile {entity.name} failed after fallback generation") from e
 
         print(f"\n{'='*60}")
         print(f"Persona generation complete! Generated {len([p for p in profiles if p])} agents")
@@ -1117,14 +1193,7 @@ Important:
         """
         data = []
         for idx, profile in enumerate(profiles):
-            if profile.age is None:
-                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'age'")
-            if not profile.gender:
-                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'gender'")
-            if not profile.mbti:
-                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'mbti'")
-            if not profile.country:
-                raise ValueError(f"Profile {profile.user_name} generation failed: missing 'country'")
+            self._validate_required_profile_fields(profile)
 
             item = {
                 "user_id": profile.user_id if profile.user_id is not None else idx,

@@ -1,52 +1,23 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
-import Process from '../views/MainView.vue'
-import SimulationView from '../views/SimulationView.vue'
-import SimulationRunView from '../views/SimulationRunView.vue'
-import ReportView from '../views/ReportView.vue'
-import InteractionView from '../views/InteractionView.vue'
+import Home from '../views/StudioHome.vue'
 
-const routes = [
-  {
-    path: '/',
-    name: 'Home',
-    component: Home
-  },
-  {
-    path: '/process/:projectId',
-    name: 'Process',
-    component: Process,
-    props: true
-  },
-  {
-    path: '/simulation/:simulationId',
-    name: 'Simulation',
-    component: SimulationView,
-    props: true
-  },
-  {
-    path: '/simulation/:simulationId/start',
-    name: 'SimulationRun',
-    component: SimulationRunView,
-    props: true
-  },
-  {
-    path: '/report/:reportId',
-    name: 'Report',
-    component: ReportView,
-    props: true
-  },
-  {
-    path: '/interaction/:reportId',
-    name: 'Interaction',
-    component: InteractionView,
-    props: true
-  }
-]
+// Load the graph and conversation code only when entering that workspace.
+const Simulation = () => import('../views/StudioRun.vue')
+const Graph = () => import('../views/StudioGraphPage.vue')
+const Report = () => import('../views/StudioReport.vue')
+const Interview = () => import('../views/StudioInterview.vue')
 
-const router = createRouter({
+export default createRouter({
   history: createWebHistory(),
-  routes
+  routes: [
+    { path: '/', name: 'Home', component: Home },
+    { path: '/process/:projectId', name: 'Process', component: Simulation },
+    { path: '/simulation/:simulationId', name: 'Simulation', component: Simulation },
+    { path: '/simulation/:simulationId/start', name: 'SimulationRun', component: Simulation },
+    { path: '/simulation/:simulationId/graph', name: 'SimulationGraph', component: Graph },
+    { path: '/simulation/:simulationId/report', name: 'SimulationReport', component: Report },
+    { path: '/simulation/:simulationId/interview', name: 'AgentInterview', component: Interview },
+    { path: '/report/:reportId', name: 'Report', component: Report },
+    { path: '/interaction/:reportId', name: 'Interaction', component: Interview }
+  ]
 })
-
-export default router

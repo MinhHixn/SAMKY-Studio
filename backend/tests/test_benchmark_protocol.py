@@ -8,7 +8,8 @@ from app.benchmarks.protocol import (
 )
 
 
-def test_enforce_protocol_requires_exact_60_rounds():
+def test_enforce_protocol_requires_exact_60_rounds(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "False")
     config = {
         "time_config": {"total_simulation_hours": 72, "minutes_per_round": 60},
         "agent_configs": [{}] * 3000,
@@ -19,7 +20,8 @@ def test_enforce_protocol_requires_exact_60_rounds():
 
 
 @pytest.mark.parametrize("agent_configs", [None, {}])
-def test_enforce_protocol_rejects_missing_or_wrong_agent_configs_type(agent_configs):
+def test_enforce_protocol_rejects_missing_or_wrong_agent_configs_type(agent_configs, monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "False")
     config = {
         "time_config": {"total_simulation_hours": 60, "minutes_per_round": 60},
         "agent_configs": agent_configs,
@@ -29,7 +31,8 @@ def test_enforce_protocol_rejects_missing_or_wrong_agent_configs_type(agent_conf
         enforce_protocol_constraints(config)
 
 
-def test_enforce_protocol_accepts_exact_3000_agents_and_60_rounds():
+def test_enforce_protocol_accepts_exact_3000_agents_and_60_rounds(monkeypatch):
+    monkeypatch.setenv("DEV_MINIMAL_MODE", "False")
     config = {
         "time_config": {"total_simulation_hours": 60, "minutes_per_round": 60},
         "agent_configs": [{}] * 3000,

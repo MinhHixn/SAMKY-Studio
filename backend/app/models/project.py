@@ -46,6 +46,8 @@ class Project:
 
     # Configuration
     simulation_requirement: Optional[str] = None
+    # Non-secret choices made before the initial upload; survive browser reloads.
+    studio_settings: Dict[str, Any] = field(default_factory=dict)
     chunk_size: int = 500
     chunk_overlap: int = 50
 
@@ -67,6 +69,7 @@ class Project:
             "graph_id": self.graph_id,
             "graph_build_task_id": self.graph_build_task_id,
             "simulation_requirement": self.simulation_requirement,
+            "studio_settings": self.studio_settings,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "error": self.error
@@ -92,6 +95,7 @@ class Project:
             graph_id=data.get('graph_id'),
             graph_build_task_id=data.get('graph_build_task_id'),
             simulation_requirement=data.get('simulation_requirement'),
+            studio_settings=data.get('studio_settings') or {},
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
             error=data.get('error')

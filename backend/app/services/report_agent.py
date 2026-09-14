@@ -1229,15 +1229,50 @@ class ReportAgent:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                json_schema={
+                    "name": "report_outline",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "sections": {
+                                "type": "array", "minItems": 2, "maxItems": 5,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {"title": {"type": "string"}},
+                                    "required": ["title"], "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["title", "summary", "sections"],
+                        "additionalProperties": False,
+                    },
+                },
             )
             
             if progress_callback:
                 progress_callback("planning", 80, "Parsing outline structure...")
 
+            # Valid JSON can still be an unrelated object or an empty outline.
+            # Validate locally as some providers only support JSON-object mode.
+            if not isinstance(response, dict):
+                raise ValueError("Report outline must be an object")
+            section_data_list = response.get("sections")
+            if not isinstance(section_data_list, list) or not 2 <= len(section_data_list) <= 5:
+                raise ValueError("Report outline must contain 2 to 5 sections")
+            for key in ("title", "summary"):
+                if not isinstance(response.get(key), str) or not response[key].strip():
+                    raise ValueError(f"Report outline requires a non-empty {key}")
+            if any(not isinstance(s, dict) or not isinstance(s.get("title"), str)
+                   or not s["title"].strip() for s in section_data_list):
+                raise ValueError("Every report section requires a non-empty title")
+
             # Parse outline
             sections = []
-            for section_data in response.get("sections", []):
+            for section_data in section_data_list:
                 sections.append(ReportSection(
                     title=section_data.get("title", ""),
                     content=""
@@ -1562,8 +1597,7 @@ class ReportAgent:
 
         # Check forceconclusion when LLM return is None
         if response is None:
-            final_answer = f"(This section generation failed: LLM returned empty response, please retry later)"
-            final_answer = f"(ThisSectiongeneratefailed: LLM returnedemptyresponse, pleaselaterretry)"
+            raise ValueError(f"Section '{section.title}' generation returned no content")
         elif "Final Answer:" in response:
             final_answer = response.split("Final Answer:")[-1].strip()
         else:
@@ -1663,6 +1697,8 @@ class ReportAgent:
                 progress_callback=lambda stage, prog, msg: 
                     progress_callback(stage, prog // 5, msg) if progress_callback else None
             )
+            if not outline.sections:
+                raise ValueError("Cannot complete a report without sections")
             report.outline = outline
             
             # recordplancompletion log
@@ -1717,6 +1753,10 @@ class ReportAgent:
                     section_index=section_num
                 )
                 
+                if not isinstance(section_content, str) or not section_content.strip():
+                    raise ValueError(f"Section '{section.title}' generation returned no content")
+                if '<tool_call' in section_content or ('DSML' in section_content and 'tool_call' in section_content):
+                    raise ValueError(f"Section '{section.title}' contained an unexecuted tool call instead of report content")
                 section.content = section_content
                 generated_sections.append(f"## {section.title}\n\n{section_content}")
 

@@ -27,14 +27,16 @@ service.interceptors.response.use(
 
     // If the returned status code is not success, throw error
     if (!res.success && res.success !== undefined) {
-      console.error('API Error:', res.error || res.message || 'Unknown error')
-      return Promise.reject(new Error(res.error || res.message || 'Error'))
+      const error = new Error(res.error || res.message || 'Error')
+      error.response = response
+      return Promise.reject(error)
     }
 
     return res
   },
   error => {
-    console.error('Response error:', error)
+    // Axios errors include request bodies, which can contain a model API key.
+    console.error('API request failed:', error.response?.status || error.code || 'network')
 
     // Handle timeout
     if (error.code === 'ECONNABORTED' && error.message.includes('timeout')) {

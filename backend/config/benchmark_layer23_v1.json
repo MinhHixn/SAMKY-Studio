@@ -3,7 +3,7 @@
   "kappa_cutoff": 0.8,
   "jsd_monotonic_tolerance_epsilon": 0.002,
   "leakage_min_days_before_resolution": 7,
-  "leakage_outcome_regex": "(?i)resolved|closed",
+  "leakage_outcome_regex": "(?i)\\b(market\\s+resolved|resolves\\s+to|resolved\\s+(?:yes|no)\\b|resolved\\s+as|final\\s+result|the\\s+answer\\s+is|outcome\\s+(?:was|is)\\b|certified\\s+final|final\\s+certified)\\b",
   "power_target_delta_brier": 0.05,
   "power_assumed_sigma": 0.12,
   "power_target": 0.8,

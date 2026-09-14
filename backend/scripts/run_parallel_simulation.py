@@ -64,6 +64,102 @@ if sys.platform == 'win32':
 
     builtins.open = _utf8_open
 
+# ============================================================
+# MONKEYPATCH: Fix OASIS UserInfo missing agent profiles bug
+# ============================================================
+try:
+    from oasis.social_platform.config.user import UserInfo
+
+    def to_twitter_system_message(self) -> str:
+        name_string = f"Your name is {self.name}." if self.name is not None else ""
+        description = name_string
+        if self.profile:
+            user_profile = self.profile.get("persona") or self.profile.get("user_profile")
+            if not user_profile and "other_info" in self.profile and isinstance(self.profile["other_info"], dict):
+                user_profile = self.profile["other_info"].get("user_profile")
+            
+            bio = self.profile.get("bio") or self.profile.get("description")
+            
+            parts = []
+            if name_string:
+                parts.append(name_string)
+            if bio:
+                parts.append(f"Bio: {bio}")
+            if user_profile:
+                parts.append(f"Your profile and personality: {user_profile}")
+            description = "\n".join(parts)
+            
+        return f"""# OBJECTIVE
+You're a Twitter user, and I'll present you with some posts. After you see the posts, choose some actions from the following functions.
+
+# SELF-DESCRIPTION
+Your actions should be consistent with your self-description and personality.
+{description}
+
+# RESPONSE METHOD
+Please perform actions by tool calling."""
+
+    def to_reddit_system_message(self) -> str:
+        name_string = f"Your name is {self.name}." if self.name is not None else ""
+        description = name_string
+        if self.profile:
+            user_profile = self.profile.get("persona") or self.profile.get("user_profile")
+            gender = self.profile.get("gender")
+            age = self.profile.get("age")
+            mbti = self.profile.get("mbti")
+            country = self.profile.get("country")
+            
+            if "other_info" in self.profile and isinstance(self.profile["other_info"], dict):
+                if not user_profile:
+                    user_profile = self.profile["other_info"].get("user_profile")
+                if not gender:
+                    gender = self.profile["other_info"].get("gender")
+                if not age:
+                    age = self.profile["other_info"].get("age")
+                if not mbti:
+                    mbti = self.profile["other_info"].get("mbti")
+                if not country:
+                    country = self.profile["other_info"].get("country")
+                    
+            bio = self.profile.get("bio") or self.profile.get("description")
+            
+            parts = []
+            if name_string:
+                parts.append(name_string)
+            if bio:
+                parts.append(f"Bio: {bio}")
+            if user_profile:
+                parts.append(f"Your profile and personality: {user_profile}")
+            
+            meta_parts = []
+            if gender:
+                meta_parts.append(f"gender: {gender}")
+            if age:
+                meta_parts.append(f"age: {age} years old")
+            if mbti:
+                meta_parts.append(f"MBTI: {mbti}")
+            if country:
+                meta_parts.append(f"from: {country}")
+            if meta_parts:
+                parts.append("Demographics: " + ", ".join(meta_parts))
+            description = "\n".join(parts)
+            
+        return f"""# OBJECTIVE
+You're a Reddit user, and I'll present you with some tweets. After you see the tweets, choose some actions from the following functions.
+
+# SELF-DESCRIPTION
+Your actions should be consistent with your self-description and personality.
+{description}
+
+# RESPONSE METHOD
+Please perform actions by tool calling."""
+
+    UserInfo.to_twitter_system_message = to_twitter_system_message
+    UserInfo.to_reddit_system_message = to_reddit_system_message
+except ImportError:
+    pass
+# ============================================================
+
 import argparse
 import asyncio
 import json
@@ -78,6 +174,337 @@ import warnings
 from datetime import datetime
 from typing import Callable, Dict, Any, List, Mapping, Optional, Tuple
 
+# ============================================================
+# MONKEYPATCH: v5.23 - Prompt-based tool calling (Huong 1)
+# ------------------------------------------------------------
+# PROBLEM: vLLM 0.6.3 + AWQ-INT4 (Llama-3.1-8B-AWQ) cannot do
+# server-side tool calling:
+#   - No flags            -> vLLM rejects `tool_choice`     -> 400
+#   - --enable-auto-tool-choice --tool-call-parser hermes
+#                          -> parser crashes on AWQ output  -> 500
+#   - Stripping tool_choice client-side fails: openai v1+
+#     re-injects `tool_choice="auto"` at HTTP layer whenever
+#     `tools` is present in the request.
+#
+# SOLUTION (Huong 1): NEVER send `tools`/`tool_choice` as API
+# params. Instead:
+#   1. Convert tool schemas into a TEXT block injected into the
+#      system prompt, instructing the model to emit Hermes-format
+#      tool calls.
+#   2. Call the model with tools=None so the HTTP request carries
+#      no `tools`/`tool_choice`; openai client adds neither and
+#      vLLM 0.6.3 returns a clean 200.
+#   3. Parse the Hermes tool-call blocks from the response content
+#      CLIENT-SIDE and inject them into the OpenAI ChatCompletion
+#      response as native `tool_calls` so CAMEL ChatAgent's
+#      `_handle_batch_response` picks them up and executes the
+#      OASIS social actions (LIKE/COMMENT/FOLLOW/...).
+# ============================================================
+logger = logging.getLogger(__name__)
+
+# Regex compiled once: matches one Hermes tool-call block.
+import re as _re
+_HERMES_BLOCK_RE = _re.compile(r'<tool_call>\s*(.*?)\s*</tool_call>', _re.DOTALL)
+
+
+def _parse_hermes_tool_calls(content):
+    """Parse Hermes-format tool calls from raw model output.
+
+    Recognised shapes (one or more blocks; leading/trailing text
+    is ignored). Returns a list of dicts shaped like OpenAI
+    tool_call entries.
+    """
+    tool_calls = []
+    if not content:
+        return tool_calls
+    for match in _HERMES_BLOCK_RE.findall(content):
+        try:
+            call_data = json.loads(match.strip())
+            if not isinstance(call_data, dict):
+                continue
+            name = call_data.get("name")
+            arguments = call_data.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments_dict = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments_dict = {"raw_arguments": arguments}
+            elif isinstance(arguments, dict):
+                arguments_dict = arguments
+            else:
+                arguments_dict = {}
+            if name:
+                tool_calls.append({
+                    "id": "call_%d" % (len(tool_calls) + 1),
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments_dict, ensure_ascii=False)
+                        if isinstance(arguments_dict, dict) else str(arguments),
+                    },
+                })
+        except (json.JSONDecodeError, Exception) as e:
+            logger.debug("[v5.23 Hermes] Failed to parse tool_call block: %s", e)
+            continue
+    return tool_calls
+
+
+def _normalize_tool_to_dict(tool):
+    """Convert a pydantic / object-wrapped tool schema to a plain dict."""
+    if isinstance(tool, dict):
+        return tool
+    if hasattr(tool, "model_dump"):
+        try:
+            return tool.model_dump()
+        except Exception:
+            pass
+    if hasattr(tool, "dict"):
+        try:
+            return tool.dict()
+        except Exception:
+            pass
+    try:
+        return json.loads(json.dumps(tool))
+    except Exception:
+        return None
+
+
+def _build_tool_prompt(tools):
+    """Render OpenAI tool schemas into a system-prompt text block.
+    v5.23: Full descriptions (no truncation), all-action examples,
+    numbered tool list for discoverability.
+    """
+    OB = chr(60) + "tool" + "_" + "call" + chr(62)
+    OE = chr(60) + "/" + "tool" + "_" + "call" + chr(62)
+    NL = chr(10)
+    lines = [
+        "",
+        "# Available Actions (Tools)",
+        "",
+        "You have the following tools available. To call a tool, output a tool-call block:",
+        "",
+        OB + NL + chr(123) + chr(34) + "name" + chr(34) + ": " + chr(34) + "FUNCTION_NAME" + chr(34) + ", " + chr(34) + "arguments" + chr(34) + ": " + chr(123) + "PARAM: VALUE" + chr(125) + chr(125) + NL + OE,
+        "",
+        "RULES:",
+        "- Call at least one tool per response (unless you intentionally do nothing).",
+        "- The name must exactly match one of the tool names below.",
+        "- The arguments must be a JSON object with the correct parameter names and types.",
+        "- You may emit multiple blocks to call multiple tools in one response.",
+        "- Place blocks at the END of your response, after any reasoning text.",
+        "",
+        "QUICK REFERENCE (common actions):",
+    ]
+
+    # Build each quick-ref line programmatically using chr() to avoid literal braces.
+    def _tc(name, args_str):
+        tag = chr(123) + chr(34) + "name" + chr(34) + ": " + chr(34) + name + chr(34) + ", " + chr(34) + "arguments" + chr(34) + ": " + args_str + chr(125)
+        return OB + tag + OE
+
+    quick_refs = [
+        ("like_post", chr(123) + chr(34) + "post_id" + chr(34) + ": ID" + chr(125), "Like a post"),
+        ("dislike_post", chr(123) + chr(34) + "post_id" + chr(34) + ": ID" + chr(125), "Dislike a post"),
+        ("create_post", chr(123) + chr(34) + "content" + chr(34) + ": TEXT" + chr(125), "Write a new post"),
+        ("create_comment", chr(123) + chr(34) + "post_id" + chr(34) + ": ID, " + chr(34) + "content" + chr(34) + ": TEXT" + chr(125), "Comment on a post"),
+        ("like_comment", chr(123) + chr(34) + "comment_id" + chr(34) + ": ID" + chr(125), "Like a comment"),
+        ("dislike_comment", chr(123) + chr(34) + "comment_id" + chr(34) + ": ID" + chr(125), "Dislike a comment"),
+        ("follow", chr(123) + chr(34) + "followee_id" + chr(34) + ": ID" + chr(125), "Follow a user"),
+        ("unfollow", chr(123) + chr(34) + "followee_id" + chr(34) + ": ID" + chr(125), "Unfollow a user"),
+        ("mute", chr(123) + chr(34) + "user_id" + chr(34) + ": ID" + chr(125), "Mute a user"),
+        ("repost", chr(123) + chr(34) + "post_id" + chr(34) + ": ID" + chr(125), "Repost (Twitter)"),
+        ("quote_post", chr(123) + chr(34) + "post_id" + chr(34) + ": ID, " + chr(34) + "quote_content" + chr(34) + ": TEXT" + chr(125), "Quote a post (Twitter)"),
+        ("search_posts", chr(123) + chr(34) + "query" + chr(34) + ": TEXT" + chr(125), "Search for posts"),
+        ("search_user", chr(123) + chr(34) + "query" + chr(34) + ": TEXT" + chr(125), "Search for users"),
+        ("trend", chr(123) + chr(125), "See trending topics"),
+        ("refresh", chr(123) + chr(125), "Refresh your feed"),
+        ("do_nothing", chr(123) + chr(125), "Do nothing this turn"),
+    ]
+    for name, args, label in quick_refs:
+        lines.append("  " + _tc(name, args) + "  # " + label)
+
+    lines.extend([
+        "",
+        "EXAMPLE - Like post #5:",
+        "  " + _tc("like_post", chr(123) + chr(34) + "post_id" + chr(34) + ": 5" + chr(125)),
+        "",
+        "EXAMPLE - Comment on post #3:",
+        "  " + _tc("create_comment", chr(123) + chr(34) + "post_id" + chr(34) + ": 3, " + chr(34) + "content" + chr(34) + ": " + chr(34) + "I agree with this analysis." + chr(34) + chr(125)),
+        "",
+        "EXAMPLE - Follow user #2:",
+        "  " + _tc("follow", chr(123) + chr(34) + "followee_id" + chr(34) + ": 2" + chr(125)),
+        "",
+        "EXAMPLE - Dislike post #7:",
+        "  " + _tc("dislike_post", chr(123) + chr(34) + "post_id" + chr(34) + ": 7" + chr(125)),
+        "",
+        "EXAMPLE - Create a post with analysis:",
+        "  " + _tc("create_post", chr(123) + chr(34) + "content" + chr(34) + ": " + chr(34) + "Based on the latest data, the outcome will be..." + chr(34) + chr(125)),
+        "",
+        "EXAMPLE - Two actions (like + comment on same post):",
+        "  " + _tc("like_post", chr(123) + chr(34) + "post_id" + chr(34) + ": 3" + chr(125)),
+        "  " + _tc("create_comment", chr(123) + chr(34) + "post_id" + chr(34) + ": 3, " + chr(34) + "content" + chr(34) + ": " + chr(34) + "Worth amplifying." + chr(34) + chr(125)),
+        "",
+        "DETAILED TOOL SPECIFICATIONS:",
+        "",
+    ])
+
+    tool_num = 0
+    for tool in tools:
+        t = _normalize_tool_to_dict(tool)
+        if not t:
+            continue
+        fn = t.get("function", t) if isinstance(t, dict) else {}
+        if not isinstance(fn, dict):
+            fn = {}
+        name = fn.get("name", "unknown")
+        desc = fn.get("description", "").strip()
+        params = fn.get("parameters", {})
+        props = params.get("properties", {}) if isinstance(params, dict) else {}
+        required = params.get("required", []) if isinstance(params, dict) else []
+        tool_num += 1
+        lines.append(str(tool_num) + ". " + name)
+        if desc:
+            lines.append("   Description: " + desc)
+        if isinstance(props, dict) and props:
+            lines.append("   Parameters:")
+            for pname, pinfo in props.items():
+                if not isinstance(pinfo, dict):
+                    continue
+                ptype = pinfo.get("type", "any")
+                pdesc = pinfo.get("description", "").strip()
+                req = "required" if pname in required else "optional"
+                lines.append("     - " + pname + " (" + ptype + ", " + req + "): " + pdesc)
+        lines.append("")
+    return NL.join(lines)
+
+
+def _inject_tool_prompt(messages, tools):
+    """Append the tool prompt to the first system message (or prepend one).
+
+    Returns a NEW list with non-mutating copies so the caller's message
+    objects (e.g. agent memory) are never modified.
+    """
+    prompt_text = _build_tool_prompt(tools)
+    new_messages = list(messages)
+    for idx, msg in enumerate(new_messages):
+        try:
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        except Exception:
+            role = None
+        if role == "system":
+            if isinstance(msg, dict):
+                copy_msg = dict(msg)
+                copy_msg["content"] = (copy_msg.get("content") or "") + prompt_text
+                new_messages[idx] = copy_msg
+            else:
+                # Object-wrapped message: copy content without mutating.
+                import copy as _copy
+                copy_msg = _copy.copy(msg)
+                copy_msg.content = (getattr(msg, "content", None) or "") + prompt_text
+                new_messages[idx] = copy_msg
+            return new_messages
+    # No system message found: prepend one.
+    sys_msg = {"role": "system", "content": prompt_text.strip()}
+    return [sys_msg] + new_messages
+
+
+def _inject_tool_calls_into_response(response):
+    """Parse Hermes tool calls from response content and inject as native
+    OpenAI tool_calls so CAMEL ChatAgent executes them."""
+    try:
+        if not (hasattr(response, "choices") and response.choices):
+            return response
+        choice = response.choices[0]
+        msg = choice.message
+        content = getattr(msg, "content", None) or ""
+        # v5.23: Log raw model output for debugging (first 500 chars)
+        logger.warning("[v5.23] Raw model output (first 500): %s", content[:500])
+        parsed = _parse_hermes_tool_calls(content)
+        if not parsed:
+            logger.warning("[v5.23] No Hermes tool calls found in output")
+            return response
+        logger.info("[v5.23 Hermes] Parsed %d tool calls from raw content", len(parsed))
+        # Build native openai tool-call objects.
+        try:
+            from openai.types.chat.chat_completion_message_function_tool_call import (
+                Function as _OAI_FN,
+                ChatCompletionMessageFunctionToolCall as _OAI_TC,
+            )
+            native_calls = []
+            for tc in parsed:
+                fn = tc.get("function", {})
+                native_calls.append(_OAI_TC(
+                    id=tc.get("id", "call_0"),
+                    function=_OAI_FN(
+                        name=fn.get("name", ""),
+                        arguments=fn.get("arguments", "{}"),
+                    ),
+                    type="function",
+                ))
+            msg.tool_calls = native_calls
+        except Exception:
+            # Fallback: assign the plain dicts directly.
+            msg.tool_calls = parsed
+        # Clean content: strip the Hermes blocks so the agent does not echo them.
+        clean = _HERMES_BLOCK_RE.sub("", content).strip()
+        msg.content = clean if clean else ""
+        # Mark finish_reason so downstream consumers see a tool-call turn.
+        try:
+            choice.finish_reason = "tool_calls"
+        except Exception:
+            pass
+        return response
+    except Exception as e:
+        logger.warning("[v5.23 Hermes] Failed to inject tool_calls: %s", e)
+        return response
+
+
+try:
+    from camel.models import OpenAIModel
+
+    # 1. Patch __init__ to force a longer timeout.
+    _original_init = OpenAIModel.__init__
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        timeout_val = float(os.environ.get("LLM_TIMEOUT_SECONDS", "600"))
+        if hasattr(self, "_async_client"):
+            self._async_client.timeout = timeout_val
+        if hasattr(self, "_client"):
+            self._client.timeout = timeout_val
+    OpenAIModel.__init__ = _patched_init
+
+    # 2. Patch arun: prompt-based tool calling (Huong 1).
+    _original_arun = OpenAIModel.arun
+    async def _patched_arun(self, messages, response_format=None, tools=None):
+        safe_format = response_format
+        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+            safe_format = {"type": "json_object"}
+        disable_tools = os.environ.get("DISABLE_TOOL_USE", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not tools or disable_tools:
+            return await _original_arun(self, messages, safe_format, None)
+        # v5.23: Confirm patch is active
+        logger.warning("[v5.23] arun intercepted: %d tools, injecting prompt-based tools", len(tools) if tools else 0)
+        # Inject tool definitions into the system prompt as text, then call
+        # the model WITHOUT tools so no `tools`/`tool_choice` reach vLLM.
+        new_messages = _inject_tool_prompt(messages, tools)
+        response = await _original_arun(self, new_messages, safe_format, None)
+        return _inject_tool_calls_into_response(response)
+    OpenAIModel.arun = _patched_arun
+
+    # 3. Patch run (sync): same prompt-based approach.
+    _original_run = OpenAIModel.run
+    def _patched_run(self, messages, response_format=None, tools=None):
+        safe_format = response_format
+        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+            safe_format = {"type": "json_object"}
+        disable_tools = os.environ.get("DISABLE_TOOL_USE", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not tools or disable_tools:
+            return _original_run(self, messages, safe_format, None)
+        new_messages = _inject_tool_prompt(messages, tools)
+        response = _original_run(self, new_messages, safe_format, None)
+        return _inject_tool_calls_into_response(response)
+    OpenAIModel.run = _patched_run
+    print("CAMEL Monkeypatch v5.23 applied: Timeout + Prompt-based tool calling (Huong 1).")
+except ImportError:
+    pass
 
 # Global variables: for signal handling
 _shutdown_event = None
@@ -1884,6 +2311,38 @@ class PlatformSimulation:
         self.total_actions = 0
 
 
+def install_bounded_llm_actions(env, platform_label: str, log_info) -> None:
+    """Keep one slow provider response from blocking an entire OASIS round.
+
+    OASIS env.step gathers all agent tasks and otherwise waits for the slowest
+    request. Apply the limit *inside* its semaphore, so queued agents still
+    receive their full execution budget.
+    """
+    import time
+
+    try:
+        timeout_seconds = max(10.0, float(os.environ.get("SIMULATION_AGENT_ACTION_TIMEOUT_SECONDS", "90")))
+    except ValueError:
+        timeout_seconds = 90.0
+
+    async def bounded_action(agent):
+        async with env.llm_semaphore:
+            started = time.monotonic()
+            agent_label = getattr(agent, "name", None) or getattr(agent, "agent_id", "unknown")
+            try:
+                return await asyncio.wait_for(agent.perform_action_by_llm(), timeout=timeout_seconds)
+            except asyncio.TimeoutError:
+                log_info(f"Agent {agent_label} timed out after {timeout_seconds:g}s; skipping this action")
+            except Exception as exc:
+                log_info(f"Agent {agent_label} action failed ({type(exc).__name__}: {exc}); continuing round")
+            finally:
+                elapsed = time.monotonic() - started
+                if elapsed >= 30:
+                    log_info(f"Slow {platform_label} agent {agent_label}: {elapsed:.1f}s")
+
+    env._perform_llm_action = bounded_action
+
+
 async def run_twitter_simulation(
     config: Dict[str, Any], 
     simulation_dir: str,
@@ -1942,8 +2401,9 @@ async def run_twitter_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.TWITTER,
         database_path=db_path,
-        semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
+        semaphore=max(1, min(32, int(os.environ.get("OASIS_LLM_CONCURRENCY", "5")))),
     )
+    install_bounded_llm_actions(result.env, "Twitter", log_info)
     
     await result.env.reset()
     log_info("Environment started")
@@ -2000,7 +2460,7 @@ async def run_twitter_simulation(
     time_config = config.get("time_config", {})
     total_hours = time_config.get("total_simulation_hours", 72)
     minutes_per_round = time_config.get("minutes_per_round", 30)
-    total_rounds = (total_hours * 60) // minutes_per_round
+    total_rounds = int(time_config.get("total_rounds", (total_hours * 60) // minutes_per_round))
     
     # If maximum rounds specified, truncate
     if max_rounds is not None and max_rounds > 0:
@@ -2057,7 +2517,11 @@ async def run_twitter_simulation(
 
         if active_agents:
             actions = {agent: LLMAction() for _, agent in active_agents}
+            round_started = datetime.now()
             await result.env.step(actions)
+            round_elapsed = (datetime.now() - round_started).total_seconds()
+            if round_elapsed >= 30:
+                log_info(f"Round {round_num + 1}: {len(active_agents)} agents took {round_elapsed:.1f}s")
 
             # Get actual executed actions from Database and log
             actual_actions, last_rowid = fetch_new_actions_from_db(
@@ -2172,8 +2636,9 @@ async def run_reddit_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=db_path,
-        semaphore=30,  # Limit maximum concurrent LLM requests to prevent API overload
+        semaphore=max(1, min(32, int(os.environ.get("OASIS_LLM_CONCURRENCY", "5")))),
     )
+    install_bounded_llm_actions(result.env, "Reddit", log_info)
     
     await result.env.reset()
     log_info("Environment started")
@@ -2238,7 +2703,7 @@ async def run_reddit_simulation(
     time_config = config.get("time_config", {})
     total_hours = time_config.get("total_simulation_hours", 72)
     minutes_per_round = time_config.get("minutes_per_round", 30)
-    total_rounds = (total_hours * 60) // minutes_per_round
+    total_rounds = int(time_config.get("total_rounds", (total_hours * 60) // minutes_per_round))
     
     # If maximum rounds specified, truncate
     if max_rounds is not None and max_rounds > 0:
@@ -2295,7 +2760,11 @@ async def run_reddit_simulation(
 
         if active_agents:
             actions = {agent: LLMAction() for _, agent in active_agents}
+            round_started = datetime.now()
             await result.env.step(actions)
+            round_elapsed = (datetime.now() - round_started).total_seconds()
+            if round_elapsed >= 30:
+                log_info(f"Round {round_num + 1}: {len(active_agents)} agents took {round_elapsed:.1f}s")
 
             # Get actual executed actions from Database and log
             actual_actions, last_rowid = fetch_new_actions_from_db(
@@ -2396,7 +2865,7 @@ async def main():
     
     config = load_config(args.config)
     simulation_dir = os.path.dirname(args.config) or "."
-    wait_for_commands = not args.no_wait and not _is_headless_mode_enabled()
+    wait_for_commands = not args.no_wait and (not _is_headless_mode_enabled() or _env_flag("SAM_INTERACTIVE_WAIT"))
     
     # Initialize logging configuration (disable OASIS logs, clean up old files)
     init_logging_for_simulation(simulation_dir)
@@ -2416,7 +2885,7 @@ async def main():
     time_config = config.get("time_config", {})
     total_hours = time_config.get('total_simulation_hours', 72)
     minutes_per_round = time_config.get('minutes_per_round', 30)
-    config_total_rounds = (total_hours * 60) // minutes_per_round
+    config_total_rounds = int(time_config.get("total_rounds", (total_hours * 60) // minutes_per_round))
     
     log_manager.info(f"Simulation parameters:")
     log_manager.info(f"  - Total simulation duration: {total_hours}hours")

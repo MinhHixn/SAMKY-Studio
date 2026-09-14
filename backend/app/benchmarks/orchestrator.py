@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, TypeAlias, TypedDict
 
@@ -15,6 +18,8 @@ from .evaluator import (
     _validate_numeric_scores_mapping,
 )
 from .schemas import validate_event_results
+
+logger = logging.getLogger(__name__)
 
 LegacyEvaluatorPayload: TypeAlias = tuple[Dict[str, float], float]
 
@@ -112,7 +117,7 @@ class ConditionExecutor:
     def _run_simulation(self, config_path: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
-                self._python_exe,
+                sys.executable,
                 "scripts/run_parallel_simulation.py",
                 "--config",
                 str(config_path),
@@ -236,6 +241,7 @@ class ProtocolConditionExecutor:
         delta_conformity_builder: Callable[[Path, Mapping[str, Any]], float | None] | None = None,
         baseline_scores_builder: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
         exception_formatter: Callable[[BaseException], str],
+        existing_simulation_root: Path | None = None,
     ):
         self._router = router
         self._python_exe = python_exe
@@ -253,6 +259,9 @@ class ProtocolConditionExecutor:
         self._telemetry_builder = telemetry_builder
         self._delta_conformity_builder = delta_conformity_builder
         self._baseline_scores_builder = baseline_scores_builder
+        # Evaluate-only mode: when set, re-scores an existing completed simulation run instead
+        # of re-running the 60-round social simulation subprocess for every unit.
+        self._existing_simulation_root = existing_simulation_root
         self._exception_formatter = exception_formatter
 
     def _seed_path_for_event(self, event_id: str) -> Path:
@@ -275,6 +284,57 @@ class ProtocolConditionExecutor:
                 if seed_file.name == "context.md":
                     return seed_file
         return fallback
+
+    # Files that make up a complete simulated unit (twitter/reddit are directories, handled
+    # separately below since only one of the two platforms strictly needs to be non-empty).
+    _REUSE_SINGLE_FILES = ("simulation.log", "simulation_config.json")
+    _REUSE_PLATFORM_DIRS = ("twitter", "reddit")
+
+    def _try_reuse_existing_simulation(self, unit_id: str, unit_dir: Path) -> bool:
+        """Copy a prior run's completed simulation output for `unit_id` into `unit_dir`.
+
+        Returns True (and leaves `unit_dir` populated) only if the source unit looks like a
+        genuinely completed simulation: `simulation.log` exists, and at least one of the
+        twitter/reddit `actions.jsonl` files is present and non-empty. Anything short of that
+        returns False without partially copying files, so the caller can fall back to running a
+        fresh simulation rather than evaluating against a truncated/corrupt log.
+        """
+        if self._existing_simulation_root is None:
+            return False
+        source_unit_dir = self._existing_simulation_root / unit_id
+        log_path = source_unit_dir / "simulation.log"
+        if not log_path.is_file():
+            return False
+
+        has_actions = False
+        for platform in self._REUSE_PLATFORM_DIRS:
+            actions_path = source_unit_dir / platform / "actions.jsonl"
+            if actions_path.is_file() and actions_path.stat().st_size > 0:
+                has_actions = True
+        if not has_actions:
+            return False
+
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        for filename in self._REUSE_SINGLE_FILES:
+            source_file = source_unit_dir / filename
+            if source_file.is_file():
+                shutil.copy2(source_file, unit_dir / filename)
+        for platform in self._REUSE_PLATFORM_DIRS:
+            source_platform_dir = source_unit_dir / platform
+            if source_platform_dir.is_dir():
+                shutil.copytree(source_platform_dir, unit_dir / platform, dirs_exist_ok=True)
+        # Non-essential sidecar files (profiles, raw .db traces): best-effort, not required for
+        # evidence-text construction, so a missing one should not fail the reuse.
+        for sidecar in ("twitter_profiles.csv", "reddit_profiles.json", "twitter_simulation.db", "reddit_simulation.db"):
+            source_sidecar = source_unit_dir / sidecar
+            if source_sidecar.is_file():
+                try:
+                    shutil.copy2(source_sidecar, unit_dir / sidecar)
+                except OSError as exc:
+                    logger.warning("Could not copy sidecar file %s for unit %s: %s", sidecar, unit_id, exc)
+
+        logger.info("Reused existing simulation for unit %s from %s", unit_id, source_unit_dir)
+        return True
 
     def execute(
         self,
@@ -312,6 +372,7 @@ class ProtocolConditionExecutor:
         evaluator_noisy_dimensions: Any = None
         evaluator_dimension_labels: Any = None
         evaluator_reliability_status: str | None = None
+        micro_epistemic_mapping: Dict[str, Any] = {}
         evaluator_fallback_used = False
         evaluator_fallback_reason: str | None = None
         evaluator_fallback_source: str | None = None
@@ -340,7 +401,30 @@ class ProtocolConditionExecutor:
                 simulation_status = "completed"
                 simulation_completed = True
                 evidence_text = self._evidence_builder(simulation_log_path, seed_path)
+            elif self._existing_simulation_root is not None and self._try_reuse_existing_simulation(
+                unit_id, unit_dir
+            ):
+                simulation_status = "completed"
+                simulation_completed = True
+                evidence_text = self._evidence_builder(simulation_log_path, seed_path)
+                self._trace_writer.write(
+                    {
+                        "event_id": event_id,
+                        "condition": condition,
+                        "repeat": repeat,
+                        "unit_id": unit_id,
+                        "status": "simulation_reused",
+                        "source": str(self._existing_simulation_root / unit_id),
+                    }
+                )
             else:
+                if self._existing_simulation_root is not None:
+                    logger.warning(
+                        "No reusable simulation found for unit %s under %s; running a fresh "
+                        "simulation instead.",
+                        unit_id,
+                        self._existing_simulation_root,
+                    )
                 try:
                     completed = self._simulation_runner(
                         self._python_exe,
@@ -570,6 +654,11 @@ class ProtocolConditionExecutor:
         )
 
 
+def sanitize_model_name(model_name: str) -> str:
+    """Sanitize model name for directory usage by replacing slashes and colons."""
+    return model_name.replace("/", "_").replace(":", "_")
+
+
 class BenchmarkRunOrchestrator:
     def __init__(self, executor: Any):
         self._executor = executor
@@ -588,8 +677,13 @@ class BenchmarkRunOrchestrator:
         config_builder: Callable[..., Dict[str, Any]] | None = None,
         evaluator: Callable[..., Any] | None = None,
         manifest: Mapping[str, Any] | None = None,
+        model_name: str | None = None,
     ) -> Path:
-        run_dir = Path(output_root) / run_id
+        output_path = Path(output_root)
+        if model_name:
+            output_path = output_path / sanitize_model_name(model_name)
+        
+        run_dir = output_path / run_id
         traces_dir = run_dir / "traces"
         run_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.mkdir(parents=True, exist_ok=True)
